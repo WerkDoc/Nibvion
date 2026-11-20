@@ -1,0 +1,17 @@
+{
+  "name": "Nibvion – PDF Tools",
+  "short_name": "Nibvion",
+  "description": "PDF bearbeiten, kommentieren, zeichnen, unterschreiben und stempeln – ohne Werbung, ohne Abo.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#15171c",
+  "theme_color": "#1c1f26",
+  "lang": "de",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

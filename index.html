@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <title>Nibvion</title>
+  <meta name="description" content="Nibvion – PDF bearbeiten, kommentieren, zeichnen, unterschreiben und stempeln.">
+  <meta name="theme-color" content="#1c1f26">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Nibvion">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/favicon-32.png">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="lib/pdf-lib.min.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <!-- Splash -->
+  <div id="splash">
+    <img src="icons/logo.png" alt="" class="splash-logo">
+    <div class="splash-name">NIBVION</div>
+  </div>
+
+  <div id="app">
+    <!-- ============ START ============ -->
+    <section class="view active" id="view-home" data-view="home">
+      <header class="topbar">
+        <div class="brand">
+          <img src="icons/logo.png" alt="" class="brand-logo">
+          <div>
+            <div class="brand-name">Nibvion</div>
+            <div class="brand-sub">PDF Tools · Stamp &amp; Edit</div>
+          </div>
+        </div>
+        <button class="icon-btn" data-action="go-settings" aria-label="Einstellungen"><i data-icon="settings"></i></button>
+      </header>
+
+      <div class="scroll">
+        <button class="hero" data-action="import">
+          <div class="hero-glow"></div>
+          <div class="hero-icon"><i data-icon="filePlus"></i></div>
+          <div class="hero-text">
+            <div class="hero-title">PDF öffnen</div>
+            <div class="hero-sub">Aus „Dateien“, iCloud oder Mail</div>
+          </div>
+          <i data-icon="chevronRight" class="hero-chev"></i>
+        </button>
+
+        <h2 class="section-title">Schnellwerkzeuge</h2>
+        <div class="quick-grid" id="quick-grid"></div>
+
+        <div class="section-row">
+          <h2 class="section-title">Zuletzt</h2>
+          <button class="link-btn" id="btn-sort" data-action="toggle-sort">Neueste</button>
+        </div>
+        <div class="recent-list" id="recent-list"></div>
+        <div class="bottom-space"></div>
+      </div>
+    </section>
+
+    <!-- ============ WERKZEUGE ============ -->
+    <section class="view" id="view-tools" data-view="tools">
+      <header class="topbar"><h1 class="page-title">Werkzeuge</h1></header>
+      <div class="scroll" id="tools-list"></div>
+    </section>
+
+    <!-- ============ EINSTELLUNGEN ============ -->
+    <section class="view" id="view-settings" data-view="settings">
+      <header class="topbar"><h1 class="page-title">Einstellungen</h1></header>
+      <div class="scroll" id="settings-list"></div>
+    </section>
+
+    <!-- Tab bar -->
+    <nav class="tabbar" id="tabbar">
+      <div class="tab-indicator"></div>
+      <button class="tab" data-tab="tools"><i data-icon="grid"></i><span>Werkzeuge</span></button>
+      <button class="tab active" data-tab="home"><i data-icon="home"></i><span>Start</span></button>
+      <button class="tab" data-tab="settings"><i data-icon="settings"></i><span>Einstellungen</span></button>
+    </nav>
+    <button class="fab" data-action="fab" aria-label="Neu"><i data-icon="plus"></i></button>
+
+    <!-- ============ EDITOR ============ -->
+    <section id="editor" class="editor" aria-hidden="true">
+      <header class="ed-top">
+        <button class="round-btn" data-action="ed-back" aria-label="Zurück"><i data-icon="chevronLeft"></i></button>
+        <button class="mode-pill" data-action="ed-mode"><span id="mode-label">Ansehen</span><i data-icon="chevronDown"></i></button>
+        <button class="round-btn" data-action="ed-more" aria-label="Mehr"><i data-icon="more"></i></button>
+      </header>
+      <div class="ed-toolbar" id="ed-toolbar">
+        <div class="ed-tools" id="ed-tools"></div>
+        <div class="ed-fixed">
+          <button class="tb-btn" data-action="ed-options" id="btn-options" aria-label="Optionen"><i data-icon="sliders"></i></button>
+          <button class="tb-btn" data-action="undo" id="btn-undo" aria-label="Rückgängig"><i data-icon="undo"></i></button>
+          <button class="tb-btn" data-action="redo" id="btn-redo" aria-label="Wiederholen"><i data-icon="redo"></i></button>
+        </div>
+      </div>
+      <div class="ed-scroll" id="ed-scroll">
+        <div class="ed-pages" id="ed-pages"></div>
+      </div>
+      <div class="ed-hint" id="ed-hint"></div>
+      <div class="ed-bottom">
+        <div class="page-chip" id="page-chip">1 / 1</div>
+        <div class="zoom-chip">
+          <button data-action="zoom-out" aria-label="Verkleinern"><i data-icon="minus"></i></button>
+          <span id="zoom-label">100%</span>
+          <button data-action="zoom-in" aria-label="Vergrößern"><i data-icon="plus"></i></button>
+        </div>
+      </div>
+      <div class="selmenu" id="selmenu"></div>
+    </section>
+  </div>
+
+  <div id="sheet-layer"></div>
+  <div id="toast"></div>
+
+  <input type="file" id="file-pdf" accept="application/pdf,.pdf" multiple hidden>
+  <input type="file" id="file-img" accept="image/*" multiple hidden>
+  <input type="file" id="file-cam" accept="image/*" capture="environment" hidden>
+</body>
+</html>
