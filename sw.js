@@ -1,5 +1,5 @@
 // Nibvion Service Worker – offline-fähig
-const VERSION = 'nibvion-v1.2.1';
+const VERSION = 'nibvion-v1.2.2';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/editor.js', 'js/pdfcore.js', 'js/ui.js', 'js/db.js', 'js/icons.js', 'js/sign.js', 'js/assets.js', 'js/settings.js', 'js/convert.js', 'js/pdf2word.js',

@@ -7,7 +7,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.2.1';
+export const VERSION = '1.2.2';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -122,13 +122,14 @@ function docMenu(d) {
 
 // Datei für ein Werkzeug wählen
 async function chooseDoc(mode, title = 'Datei wählen') {
+  // Immer das Menü zeigen: iOS öffnet die Dateiauswahl nur direkt nach einem Tipp, nicht nach einer Wartezeit
   const docs = await allDocs();
-  if (!docs.length) return importPdfs(mode);
   sheet({
     title,
     html: `<div class="menu" style="margin-bottom:14px"><button class="row" data-imp><span class="row-ic c-red">${icon('filePlus')}</span><span class="row-main"><span class="row-title">Aus „Dateien“ importieren</span><span class="row-sub">iCloud, Downloads, Mail-Anhänge …</span></span>${icon('chevronRight')}</button></div>
-      <div class="lbl" style="margin-top:0">Zuletzt</div>
-      <div class="menu">${docs.slice(0, 12).map(d => `<button class="row" data-id="${d.id}"><span class="doc-thumb" style="width:34px;height:44px;background-image:url('${d.thumb || ''}')"></span><span class="row-main"><span class="row-title" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</span><span class="row-sub">${fmtDate(d.updated)}</span></span></button>`).join('')}</div>`,
+      ${docs.length ? `<div class="lbl" style="margin-top:0">Zuletzt</div>
+      <div class="menu">${docs.slice(0, 12).map(d => `<button class="row" data-id="${d.id}"><span class="doc-thumb" style="width:34px;height:44px;background-image:url('${d.thumb || ''}')"></span><span class="row-main"><span class="row-title" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</span><span class="row-sub">${fmtDate(d.updated)}</span></span></button>`).join('')}</div>`
+      : `<p style="color:var(--text2);margin:2px 4px 8px;font-size:14px;line-height:1.4">Noch keine PDFs in Nibvion – wähle oben eine Datei aus.</p>`}`,
     onMount(el, api) {
       el.querySelector('[data-imp]').onclick = () => { api.close(); importPdfs(mode); };
       el.querySelectorAll('[data-id]').forEach(b => b.onclick = () => { api.close(); openDoc(b.dataset.id, mode); });
