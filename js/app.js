@@ -7,7 +7,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -152,8 +152,8 @@ const TOOL_GROUPS = [
   ] },
   { title: 'Konvertieren', items: [
     { id: 'pdf2img', label: 'PDF → Bilder', sub: 'Seiten als JPG speichern', icon: 'image', c: 'c-blue' },
-    { id: 'word', label: 'Word → PDF', icon: 'word', c: 'c-blue', soon: true },
-    { id: 'excel', label: 'Excel → PDF', icon: 'excel', c: 'c-green', soon: true },
+    { id: 'word', label: 'Word → PDF', sub: 'DOCX als PDF speichern', icon: 'word', c: 'c-blue' },
+    { id: 'excel', label: 'Excel → PDF', sub: 'XLSX, XLS oder CSV als PDF', icon: 'excel', c: 'c-green' },
     { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
     { id: 'pdf2word', label: 'PDF → Word', icon: 'word', c: 'c-blue', soon: true },
   ] },
@@ -186,6 +186,8 @@ function runTool(id) {
     case 'merge': return mergeSheet();
     case 'blank': return newBlank();
     case 'pdf2img': return pdfToImages();
+    case 'word': return officeToPdf('word');
+    case 'excel': return officeToPdf('excel');
     case 'sigs': return signatureSheet(null);
     case 'stamps': return stampSheet(null);
     default: toast('Kommt in einem der nächsten Updates');
@@ -308,6 +310,71 @@ async function pdfToImages() {
           else for (const fl of files) downloadBytes(await fl.arrayBuffer(), fl.name, 'image/jpeg');
         } catch (e) { console.error(e); busy(false); toast('Umwandeln fehlgeschlagen', true); }
       });
+    },
+  });
+}
+
+// ----- Word / Excel → PDF -----
+async function officeToPdf(kind) {
+  const files = await pickFiles(kind === 'word' ? 'file-word' : 'file-excel');
+  if (!files.length) return;
+  const f = files[0];
+  const base = f.name.replace(/\.[^.]+$/, '') || (kind === 'word' ? 'Dokument' : 'Tabelle');
+  busy(true, kind === 'word' ? 'Word-Dokument wird gelesen …' : 'Tabelle wird gelesen …');
+  let conv, buf;
+  try { [conv, buf] = await Promise.all([import('./convert.js'), f.arrayBuffer()]); }
+  catch (e) { console.error(e); busy(false); return toast('Datei konnte nicht gelesen werden', true); }
+  const progress = (i, n) => busy(true, n > 1 ? `Seite ${i} von ${n} wird erstellt …` : 'PDF wird erstellt …');
+  const fail = e => { console.error(e); busy(false); toast(e instanceof conv.ConvertError ? e.message : 'Umwandeln fehlgeschlagen', true); };
+  const finish = async bytes => {
+    const id = await saveNewDoc(bytes, base + '.pdf');
+    busy(false); await renderRecents(); toast('PDF erstellt'); openDoc(id);
+  };
+  if (kind === 'word') {
+    try { await finish(await conv.wordToPdf(buf, { onProgress: progress, title: base })); } catch (e) { fail(e); }
+    return;
+  }
+  let book;
+  try { book = await conv.readWorkbook(buf); } catch (e) { return fail(e); }
+  busy(false);
+  excelOptions(book, base, async opts => {
+    busy(true, 'PDF wird erstellt …');
+    try { await finish(await conv.excelToPdf(book, { ...opts, onProgress: progress, title: base })); } catch (e) { fail(e); }
+  });
+}
+
+function excelOptions(book, base, go) {
+  const on = book.sheets.map(() => true);
+  let orient = 'auto', grid = book.sheets.some(s => s.setup?.grid);
+  sheet({
+    title: 'Excel → PDF',
+    html: `<p style="color:var(--text2);margin:0 2px 12px;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(base)}</p>
+      ${book.sheets.length > 1 ? `<div class="lbl" style="margin-top:0">Tabellenblätter</div><div class="menu" data-sheets></div>` : ''}
+      <div class="menu" style="margin-top:12px">
+        <div class="row"><span class="row-ic c-blue">${icon('pages')}</span><span class="row-main"><span class="row-title">Ausrichtung</span></span>
+          <div class="seg" data-o>${[['auto', 'Auto'], ['portrait', 'Hoch'], ['landscape', 'Quer']].map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div></div>
+        <div class="row"><span class="row-ic c-gray">${icon('grid')}</span><span class="row-main"><span class="row-title">Gitternetz</span></span>
+          <div class="seg" data-g><button data-v="0">Aus</button><button data-v="1">An</button></div></div>
+      </div>
+      <div class="btn-row"><button class="btn primary" data-ok>${icon('check')} PDF erstellen</button></div>`,
+    onMount(el, api) {
+      const list = el.querySelector('[data-sheets]');
+      const render = () => {
+        if (list) {
+          list.innerHTML = book.sheets.map((s, i) => `<button class="row" data-i="${i}"><span class="row-ic ${on[i] ? 'c-green' : 'c-gray'}">${icon(on[i] ? 'check' : 'excel')}</span><span class="row-main"><span class="row-title" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${on[i] ? '' : 'color:var(--text3)'}">${esc(s.name)}</span></span></button>`).join('');
+          list.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { on[+b.dataset.i] = !on[+b.dataset.i]; haptic(); render(); });
+        }
+        el.querySelectorAll('[data-o] button').forEach(b => b.classList.toggle('on', b.dataset.v === orient));
+        el.querySelectorAll('[data-g] button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === grid));
+      };
+      el.querySelectorAll('[data-o] button').forEach(b => b.onclick = () => { orient = b.dataset.v; render(); });
+      el.querySelectorAll('[data-g] button').forEach(b => b.onclick = () => { grid = b.dataset.v === '1'; render(); });
+      el.querySelector('[data-ok]').onclick = () => {
+        const sheets = on.map((v, i) => v ? i : -1).filter(i => i >= 0);
+        if (!sheets.length) return toast('Bitte mindestens ein Blatt wählen', true);
+        api.close(); go({ sheets, orient, grid });
+      };
+      render();
     },
   });
 }
