@@ -2,12 +2,12 @@
 import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
 import { toast, busy, sheet, confirmDlg, promptDlg, esc, fmtSize, fmtDate, pickFiles, today, haptic } from './ui.js';
-import { loadPdf, closePdf, renderThumb, imagesToPdf, mergePdfs, blankPdf, normalizeImage } from './pdfcore.js';
+import { loadPdf, closePdf, renderThumb, imagesToPdf, mergePdfs, blankPdf, normalizeImage, flatten, pageInfos } from './pdfcore.js';
 import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -96,13 +96,14 @@ function docMenu(d) {
   sheet({
     title: d.name,
     html: `<div class="menu">
-      ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
+      ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'], ['word', 'Als Word exportieren', 'word', 'c-blue'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
     </div>`,
     onMount(el, api) {
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         const a = b.dataset.a; api.close();
         if (['view', 'edit', 'sign'].includes(a)) return openDoc(d.id, a);
+        if (a === 'word') return exportWord(d);
         if (a === 'share') {
           if (d.objects?.length) { openDoc(d.id); return toast('Zum Teilen mit Änderungen: ⋯ → Teilen'); }
           const f = await db.get('files', d.id); return shareBytes(new Uint8Array(f.data), d.name);
@@ -155,7 +156,7 @@ const TOOL_GROUPS = [
     { id: 'word', label: 'Word → PDF', sub: 'DOCX als PDF speichern', icon: 'word', c: 'c-blue' },
     { id: 'excel', label: 'Excel → PDF', sub: 'XLSX, XLS oder CSV als PDF', icon: 'excel', c: 'c-green' },
     { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
-    { id: 'pdf2word', label: 'PDF → Word', icon: 'word', c: 'c-blue', soon: true },
+    { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern', icon: 'word', c: 'c-blue' },
   ] },
   { title: 'Vorlagen', items: [
     { id: 'sigs', label: 'Meine Unterschriften', icon: 'sign', c: 'c-green' },
@@ -188,6 +189,7 @@ function runTool(id) {
     case 'pdf2img': return pdfToImages();
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
+    case 'pdf2word': return pdfToWordSheet();
     case 'sigs': return signatureSheet(null);
     case 'stamps': return stampSheet(null);
     default: toast('Kommt in einem der nächsten Updates');
@@ -377,6 +379,54 @@ function excelOptions(book, base, go) {
       render();
     },
   });
+}
+
+// ----- PDF → Word -----
+async function pdfToWordSheet() {
+  const docs = await allDocs();
+  sheet({
+    title: 'PDF → Word',
+    html: `<p style="color:var(--text2);margin:0 2px 12px;font-size:14px;line-height:1.4">Text, Absätze, Spalten und Bilder werden als bearbeitbare Word-Datei (.docx) übernommen.</p>
+      <div class="menu" style="margin-bottom:14px"><button class="row" data-imp><span class="row-ic c-red">${icon('filePlus')}</span><span class="row-main"><span class="row-title">PDF aus „Dateien“ wählen</span></span>${icon('chevronRight')}</button></div>
+      ${docs.length ? `<div class="lbl" style="margin-top:0">Zuletzt</div><div class="menu">${docs.slice(0, 15).map(d => `<button class="row" data-id="${d.id}"><span class="doc-thumb" style="width:34px;height:44px;background-image:url('${d.thumb || ''}')"></span><span class="row-main"><span class="row-title" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</span><span class="row-sub">${d.pages || 1} Seiten</span></span></button>`).join('')}</div>` : ''}`,
+    onMount(el, api) {
+      el.querySelector('[data-imp]').onclick = async () => {
+        api.close();
+        const files = await pickFiles('file-pdf');
+        if (!files.length) return;
+        let id;
+        busy(true, 'PDF wird importiert …');
+        try { id = await saveNewDoc(await files[0].arrayBuffer(), files[0].name); }
+        catch { busy(false); return toast('Datei konnte nicht gelesen werden', true); }
+        await renderRecents();
+        exportWord(await db.get('docs', id));
+      };
+      el.querySelectorAll('[data-id]').forEach(b => b.onclick = async () => { api.close(); exportWord(docs.find(d => d.id === b.dataset.id)); });
+    },
+  });
+}
+
+async function exportWord(d) {
+  if (!d) return;
+  busy(true, 'Word-Datei wird erstellt …');
+  try {
+    const conv = await import('./pdf2word.js');
+    let bytes = (await db.get('files', d.id)).data;
+    if (d.objects?.length) {   // Änderungen aus dem Editor mitnehmen
+      const pdf = await loadPdf(bytes);
+      const infos = await pageInfos(pdf);
+      closePdf(pdf);
+      bytes = await flatten(bytes, d.objects, infos);
+    }
+    const name = d.name.replace(/\.pdf$/i, '') + '.docx';
+    const res = await conv.pdfToWord(bytes, { title: d.name.replace(/\.pdf$/i, ''), onProgress: (i, n) => busy(true, n > 1 ? `Seite ${i} von ${n} wird gelesen …` : 'Word-Datei wird erstellt …') });
+    busy(false);
+    if (res.scanned) toast('Kein Text gefunden (Scan?) – Seiten als Bilder übernommen');
+    await shareBytes(res.bytes, name, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  } catch (e) {
+    console.error(e); busy(false);
+    toast(e?.name === 'ConvertError' ? e.message : 'Umwandeln fehlgeschlagen', true);
+  }
 }
 
 // ----- FAB -----
