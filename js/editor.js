@@ -792,13 +792,13 @@ async function exportBytes() {
 }
 const pdfName = () => /\.pdf$/i.test(E.doc.name) ? E.doc.name : E.doc.name + '.pdf';
 
-export async function shareBytes(bytes, name) {
-  const file = new File([bytes], name, { type: 'application/pdf' });
+export async function shareBytes(bytes, name, type = 'application/pdf') {
+  const file = new File([bytes], name, { type });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: name }); return; }
     catch (e) { if (e.name === 'AbortError') return; }
   }
-  downloadBytes(bytes, name);
+  downloadBytes(bytes, name, type);
 }
 export function downloadBytes(bytes, name, type = 'application/pdf') {
   const url = URL.createObjectURL(new Blob([bytes], { type }));

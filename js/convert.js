@@ -17,7 +17,7 @@ export function loadLib(name) {
   return pending[name];
 }
 
-export class ConvertError extends Error {}
+export class ConvertError extends Error { constructor(m) { super(m); this.name = 'ConvertError'; } }
 const fail = msg => { throw new ConvertError(msg); };
 const tick = () => new Promise(r => setTimeout(r, 0));
 
