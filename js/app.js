@@ -7,7 +7,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.2.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -513,6 +513,7 @@ function switchTab(tab) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === tab));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelector('.tab-indicator').style.transform = `translateX(${TABS.indexOf(tab) * 100}%)`;
+  document.body.classList.toggle('tab-home', tab === 'home');   // „+“ nur auf der Startseite
   if (tab === 'settings') renderSettings();
   haptic();
 }
@@ -523,6 +524,7 @@ async function init() {
   initEditor();
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';
+  document.body.classList.add('tab-home');
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
   document.addEventListener('click', e => {
     const a = e.target.closest('[data-action]')?.dataset.action;
