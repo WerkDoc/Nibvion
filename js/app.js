@@ -10,7 +10,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.5.1';
+export const VERSION = '1.5.2';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -875,11 +875,9 @@ async function init() {
   setTimeout(() => $('splash').remove(), 1300);
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
-    const hadController = !!navigator.serviceWorker.controller;
+    // Kein automatisches Neuladen bei Updates mehr (das verursachte den doppelten Startbildschirm):
+    // App-Dateien kommen ohnehin zuerst aus dem Netz, der neue Service Worker gilt ab dem nächsten Start.
     navigator.serviceWorker.register('sw.js').catch(() => {});
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (hadController && !document.body.classList.contains('in-editor')) location.reload();
-    });
   }
 }
 init();
