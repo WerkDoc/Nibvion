@@ -7,7 +7,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.3.2';
+export const VERSION = '1.3.3';
 const $ = id => document.getElementById(id);
 
 applyTheme();

@@ -390,5 +390,6 @@ html.splashing, html.splashing body { background: #15171c; }
 /* „+“ und Tab-Leiste */
 .fab { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -3px 0 rgba(0,0,0,.12), 0 6px 12px rgba(255,106,91,.3), 0 16px 30px -8px rgba(255,106,91,.6); }
 .fab:active { box-shadow: inset 0 3px 10px rgba(0,0,0,.2), 0 3px 8px rgba(255,106,91,.35); }
-.tabbar { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 6px rgba(0,0,0,.08), 0 16px 34px -10px rgba(0,0,0,.35); }
+/* Schatten nur nach oben/seitlich: nach unten würde er am iOS-Streifen hart abgeschnitten */
+.tabbar { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 1px 2px rgba(0,0,0,.06), 0 -8px 24px -10px rgba(0,0,0,.22); }
 .tab-indicator { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 2px 6px -1px rgba(255,106,91,.25); }
