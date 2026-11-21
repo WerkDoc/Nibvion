@@ -7,21 +7,11 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.3.5';
+export const VERSION = '1.3.6';
 const $ = id => document.getElementById(id);
 
 applyTheme();
 
-// Echte Bildschirmhöhe (iOS-PWA-Fehler: innerHeight endet über dem Home-Balken)
-function fixAppHeight() {
-  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
-  const portrait = window.innerWidth < window.innerHeight;
-  const h = standalone && portrait ? Math.max(window.innerHeight, screen.height) : window.innerHeight;
-  document.documentElement.style.setProperty('--app-h', h + 'px');
-}
-fixAppHeight();
-window.addEventListener('resize', fixAppHeight);
-window.addEventListener('orientationchange', () => setTimeout(fixAppHeight, 300));
 
 // ======================= Bibliothek =======================
 async function saveNewDoc(bytes, name) {
@@ -750,7 +740,7 @@ async function renderSettings() {
     const s = b.dataset.s;
     if (s === 'sigs') signatureSheet(null);
     if (s === 'stamps') stampSheet(null);
-    if (s === 'name') { const n = await promptDlg('Zusatzzeile in Stempeln', settings.get('stampName'), 'Speichern', 'z. B. RepairMobile'); if (n !== null) { settings.set('stampName', n); renderSettings(); } }
+    if (s === 'name') { const n = await promptDlg('Zusatzzeile in Stempeln', settings.get('stampName'), 'Speichern', 'z. B. Firmenname'); if (n !== null) { settings.set('stampName', n); renderSettings(); } }
     if (s === 'wipe' && await confirmDlg('Alles löschen?', 'Alle importierten PDFs werden von diesem Gerät gelöscht. Unterschriften und Stempel bleiben erhalten.')) {
       await db.clear('docs'); await db.clear('files'); renderSettings(); renderRecents(); toast('Alle Dokumente gelöscht');
     }

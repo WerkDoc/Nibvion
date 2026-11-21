@@ -101,26 +101,10 @@ if (window.visualViewport) {
   visualViewport.addEventListener('scroll', upd);
 }
 
-// ---------- iOS: fehlender Streifen unten (Home-Bildschirm-App) ----------
-// Manche iOS-Versionen zeichnen als Web-App unten einen Streifen ohne App-Inhalt.
-// Ist er da, rückt die Tab-Leiste ganz an den sichtbaren unteren Rand (Klasse ios-gap).
-const gapProbe = document.createElement('div');
-gapProbe.style.cssText = 'position:fixed;top:0;bottom:0;left:0;width:0;visibility:hidden;pointer-events:none';
-export function measureGap() {
-  if (!gapProbe.isConnected) document.body.appendChild(gapProbe);
-  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-  if (document.documentElement.classList.contains('kb-open')) return;
-  let gap = 0;
-  if (standalone) {
-    const portrait = innerHeight >= innerWidth;
-    const screenH = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
-    gap = Math.round(screenH - gapProbe.offsetHeight);
-    if (!(gap > 0 && gap < 140)) gap = 0;
-  }
-  document.documentElement.classList.toggle('ios-gap', gap > 0);
-}
-addEventListener('resize', () => setTimeout(measureGap, 60));
-addEventListener('orientationchange', () => setTimeout(measureGap, 300));
+// ---------- iOS-Streifen unten ----------
+// Ursache war die Statusleiste im Modus „black-translucent“ (iOS 26 kürzt die App dann unten
+// um die Statusleisten-Höhe). Mit „default“ tritt das nicht mehr auf – Funktion bleibt als No-op.
+export function measureGap() { document.documentElement.classList.remove('ios-gap'); }
 
 // ---------- Helfer ----------
 export function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
