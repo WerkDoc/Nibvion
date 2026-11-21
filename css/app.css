@@ -60,7 +60,8 @@ input, textarea, select { font: inherit; color: var(--text); -webkit-user-select
 @keyframes fadeUp { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* ---------- Views ---------- */
-#app { position: fixed; inset: 0; }
+/* iOS-Home-Bildschirm-Apps melden eine zu kleine Höhe – App-Fläche daher per JS (--app-h) bis zur echten Unterkante ziehen */
+#app { position: fixed; top: 0; left: 0; right: 0; height: var(--app-h, 100%); }
 .view { position: absolute; inset: 0; display: flex; flex-direction: column; opacity: 0; pointer-events: none; transform: translateY(10px); transition: opacity .3s var(--ease), transform .35s var(--ease); }
 .view.active { opacity: 1; pointer-events: auto; transform: none; }
 .scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 18px calc(170px + var(--bar-bottom)); }
@@ -156,7 +157,7 @@ body.in-editor .fab { transform: scale(0); }
 .about img { width: 54px; height: 54px; border-radius: 14px; display: block; margin: 0 auto 8px; }
 
 /* ---------- Editor ---------- */
-.editor { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; transform: translateX(100%); transition: transform .45s var(--ease); }
+.editor { position: fixed; top: 0; left: 0; right: 0; height: var(--app-h, 100%); z-index: 30; background: var(--bg); display: flex; flex-direction: column; transform: translateX(100%); transition: transform .45s var(--ease); }
 .editor.open { transform: none; }
 .ed-top { padding: calc(var(--safe-top) + 8px) 14px 8px; display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--bg2); }
 .round-btn { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--card); border: 1px solid var(--line); transition: transform .2s var(--spring); flex: none; }
