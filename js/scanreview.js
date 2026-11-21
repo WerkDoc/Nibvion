@@ -63,7 +63,7 @@ export function scanReview(opts) {
       <button data-t="lib">${icon('images')}<span>Fotos</span></button>
       <button data-t="rot">${icon('rotate')}<span>Drehen</span></button>
       <button data-t="crop">${icon('fit')}<span>Zuschneiden</span></button>
-      <button data-t="text">${icon('textScan')}<span>Text</span></button>
+      <button data-t="text">${icon('share')}<span>Export</span></button>
       <button data-t="del">${icon('trash')}<span>Löschen</span></button>
     </div>`;
   document.body.appendChild(wrap);
