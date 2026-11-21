@@ -12,6 +12,7 @@ const DEFAULTS = {
   hlColor: '#ffd60a',
   lineColor: '#d32f2f',
   sort: 'new',
+  scanOcr: true,
   favOnly: false,
 };
 let cache;

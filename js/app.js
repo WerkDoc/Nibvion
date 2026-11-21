@@ -10,7 +10,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.4.0';
+export const VERSION = '1.5.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -156,6 +156,7 @@ function docMenu(d) {
     html: `<div class="menu">
       ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
         ['fav', d.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen', d.fav ? 'heartFill' : 'heart', 'c-red'],
+        ['ocr', 'Text erkennen (OCR)', 'scan', 'c-teal'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
         ['word', 'Als Word exportieren', 'word', 'c-blue'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
@@ -168,6 +169,7 @@ function docMenu(d) {
         if (a === 'fav') { d.fav = !d.fav; await db.put('docs', d); haptic(); renderRecents(); return toast(d.fav ? 'Zu Favoriten hinzugefügt' : 'Aus Favoriten entfernt'); }
         if (a === 'wm') return watermarkSheet(d);
         if (a === 'compress') return compressSheet(d);
+        if (a === 'ocr') return ocrDoc(d);
         if (a === 'protect') return protectSheet(d);
         if (a === 'share') {
           if (d.objects?.length) { openDoc(d.id); return toast('Zum Teilen mit Änderungen: ⋯ → Teilen'); }
@@ -225,6 +227,7 @@ const TOOL_GROUPS = [
     { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern', icon: 'word', c: 'c-blue' },
   ] },
   { title: 'Schützen & Optimieren', items: [
+    { id: 'ocr', label: 'Text erkennen (OCR)', sub: 'Scans durchsuchbar & kopierbar machen', icon: 'scan', c: 'c-teal' },
     { id: 'compress', label: 'Komprimieren', sub: 'PDF-Datei verkleinern', icon: 'compress', c: 'c-green' },
     { id: 'wm', label: 'Wasserzeichen', sub: 'z. B. VERTRAULICH, KOPIE, ENTWURF', icon: 'drop', c: 'c-violet' },
     { id: 'protect', label: 'Mit Passwort schützen', sub: 'Nur mit Passwort zu öffnen', icon: 'shieldLock', c: 'c-orange' },
@@ -261,6 +264,7 @@ function runTool(id) {
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
     case 'pdf2word': return pdfToWordSheet();
+    case 'ocr': return docPicker('Text erkennen (OCR)', 'Gescannte Seiten werden gelesen – danach kannst du den Text suchen, markieren und kopieren. Alles passiert auf dem iPhone.', ocrDoc);
     case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
     case 'wm': return docPicker('Wasserzeichen', 'Text quer über alle Seiten, z. B. VERTRAULICH oder KOPIE.', watermarkSheet);
     case 'protect': return docPicker('Mit Passwort schützen', 'Die PDF lässt sich danach nur mit Passwort öffnen.', protectSheet);
@@ -301,9 +305,15 @@ async function imageSheet(kind) {
       </div>
       <div class="row" style="padding:16px 2px 4px;border:0"><div class="row-main"><div class="row-title">Filter</div></div>
         <div class="seg" data-f><button data-v="">Original</button><button data-v="color">Farbe</button><button data-v="doc">Dokument</button></div></div>
+      ${kind === 'scan' ? `<div class="row" style="padding:12px 2px 4px;border:0"><div class="row-main"><div class="row-title">Text erkennen</div><div class="row-sub">Scan durchsuchbar & kopierbar machen</div></div>
+        <div class="seg" data-ocr><button data-v="1">An</button><button data-v="0">Aus</button></div></div>` : ''}
       <div class="btn-row"><button class="btn primary" data-ok>${icon('check')} PDF erstellen</button></div>`,
     onMount(el, api) {
       const strip = el.querySelector('[data-strip]');
+      let ocrOn = settings.get('scanOcr') !== false;
+      const ocrSeg = () => el.querySelectorAll('[data-ocr] button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === ocrOn));
+      el.querySelectorAll('[data-ocr] button').forEach(b => b.onclick = () => { ocrOn = b.dataset.v === '1'; settings.set('scanOcr', ocrOn); ocrSeg(); });
+      ocrSeg();
       const render = () => {
         strip.innerHTML = items.length ? items.map((it, k) => `<div class="scan-item" data-e="${k}" style="background-image:url(${it.thumb})"><span class="edit-hint">${icon('fit')}</span><button class="del" data-d="${k}">${icon('x')}</button></div>`).join('')
           : `<div class="empty" style="width:100%;padding:24px">${kind === 'scan' ? 'Fotografiere dein Dokument – Ränder werden automatisch erkannt und gerade gezogen.' : 'Noch keine Bilder ausgewählt.'}</div>`;
@@ -334,7 +344,8 @@ async function imageSheet(kind) {
           for (const it of items) { urls.push(renderScan(it, filter, 2200).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
           const bytes = await imagesToPdf(urls, { margin: 0 });
           const id = await saveNewDoc(bytes, `${kind === 'scan' ? 'Scan' : 'Bilder'} ${today()} ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')}.pdf`);
-          busy(false); await renderRecents(); toast('PDF erstellt'); openDoc(id);
+          if (kind === 'scan' && ocrOn) { await ocrDoc(await db.get('docs', id), { quiet: true }); }
+          busy(false); await renderRecents(); toast(kind === 'scan' && ocrOn ? 'Scan erstellt – Text ist durchsuchbar' : 'PDF erstellt'); openDoc(id);
         } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); }
       };
       render();
@@ -613,6 +624,29 @@ async function watermarkSheet(d) {
       draw();
     },
   });
+}
+
+// ----- Texterkennung (OCR) -----
+async function ocrDoc(d, { quiet = false } = {}) {
+  if (!d) return;
+  busy(true, 'Seiten werden geprüft …');
+  try {
+    const { ocrPdf } = await import('./ocr.js');
+    const f = await db.get('files', d.id);
+    const res = await ocrPdf(f.data, { onProgress: (t, x) => busy(true, x > 0 && x < 1 ? `${t} ${Math.round(x * 100)} %` : t) });
+    if (!res.pages) { if (!quiet) { busy(false); toast('Diese PDF enthält bereits Text'); } return; }
+    const data = res.bytes.buffer.slice(res.bytes.byteOffset, res.bytes.byteOffset + res.bytes.byteLength);
+    await db.put('files', { id: d.id, data });
+    const fresh = await db.get('docs', d.id);
+    fresh.size = data.byteLength; fresh.updated = Date.now(); delete fresh.textIdx;
+    await db.put('docs', fresh);
+    if (quiet) return;
+    busy(false); await renderRecents();
+    toast(res.words ? `Text auf ${res.pages} ${res.pages === 1 ? 'Seite' : 'Seiten'} erkannt – jetzt durchsuchbar` : 'Kein Text erkannt', !res.words);
+  } catch (e) {
+    console.error(e); if (!quiet) busy(false);
+    toast(e?.message?.includes('geladen') ? e.message : 'Texterkennung fehlgeschlagen', true);
+  }
 }
 
 // ----- Komprimieren -----
