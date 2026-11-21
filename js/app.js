@@ -1,13 +1,13 @@
 // ================= Nibvion App =================
 import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
-import { toast, busy, sheet, confirmDlg, promptDlg, esc, fmtSize, fmtDate, pickFiles, today, haptic } from './ui.js';
+import { toast, busy, sheet, confirmDlg, promptDlg, esc, fmtSize, fmtDate, pickFiles, today, haptic, measureGap } from './ui.js';
 import { loadPdf, closePdf, renderThumb, imagesToPdf, mergePdfs, blankPdf, normalizeImage, flatten, pageInfos } from './pdfcore.js';
 import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.2.2';
+export const VERSION = '1.2.3';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -521,6 +521,7 @@ function switchTab(tab) {
 
 // ======================= Start =======================
 async function init() {
+  measureGap();
   hydrateIcons(document);
   initEditor();
   renderQuick(); renderTools();
@@ -536,7 +537,7 @@ async function init() {
   });
   await renderRecents();
   try { navigator.storage?.persist?.(); } catch {}
-  setTimeout(() => $('splash').classList.add('hide'), 650);
+  setTimeout(() => { $('splash').classList.add('hide'); document.documentElement.classList.remove('splashing'); }, 650);
   setTimeout(() => $('splash').remove(), 1300);
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

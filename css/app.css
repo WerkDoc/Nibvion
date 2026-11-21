@@ -20,7 +20,8 @@
   --radius: 18px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --bar-bottom: max(8px, calc(var(--safe-bottom) - 22px)); /* Tab-Leiste tief unten, knapp über dem Home-Balken */
+  --gap: 0px; /* iOS-Home-Bildschirm-App: fehlender Streifen unten (per JS gemessen) */
+  --bar-bottom: calc(max(8px, calc(var(--safe-bottom) - 22px)) - var(--gap)); /* Tab-Leiste tief unten, knapp über dem Home-Balken */
   --kb: 0px;
   --ease: cubic-bezier(.2,.8,.2,1);
   --spring: cubic-bezier(.34,1.4,.5,1);
@@ -314,3 +315,9 @@ textarea.field { min-height: 90px; resize: none; line-height: 1.4; }
 .xl td { padding: 0; overflow: visible; white-space: nowrap; line-height: 1.22; }
 .xl .o { position: relative; z-index: 1; overflow: hidden; white-space: pre; padding: 0 2px; box-sizing: border-box; }
 .xl .w { white-space: pre-wrap; overflow-wrap: break-word; padding: 0 2px; }
+
+/* ---------- iOS: Seite bis ganz nach unten ziehen (fehlender Streifen = --gap) ---------- */
+#splash, #app, .editor, .backdrop, .busy, .pad-wrap { bottom: calc(-1 * var(--gap)); }
+.pad-wrap { padding-bottom: calc(var(--safe-bottom) + 14px + var(--gap)); }
+html:not(.kb-open) .sheet { bottom: calc(var(--kb) - var(--gap)); padding-bottom: calc(var(--safe-bottom) + 18px + var(--gap)); }
+html.splashing, html.splashing body { background: #15171c; }

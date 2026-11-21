@@ -95,10 +95,32 @@ if (window.visualViewport) {
     const vv = window.visualViewport;
     const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     document.documentElement.style.setProperty('--kb', kb + 'px');
+    document.documentElement.classList.toggle('kb-open', kb > 0);
   };
   visualViewport.addEventListener('resize', upd);
   visualViewport.addEventListener('scroll', upd);
 }
+
+// ---------- iOS: fehlender Streifen unten (Home-Bildschirm-App) ----------
+// Manche iOS-Versionen lassen fixierte Elemente als Web-App nicht bis zum unteren Rand reichen.
+// Wir messen die Lücke zwischen Bildschirmhöhe und Layout-Höhe und gleichen sie per CSS aus.
+const gapProbe = document.createElement('div');
+gapProbe.style.cssText = 'position:fixed;top:0;bottom:0;left:0;width:0;visibility:hidden;pointer-events:none';
+export function measureGap() {
+  if (!gapProbe.isConnected) document.body.appendChild(gapProbe);
+  const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+  if (document.documentElement.classList.contains('kb-open')) return;
+  let gap = 0;
+  if (standalone) {
+    const portrait = innerHeight >= innerWidth;
+    const screenH = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+    gap = Math.round(screenH - gapProbe.offsetHeight);
+    if (!(gap > 0 && gap < 140)) gap = 0;
+  }
+  document.documentElement.style.setProperty('--gap', gap + 'px');
+}
+addEventListener('resize', () => setTimeout(measureGap, 60));
+addEventListener('orientationchange', () => setTimeout(measureGap, 300));
 
 // ---------- Helfer ----------
 export function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
