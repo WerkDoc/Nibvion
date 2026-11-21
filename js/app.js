@@ -3,14 +3,16 @@ import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
 import { toast, busy, sheet, confirmDlg, promptDlg, esc, fmtSize, fmtDate, pickFiles, today, haptic, measureGap } from './ui.js';
 import { loadPdf, closePdf, renderThumb, imagesToPdf, mergePdfs, blankPdf, normalizeImage, flatten, pageInfos } from './pdfcore.js';
-import { detectCorners, cropEditor, loadFileImage, render as renderScan, FULL } from './scanner.js';
+import { detectCorners, cropEditor, loadFileImage, render as renderScan, enhance as enhanceScan, FULL, FILTERS } from './scanner.js';
+import { liveScanner, cameraSupported } from './camera.js';
+import { textSheet } from './textview.js';
 import { searchSheet, extractText } from './search.js';
 import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
 import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.5.2';
+export const VERSION = '1.6.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -157,6 +159,7 @@ function docMenu(d) {
       ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
         ['fav', d.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen', d.fav ? 'heartFill' : 'heart', 'c-red'],
         ['ocr', 'Text erkennen (OCR)', 'scan', 'c-teal'],
+        ['text', 'Text extrahieren', 'textScan', 'c-blue'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
         ['word', 'Als Word exportieren', 'word', 'c-blue'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
@@ -170,6 +173,7 @@ function docMenu(d) {
         if (a === 'wm') return watermarkSheet(d);
         if (a === 'compress') return compressSheet(d);
         if (a === 'ocr') return ocrDoc(d);
+        if (a === 'text') return textFromDoc(d);
         if (a === 'protect') return protectSheet(d);
         if (a === 'share') {
           if (d.objects?.length) { openDoc(d.id); return toast('Zum Teilen mit Änderungen: ⋯ → Teilen'); }
@@ -228,6 +232,7 @@ const TOOL_GROUPS = [
   ] },
   { title: 'Schützen & Optimieren', items: [
     { id: 'ocr', label: 'Text erkennen (OCR)', sub: 'Scans durchsuchbar & kopierbar machen', icon: 'scan', c: 'c-teal' },
+    { id: 'text', label: 'Text extrahieren', sub: 'Text kopieren, teilen oder als .txt sichern', icon: 'textScan', c: 'c-blue' },
     { id: 'compress', label: 'Komprimieren', sub: 'PDF-Datei verkleinern', icon: 'compress', c: 'c-green' },
     { id: 'wm', label: 'Wasserzeichen', sub: 'z. B. VERTRAULICH, KOPIE, ENTWURF', icon: 'drop', c: 'c-violet' },
     { id: 'protect', label: 'Mit Passwort schützen', sub: 'Nur mit Passwort zu öffnen', icon: 'shieldLock', c: 'c-orange' },
@@ -264,6 +269,7 @@ function runTool(id) {
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
     case 'pdf2word': return pdfToWordSheet();
+    case 'text': return docPicker('Text extrahieren', 'Der Text der PDF wird angezeigt – gescannte Seiten werden dafür automatisch gelesen.', textFromDoc);
     case 'ocr': return docPicker('Text erkennen (OCR)', 'Gescannte Seiten werden gelesen – danach kannst du den Text suchen, markieren und kopieren. Alles passiert auf dem iPhone.', ocrDoc);
     case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
     case 'wm': return docPicker('Wasserzeichen', 'Text quer über alle Seiten, z. B. VERTRAULICH oder KOPIE.', watermarkSheet);
@@ -275,41 +281,59 @@ function runTool(id) {
 }
 
 // ----- Scan / Bilder → PDF -----
-// Scan: Kanten werden automatisch erkannt und entzerrt, Schatten entfernt. Antippen = Zuschneiden.
+// Scan: Live-Kamera mit Rahmenerkennung, danach Filter, Feinabstimmung, PDF oder Text.
 async function imageSheet(kind) {
-  const items = []; // {file, img, url, corners, rot, thumb}
-  let filter = kind === 'scan' ? 'doc' : null;
+  const items = []; // {img, url?, corners, rot, thumb}
+  let filter = kind === 'scan' ? (settings.get('scanFilter') ?? 'color') : null;
+  const adj = { brightness: 0, contrast: 0, sharp: 0 };
   const prepare = async (files, auto) => {
     const out = [];
     for (const f of files) {
       try {
         const { img, url } = await loadFileImage(f);
-        const it = { file: f, img, url, corners: auto ? detectCorners(img) : FULL.map(p => [...p]), rot: 0 };
+        const it = { img, url, corners: auto ? detectCorners(img) : FULL.map(p => [...p]), rot: 0 };
         items.push(it); out.push(it);
       } catch { toast('Bild konnte nicht geladen werden', true); }
     }
     return out;
   };
-  const thumb = it => { it.thumb = renderScan(it, filter, 320).toDataURL('image/jpeg', 0.8); };
+  const thumb = it => { it.thumb = renderScan(it, filter, 320, adj).toDataURL('image/jpeg', 0.8); };
   if (kind === 'images') {
     const fs = await pickFiles('file-img'); if (!fs.length) return;
     busy(true, 'Bilder werden geladen …'); await prepare(fs, false); items.forEach(thumb); busy(false);
+  }
+  // Scannen startet direkt mit der Live-Kamera (falls erlaubt)
+  let liveFailed = false;
+  if (kind === 'scan' && cameraSupported()) {
+    const shots = await liveScanner();
+    if (shots === null) liveFailed = true;
+    else if (!shots.length) return;
+    else { items.push(...shots); busy(true, 'Seiten werden aufbereitet …'); await new Promise(r => setTimeout(r, 30)); items.forEach(thumb); busy(false); }
   }
   sheet({
     title: kind === 'scan' ? 'Scannen' : 'Bilder → PDF',
     html: `
       <div class="scan-strip no-swipe" data-strip></div>
       <div class="btn-row" style="margin-top:4px">
-        <button class="btn" data-cam>${icon('scan')} Kamera</button>
+        <button class="btn" data-cam>${icon('scan')} ${kind === 'scan' ? 'Weitere Seite' : 'Kamera'}</button>
         <button class="btn" data-lib>${icon('images')} Fotos</button>
       </div>
-      <div class="row" style="padding:16px 2px 4px;border:0"><div class="row-main"><div class="row-title">Filter</div></div>
-        <div class="seg" data-f><button data-v="">Original</button><button data-v="color">Farbe</button><button data-v="doc">Dokument</button></div></div>
-      ${kind === 'scan' ? `<div class="row" style="padding:12px 2px 4px;border:0"><div class="row-main"><div class="row-title">Text erkennen</div><div class="row-sub">Scan durchsuchbar & kopierbar machen</div></div>
+      <div class="lbl">Filter</div>
+      <div class="flt-row no-swipe" data-flt></div>
+      <button class="adj-toggle" data-adjt>Anpassen ${icon('chevronDown')}</button>
+      <div class="adj-body" data-adjb>
+        ${[['brightness', 'Helligkeit', -50, 50], ['contrast', 'Kontrast', -50, 50], ['sharp', 'Schärfe', 0, 100]].map(([k, l, mn, mx]) =>
+          `<div class="adj-row"><span>${l}</span><input type="range" class="range" min="${mn}" max="${mx}" step="1" value="0" data-adj="${k}"><span data-av="${k}">0</span></div>`).join('')}
+        <button class="link-btn" data-adjr style="padding:6px 2px">Zurücksetzen</button>
+      </div>
+      ${kind === 'scan' ? `<div class="row" style="padding:12px 2px 4px;border:0"><div class="row-main"><div class="row-title">Text erkennen</div><div class="row-sub">PDF durchsuchbar & kopierbar machen</div></div>
         <div class="seg" data-ocr><button data-v="1">An</button><button data-v="0">Aus</button></div></div>` : ''}
-      <div class="btn-row"><button class="btn primary" data-ok>${icon('check')} PDF erstellen</button></div>`,
+      <div class="btn-row">
+        <button class="btn" data-txt style="flex:0 0 auto;width:auto;padding:15px 16px">${icon('textScan')} Text</button>
+        <button class="btn primary" data-ok>${icon('check')} PDF erstellen</button>
+      </div>`,
     onMount(el, api) {
-      const strip = el.querySelector('[data-strip]');
+      const strip = el.querySelector('[data-strip]'), flt = el.querySelector('[data-flt]');
       let ocrOn = settings.get('scanOcr') !== false;
       const ocrSeg = () => el.querySelectorAll('[data-ocr] button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === ocrOn));
       el.querySelectorAll('[data-ocr] button').forEach(b => b.onclick = () => { ocrOn = b.dataset.v === '1'; settings.set('scanOcr', ocrOn); ocrSeg(); });
@@ -317,42 +341,92 @@ async function imageSheet(kind) {
       const render = () => {
         strip.innerHTML = items.length ? items.map((it, k) => `<div class="scan-item" data-e="${k}" style="background-image:url(${it.thumb})"><span class="edit-hint">${icon('fit')}</span><button class="del" data-d="${k}">${icon('x')}</button></div>`).join('')
           : `<div class="empty" style="width:100%;padding:24px">${kind === 'scan' ? 'Fotografiere dein Dokument – Ränder werden automatisch erkannt und gerade gezogen.' : 'Noch keine Bilder ausgewählt.'}</div>`;
-        strip.querySelectorAll('[data-d]').forEach(b => b.onclick = e => { e.stopPropagation(); items.splice(+b.dataset.d, 1); render(); });
+        strip.querySelectorAll('[data-d]').forEach(b => b.onclick = e => { e.stopPropagation(); const it = items.splice(+b.dataset.d, 1)[0]; if (it?.url) URL.revokeObjectURL(it.url); render(); renderFilters(); });
         strip.querySelectorAll('[data-e]').forEach(b => b.onclick = () => crop(items[+b.dataset.e]));
-        el.querySelectorAll('[data-f] button').forEach(b => b.classList.toggle('on', (b.dataset.v || null) === filter));
+      };
+      // Filter-Vorschau mit der ersten Seite
+      let fltFor = null, fltPrev = {};
+      const renderFilters = () => {
+        const first = items[0];
+        if (first && fltFor !== first) {
+          fltFor = first; fltPrev = {};
+          const base = renderScan(first, '', 220);
+          for (const [k] of FILTERS) { const c = document.createElement('canvas'); c.width = base.width; c.height = base.height; c.getContext('2d').drawImage(base, 0, 0); fltPrev[k] = enhanceScan(c, k).toDataURL('image/jpeg', 0.75); }
+        }
+        flt.innerHTML = FILTERS.map(([k, l]) => `<button class="flt ${k === (filter || '') ? 'on' : ''}" data-fk="${k}"><span class="flt-img" style="background-image:url(${fltPrev[k] || ''})"></span>${l}</button>`).join('');
+        flt.querySelectorAll('[data-fk]').forEach(b => b.onclick = () => {
+          filter = b.dataset.fk || null; if (kind === 'scan') settings.set('scanFilter', filter || ''); haptic();
+          busy(true, 'Filter wird angewendet …');
+          setTimeout(() => { items.forEach(thumb); busy(false); render(); renderFilters(); }, 20);
+        });
       };
       const crop = async it => {
         const r = await cropEditor(it); if (!r) return;
-        it.corners = r.corners; it.rot = r.rot; thumb(it); render();
+        it.corners = r.corners; it.rot = r.rot; thumb(it); render(); if (it === items[0]) { fltFor = null; renderFilters(); }
       };
+      const addItems = async (list) => { list.forEach(thumb); render(); renderFilters(); };
       const addFiles = async (files, fromCam) => {
         if (!files.length) return;
         busy(true, kind === 'scan' ? 'Ränder werden erkannt …' : 'Bilder werden geladen …');
         const added = await prepare(files, kind === 'scan');
-        added.forEach(thumb); busy(false); render();
+        await addItems(added); busy(false);
         if (kind === 'scan' && fromCam && added.length === 1) crop(added[0]);
       };
-      el.querySelector('[data-cam]').onclick = async () => addFiles(await pickFiles('file-cam'), true);
+      el.querySelector('[data-cam]').onclick = async () => {
+        if (cameraSupported() && !liveFailed) {
+          const shots = await liveScanner({ startCount: items.length });
+          if (shots === null) { liveFailed = true; return addFiles(await pickFiles('file-cam'), true); }
+          if (shots.length) { items.push(...shots); busy(true, 'Seiten werden aufbereitet …'); await new Promise(r => setTimeout(r, 30)); await addItems(shots); busy(false); }
+        } else addFiles(await pickFiles('file-cam'), true);
+      };
       el.querySelector('[data-lib]').onclick = async () => addFiles(await pickFiles('file-img'), false);
-      el.querySelectorAll('[data-f] button').forEach(b => b.onclick = () => { filter = b.dataset.v || null; items.forEach(thumb); render(); });
+      // Anpassen
+      el.querySelector('[data-adjt]').onclick = e => { e.currentTarget.classList.toggle('open'); el.querySelector('[data-adjb]').classList.toggle('open'); };
+      let adjT;
+      const applyAdj = () => { clearTimeout(adjT); adjT = setTimeout(() => { items.forEach(thumb); render(); }, 160); };
+      el.querySelectorAll('[data-adj]').forEach(r => r.oninput = () => { adj[r.dataset.adj] = +r.value; el.querySelector(`[data-av="${r.dataset.adj}"]`).textContent = r.value; applyAdj(); });
+      el.querySelector('[data-adjr]').onclick = () => { for (const k in adj) adj[k] = 0; el.querySelectorAll('[data-adj]').forEach(r => { r.value = 0; el.querySelector(`[data-av="${r.dataset.adj}"]`).textContent = '0'; }); applyAdj(); };
+      // Text extrahieren
+      el.querySelector('[data-txt]').onclick = async () => {
+        if (!items.length) return toast('Bitte zuerst eine Seite scannen', true);
+        busy(true, 'Texterkennung wird geladen …');
+        try {
+          const { recognizeCanvases } = await import('./ocr.js');
+          const pages = await recognizeCanvases(items.map(it => () => renderScan(it, filter === 'invert' ? 'doc' : filter, 2400, adj)),
+            { onProgress: (t, x) => busy(true, x > 0 && x < 1 ? `${t} ${Math.round(x * 100)} %` : t) });
+          busy(false); textSheet(pages, `Scan ${today()}`);
+        } catch (e) { console.error(e); busy(false); toast(e?.message?.includes('geladen') ? e.message : 'Texterkennung fehlgeschlagen', true); }
+      };
       el.querySelector('[data-ok]').onclick = async () => {
         if (!items.length) return toast('Bitte zuerst Bilder hinzufügen', true);
         api.close();
         busy(true, 'PDF wird erstellt …');
         try {
           const urls = [];
-          for (const it of items) { urls.push(renderScan(it, filter, 2200).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
+          for (const it of items) { urls.push(renderScan(it, filter, 2200, adj).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
           const bytes = await imagesToPdf(urls, { margin: 0 });
           const id = await saveNewDoc(bytes, `${kind === 'scan' ? 'Scan' : 'Bilder'} ${today()} ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')}.pdf`);
           if (kind === 'scan' && ocrOn) { await ocrDoc(await db.get('docs', id), { quiet: true }); }
           busy(false); await renderRecents(); toast(kind === 'scan' && ocrOn ? 'Scan erstellt – Text ist durchsuchbar' : 'PDF erstellt'); openDoc(id);
         } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); }
       };
-      render();
-      if (kind === 'scan') setTimeout(() => el.querySelector('[data-cam]').click(), 450);
+      render(); renderFilters();
+      if (kind === 'scan' && liveFailed && !items.length) setTimeout(() => el.querySelector('[data-cam]').click(), 450);
     },
-    onClose: () => items.forEach(it => setTimeout(() => URL.revokeObjectURL(it.url), 3000)),
+    onClose: () => items.forEach(it => it.url && setTimeout(() => URL.revokeObjectURL(it.url), 3000)),
   });
+}
+
+// ----- Text extrahieren (aus einer PDF) -----
+async function textFromDoc(d) {
+  if (!d) return;
+  busy(true, 'Text wird gelesen …');
+  try {
+    const { extractPdfText } = await import('./ocr.js');
+    const f = await db.get('files', d.id);
+    const pages = await extractPdfText(f.data, { onProgress: (t, x) => busy(true, x > 0 && x < 1 ? `${t} ${Math.round(x * 100)} %` : t) });
+    busy(false); textSheet(pages, d.name);
+  } catch (e) { console.error(e); busy(false); toast(e?.message?.includes('geladen') ? e.message : 'Text konnte nicht gelesen werden', true); }
 }
 
 // ----- Zusammenfügen -----

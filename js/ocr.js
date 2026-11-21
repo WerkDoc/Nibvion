@@ -28,6 +28,37 @@ function simd() {
 
 const tick = () => new Promise(r => setTimeout(r, 0));
 
+async function makeWorker(logger) {
+  await loadLib();
+  const w = await window.Tesseract.createWorker('deu', 1, {
+    workerPath: BASE + 'worker.min.js',
+    corePath: BASE + (simd() ? 'tesseract-core-simd-lstm.wasm.js' : 'tesseract-core-lstm.wasm.js'),
+    langPath: BASE.replace(/\/$/, ''),
+    gzip: true,
+    workerBlobURL: false,
+    logger,
+  });
+  await w.setParameters({ preserve_interword_spaces: '1' });
+  return w;
+}
+
+// Erkannten Text in lesbare Absätze bringen (Zeilen zusammenfügen, Silbentrennung auflösen)
+function blocksToText(data) {
+  const paras = [];
+  for (const b of data.blocks || []) for (const p of b.paragraphs || []) {
+    let t = '';
+    for (const l of p.lines || []) {
+      const lt = (l.words || []).filter(w => w.text && w.confidence >= 20).map(w => w.text).join(' ').trim();
+      if (!lt) continue;
+      if (!t) t = lt;
+      else if (/[A-Za-zÄÖÜäöüß]-$/.test(t)) t = t.slice(0, -1) + lt;
+      else t += ' ' + lt;
+    }
+    if (t) paras.push(t.replace(/ {2,}/g, ' '));
+  }
+  return paras.join('\n\n') || (data.text || '').trim();
+}
+
 const okChar = new Map();
 function safeText(font, s) {
   let o = '';
@@ -70,17 +101,8 @@ export async function ocrPdf(bytes, { onProgress, force = false } = {}) {
     if (!todo.length) return { bytes: null, pages: 0, words: 0 };
 
     say('Texterkennung wird geladen …', 0);
-    await loadLib();
     let cur = 0;
-    worker = await window.Tesseract.createWorker('deu', 1, {
-      workerPath: BASE + 'worker.min.js',
-      corePath: BASE + (simd() ? 'tesseract-core-simd-lstm.wasm.js' : 'tesseract-core-lstm.wasm.js'),
-      langPath: BASE.replace(/\/$/, ''),
-      gzip: true,
-      workerBlobURL: false,
-      logger: m => { if (m.status === 'recognizing text' && cur) say(`Seite ${cur.k} von ${todo.length} wird erkannt …`, (cur.k - 1 + m.progress) / todo.length); },
-    });
-    await worker.setParameters({ preserve_interword_spaces: '1' });
+    worker = await makeWorker(m => { if (m.status === 'recognizing text' && cur) say(`Seite ${cur.k} von ${todo.length} wird erkannt …`, (cur.k - 1 + m.progress) / todo.length); });
 
     const L = window.PDFLib;
     const doc = await L.PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
@@ -142,4 +164,58 @@ export async function ocrPdf(bytes, { onProgress, force = false } = {}) {
     try { worker && await worker.terminate(); } catch {}
     try { pdf.loadingTask.destroy(); } catch {}
   }
+}
+
+/**
+ * Text aus Bildern (Canvas) erkennen – für „Text extrahieren“ beim Scannen.
+ * Gibt je Seite den Text zurück.
+ */
+export async function recognizeCanvases(canvases, { onProgress } = {}) {
+  const say = (t, f) => onProgress && onProgress(t, f);
+  let cur = 0;
+  say('Texterkennung wird geladen …', 0);
+  const worker = await makeWorker(m => { if (m.status === 'recognizing text' && cur) say(`Seite ${cur} von ${canvases.length} wird gelesen …`, (cur - 1 + m.progress) / canvases.length); });
+  try {
+    const out = [];
+    for (let i = 0; i < canvases.length; i++) {
+      cur = i + 1;
+      say(`Seite ${cur} von ${canvases.length} wird gelesen …`, i / canvases.length);
+      await tick();
+      const c = typeof canvases[i] === 'function' ? await canvases[i]() : canvases[i];
+      const { data } = await worker.recognize(c, {}, { blocks: true, text: true });
+      out.push(blocksToText(data));
+    }
+    return out;
+  } finally { try { await worker.terminate(); } catch {} }
+}
+
+/**
+ * Text einer PDF: Seiten mit Textebene direkt, gescannte Seiten per Texterkennung.
+ */
+export async function extractPdfText(bytes, { onProgress } = {}) {
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)), isEvalSupported: false }).promise;
+  try {
+    const texts = [], needs = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const tc = await (await pdf.getPage(i)).getTextContent();
+      let t = '', chars = 0;
+      for (const it of tc.items) { if (it.str) { t += it.str; chars += it.str.replace(/\s/g, '').length; } t += it.hasEOL ? '\n' : (it.str && !it.str.endsWith(' ') ? ' ' : ''); }
+      texts.push(t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim());
+      if (chars < MIN_CHARS) needs.push(i);
+    }
+    if (needs.length) {
+      const render = no => async () => {
+        const page = await pdf.getPage(no);
+        const base = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: Math.min(LONG_SIDE / Math.max(base.width, base.height), 4) });
+        const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        return c;
+      };
+      const res = await recognizeCanvases(needs.map(render), { onProgress });
+      needs.forEach((no, k) => { texts[no - 1] = res[k]; });
+    }
+    return texts;
+  } finally { try { pdf.loadingTask.destroy(); } catch {} }
 }
