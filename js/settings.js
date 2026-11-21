@@ -25,6 +25,9 @@ export function applyTheme() {
   const t = settings.get('theme');
   const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
   document.documentElement.dataset.theme = light ? 'light' : 'dark';
-  document.querySelector('meta[name=theme-color]').content = light ? '#ffffff' : '#1c1f26';
+  // Farbe für den unteren Streifen, den iOS bei Home-Bildschirm-Apps selbst füllt:
+  // muss genau dem App-Hintergrund entsprechen (beim Start dunkel wie der Startbildschirm)
+  const splash = document.documentElement.classList.contains('splashing');
+  document.querySelector('meta[name=theme-color]').content = splash ? '#15171c' : light ? '#f3f4f7' : '#15171c';
 }
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
