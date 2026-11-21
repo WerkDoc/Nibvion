@@ -55,7 +55,7 @@ const toolDef = () => MODES[E.mode].tools.find(t => t.id === E.tool);
 const kind = () => toolDef()?.kind || (E.mode === 'view' ? 'none' : 'select');
 
 // ======================= Öffnen / Schließen =======================
-export async function openEditor(docId, mode = 'view', onClose) {
+export async function openEditor(docId, mode = 'view', onClose, page = 0) {
   busy(true, 'PDF wird geladen …');
   try {
     const meta = await db.get('docs', docId);
@@ -69,6 +69,7 @@ export async function openEditor(docId, mode = 'view', onClose) {
     E.open = true;
     setMode(mode === 'pages' ? 'view' : mode, true);
     if (mode === 'pages') pageManager();
+    if (page > 0 && E.pages[page]) requestAnimationFrame(() => { const sc = $('ed-scroll'); sc.scrollTop = E.pages[page].el.offsetTop - 12; updPageChip(); });
     meta.opened = Date.now(); db.put('docs', meta);
   } catch (err) {
     console.error(err); toast('PDF konnte nicht geöffnet werden', true);

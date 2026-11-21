@@ -3,11 +3,14 @@ import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
 import { toast, busy, sheet, confirmDlg, promptDlg, esc, fmtSize, fmtDate, pickFiles, today, haptic, measureGap } from './ui.js';
 import { loadPdf, closePdf, renderThumb, imagesToPdf, mergePdfs, blankPdf, normalizeImage, flatten, pageInfos } from './pdfcore.js';
+import { detectCorners, cropEditor, loadFileImage, render as renderScan, FULL } from './scanner.js';
+import { searchSheet, extractText } from './search.js';
+import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
 import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.3.6';
+export const VERSION = '1.4.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -21,8 +24,10 @@ async function saveNewDoc(bytes, name) {
   const pdf = await loadPdf(data);
   let thumb = '';
   try { thumb = await renderThumb(pdf, 1); } catch {}
+  let pages = [];
+  try { pages = await extractText(pdf); } catch {}
   const id = uid();
-  const meta = { id, name: /\.pdf$/i.test(name) ? name : name + '.pdf', size: data.byteLength, pages: pdf.numPages, thumb, objects: [], created: Date.now(), updated: Date.now(), opened: Date.now() };
+  const meta = { id, name: /\.pdf$/i.test(name) ? name : name + '.pdf', size: data.byteLength, pages: pdf.numPages, thumb, objects: [], created: Date.now(), updated: Date.now(), opened: Date.now(), textIdx: { size: data.byteLength, pages } };
   closePdf(pdf);
   await db.put('files', { id, data });
   await db.put('docs', meta);
@@ -90,7 +95,7 @@ async function importPdfs(mode) {
   if (first) openDoc(first, mode || 'view');
 }
 
-function openDoc(id, mode = 'view') { openEditor(id, mode, renderRecents); }
+function openDoc(id, mode = 'view', page = 0) { openEditor(id, mode, renderRecents, page); }
 
 // ======================= Start =======================
 const QUICK = [
@@ -266,11 +271,26 @@ function runTool(id) {
 }
 
 // ----- Scan / Bilder → PDF -----
+// Scan: Kanten werden automatisch erkannt und entzerrt, Schatten entfernt. Antippen = Zuschneiden.
 async function imageSheet(kind) {
-  const items = []; // {file}
+  const items = []; // {file, img, url, corners, rot, thumb}
   let filter = kind === 'scan' ? 'doc' : null;
-  const add = async files => { for (const f of files) items.push({ file: f, url: URL.createObjectURL(f) }); };
-  if (kind === 'images') { const fs = await pickFiles('file-img'); if (!fs.length) return; await add(fs); }
+  const prepare = async (files, auto) => {
+    const out = [];
+    for (const f of files) {
+      try {
+        const { img, url } = await loadFileImage(f);
+        const it = { file: f, img, url, corners: auto ? detectCorners(img) : FULL.map(p => [...p]), rot: 0 };
+        items.push(it); out.push(it);
+      } catch { toast('Bild konnte nicht geladen werden', true); }
+    }
+    return out;
+  };
+  const thumb = it => { it.thumb = renderScan(it, filter, 320).toDataURL('image/jpeg', 0.8); };
+  if (kind === 'images') {
+    const fs = await pickFiles('file-img'); if (!fs.length) return;
+    busy(true, 'Bilder werden geladen …'); await prepare(fs, false); items.forEach(thumb); busy(false);
+  }
   sheet({
     title: kind === 'scan' ? 'Scannen' : 'Bilder → PDF',
     html: `
@@ -285,22 +305,34 @@ async function imageSheet(kind) {
     onMount(el, api) {
       const strip = el.querySelector('[data-strip]');
       const render = () => {
-        strip.innerHTML = items.length ? items.map((it, k) => `<div class="scan-item" style="background-image:url(${it.url});filter:${filter === 'doc' ? 'grayscale(1) contrast(1.45) brightness(1.12)' : filter === 'color' ? 'contrast(1.2) brightness(1.06)' : 'none'}"><button class="del" data-d="${k}">${icon('x')}</button></div>`).join('')
-          : `<div class="empty" style="width:100%;padding:24px">${kind === 'scan' ? 'Fotografiere dein Dokument – mehrere Seiten möglich.' : 'Noch keine Bilder ausgewählt.'}</div>`;
-        strip.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { items.splice(+b.dataset.d, 1); render(); });
+        strip.innerHTML = items.length ? items.map((it, k) => `<div class="scan-item" data-e="${k}" style="background-image:url(${it.thumb})"><span class="edit-hint">${icon('fit')}</span><button class="del" data-d="${k}">${icon('x')}</button></div>`).join('')
+          : `<div class="empty" style="width:100%;padding:24px">${kind === 'scan' ? 'Fotografiere dein Dokument – Ränder werden automatisch erkannt und gerade gezogen.' : 'Noch keine Bilder ausgewählt.'}</div>`;
+        strip.querySelectorAll('[data-d]').forEach(b => b.onclick = e => { e.stopPropagation(); items.splice(+b.dataset.d, 1); render(); });
+        strip.querySelectorAll('[data-e]').forEach(b => b.onclick = () => crop(items[+b.dataset.e]));
         el.querySelectorAll('[data-f] button').forEach(b => b.classList.toggle('on', (b.dataset.v || null) === filter));
       };
-      el.querySelector('[data-cam]').onclick = async () => { await add(await pickFiles('file-cam')); render(); };
-      el.querySelector('[data-lib]').onclick = async () => { await add(await pickFiles('file-img')); render(); };
-      el.querySelectorAll('[data-f] button').forEach(b => b.onclick = () => { filter = b.dataset.v || null; render(); });
+      const crop = async it => {
+        const r = await cropEditor(it); if (!r) return;
+        it.corners = r.corners; it.rot = r.rot; thumb(it); render();
+      };
+      const addFiles = async (files, fromCam) => {
+        if (!files.length) return;
+        busy(true, kind === 'scan' ? 'Ränder werden erkannt …' : 'Bilder werden geladen …');
+        const added = await prepare(files, kind === 'scan');
+        added.forEach(thumb); busy(false); render();
+        if (kind === 'scan' && fromCam && added.length === 1) crop(added[0]);
+      };
+      el.querySelector('[data-cam]').onclick = async () => addFiles(await pickFiles('file-cam'), true);
+      el.querySelector('[data-lib]').onclick = async () => addFiles(await pickFiles('file-img'), false);
+      el.querySelectorAll('[data-f] button').forEach(b => b.onclick = () => { filter = b.dataset.v || null; items.forEach(thumb); render(); });
       el.querySelector('[data-ok]').onclick = async () => {
         if (!items.length) return toast('Bitte zuerst Bilder hinzufügen', true);
         api.close();
         busy(true, 'PDF wird erstellt …');
         try {
           const urls = [];
-          for (const it of items) urls.push((await normalizeImage(it.file, 2000, filter)).url);
-          const bytes = await imagesToPdf(urls, { margin: kind === 'scan' ? 0 : 0 });
+          for (const it of items) { urls.push(renderScan(it, filter, 2200).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
+          const bytes = await imagesToPdf(urls, { margin: 0 });
           const id = await saveNewDoc(bytes, `${kind === 'scan' ? 'Scan' : 'Bilder'} ${today()} ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')}.pdf`);
           busy(false); await renderRecents(); toast('PDF erstellt'); openDoc(id);
         } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); }
@@ -516,7 +548,7 @@ function bindCopy(el, get, set) {
 }
 
 // ----- Wasserzeichen -----
-const WM_TEXTS = ['VERTRAULICH', 'KOPIE', 'ENTWURF', 'BEZAHLT', 'ORIGINAL', 'MUSTER', 'REPAIRMOBILE'];
+const WM_TEXTS = ['VERTRAULICH', 'KOPIE', 'ENTWURF', 'BEZAHLT', 'ORIGINAL', 'MUSTER'];
 async function watermarkSheet(d) {
   if (!d) return;
   busy(true, 'Vorschau wird geladen …');
@@ -723,6 +755,8 @@ async function renderSettings() {
     <div class="group-title">Speicher</div>
     <div class="group">
       <div class="row"><span class="row-ic c-teal">${icon('storage')}</span><span class="row-main"><span class="row-title">Belegt</span><span class="row-sub" style="display:block">${docs.length} Dokument(e)</span></span><span class="row-end">${usage}</span></div>
+      <button class="row" data-s="backup"><span class="row-ic c-blue">${icon('archive')}</span><span class="row-main"><span class="row-title">Backup erstellen</span><span class="row-sub" style="display:block">${settings.get('lastBackup') ? 'Zuletzt: ' + fmtDate(settings.get('lastBackup')) : 'Alle PDFs, Unterschriften & Stempel als ZIP sichern'}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
+      <button class="row" data-s="restore"><span class="row-ic c-violet">${icon('restore')}</span><span class="row-main"><span class="row-title">Backup wiederherstellen</span><span class="row-sub" style="display:block">ZIP-Datei aus „Dateien“ oder iCloud wählen</span></span><span class="row-end">${icon('chevronRight')}</span></button>
       <button class="row" data-s="wipe"><span class="row-ic c-red">${icon('trash')}</span><span class="row-main"><span class="row-title" style="color:var(--danger)">Alle Dokumente löschen</span></span></button>
     </div>
 
@@ -741,6 +775,29 @@ async function renderSettings() {
     if (s === 'sigs') signatureSheet(null);
     if (s === 'stamps') stampSheet(null);
     if (s === 'name') { const n = await promptDlg('Zusatzzeile in Stempeln', settings.get('stampName'), 'Speichern', 'z. B. Firmenname'); if (n !== null) { settings.set('stampName', n); renderSettings(); } }
+    if (s === 'backup') {
+      busy(true, 'Backup wird erstellt …');
+      try {
+        const r = await createBackup(VERSION); busy(false);
+        if (!r.count && !r.assets) return toast('Es gibt noch nichts zu sichern', true);
+        if (await shareBackup(r.bytes)) { settings.set('lastBackup', Date.now()); renderSettings(); toast(`${r.count} PDF(s) gesichert`); }
+      } catch (e) { console.error(e); busy(false); toast('Backup fehlgeschlagen', true); }
+    }
+    if (s === 'restore') {
+      const [f] = await pickFiles('file-zip'); if (!f) return;
+      busy(true, 'Backup wird gelesen …');
+      let bk;
+      try { bk = await readBackup(f); } catch (e) { busy(false); return toast('Das ist keine Nibvion-Sicherung', true); }
+      busy(false);
+      const n = (bk.meta.docs || []).length;
+      if (!(await confirmDlg('Backup wiederherstellen?', `Die Sicherung vom ${fmtDate(bk.meta.created)} enthält ${n} PDF(s). Sie werden zu deinen PDFs hinzugefügt – gleiche Dokumente werden durch den Stand aus der Sicherung ersetzt.`, 'Wiederherstellen', false))) return;
+      busy(true, 'Wird wiederhergestellt …');
+      try {
+        const r = await restoreBackup(bk); busy(false);
+        toast(`${r.docs} PDF(s) wiederhergestellt`);
+        setTimeout(() => location.reload(), 900);
+      } catch (e) { console.error(e); busy(false); toast('Wiederherstellen fehlgeschlagen', true); }
+    }
     if (s === 'wipe' && await confirmDlg('Alles löschen?', 'Alle importierten PDFs werden von diesem Gerät gelöscht. Unterschriften und Stempel bleiben erhalten.')) {
       await db.clear('docs'); await db.clear('files'); renderSettings(); renderRecents(); toast('Alle Dokumente gelöscht');
     }
@@ -774,6 +831,7 @@ async function init() {
     if (a === 'import') importPdfs();
     if (a === 'fab') fabSheet();
     if (a === 'go-settings') switchTab('settings');
+    if (a === 'search') searchSheet(openDoc);
     if (a === 'toggle-sort') { settings.set('sort', settings.get('sort') === 'name' ? 'new' : 'name'); renderRecents(); }
     if (a === 'toggle-fav') { settings.set('favOnly', !settings.get('favOnly')); haptic(); renderRecents(); }
   });
