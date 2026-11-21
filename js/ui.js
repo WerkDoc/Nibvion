@@ -104,6 +104,22 @@ if (window.visualViewport) {
   visualViewport.addEventListener('scroll', upd);
 }
 
+// ---------- iOS: Seite nach der Tastatur zurücksetzen ----------
+// iOS schiebt beim Öffnen der Tastatur das ganze Dokument nach oben und setzt es in
+// Home-Bildschirm-Apps nicht immer zurück. Die Tab-Leiste sieht dann normal aus,
+// aber Tipps landen daneben (Tabs „reagieren nicht“). Deshalb immer auf 0 zurück.
+const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable); };
+export function resetDocScroll() {
+  if (typing()) return;
+  if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+  if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0;
+  if (document.body.scrollTop) document.body.scrollTop = 0;
+}
+document.addEventListener('focusout', () => { setTimeout(resetDocScroll, 60); setTimeout(resetDocScroll, 400); });
+window.addEventListener('scroll', () => { if (!typing()) resetDocScroll(); }, { passive: true });
+if (window.visualViewport) visualViewport.addEventListener('resize', () => setTimeout(resetDocScroll, 80));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(resetDocScroll, 50); });
+
 // ---------- iOS-Streifen unten ----------
 // Ursache war die Statusleiste im Modus „black-translucent“ (iOS 26 kürzt die App dann unten
 // um die Statusleisten-Höhe). Mit „default“ tritt das nicht mehr auf – Funktion bleibt als No-op.

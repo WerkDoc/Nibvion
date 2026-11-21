@@ -1,7 +1,7 @@
 // ================= Nibvion App =================
 import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
-import { toast, busy, sheet, confirmDlg, promptDlg, esc, fmtSize, fmtDate, pickFiles, today, haptic, measureGap } from './ui.js';
+import { toast, busy, sheet, confirmDlg, promptDlg, esc, fmtSize, fmtDate, pickFiles, today, haptic, measureGap, resetDocScroll } from './ui.js';
 import { loadPdf, closePdf, renderThumb, imagesToPdf, mergePdfs, blankPdf, normalizeImage, flatten, pageInfos } from './pdfcore.js';
 import { detectCorners, cropEditor, loadFileImage, render as renderScan, enhance as enhanceScan, FULL, FILTERS } from './scanner.js';
 import { liveScanner, cameraSupported } from './camera.js';
@@ -12,7 +12,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.6.0';
+export const VERSION = '1.6.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -917,6 +917,7 @@ async function renderSettings() {
 // ======================= Tabs =======================
 const TABS = ['tools', 'home', 'settings'];
 function switchTab(tab) {
+  resetDocScroll();
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === tab));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelector('.tab-indicator').style.transform = `translateX(${TABS.indexOf(tab) * 100}%)`;
