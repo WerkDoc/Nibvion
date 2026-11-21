@@ -15,8 +15,11 @@ export function toast(msg, err = false) {
 let busyEl;
 export function busy(on, text = 'Einen Moment …') {
   if (on) {
-    if (!busyEl) { busyEl = document.createElement('div'); busyEl.className = 'busy'; document.body.appendChild(busyEl); }
-    busyEl.innerHTML = `<div class="busy-card"><div class="spinner"></div><div>${esc(text)}</div></div>`;
+    if (!busyEl) {
+      busyEl = document.createElement('div'); busyEl.className = 'busy'; document.body.appendChild(busyEl);
+      busyEl.innerHTML = `<div class="busy-card"><div class="spinner"></div><div class="busy-text"></div></div>`;
+    }
+    busyEl.querySelector('.busy-text').textContent = text;   // nur Text tauschen – Spinner läuft weiter
   } else if (busyEl) { busyEl.remove(); busyEl = null; }
 }
 
