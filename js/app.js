@@ -7,13 +7,14 @@ import { detectCorners, cropEditor, loadFileImage, render as renderScan, enhance
 import { liveScanner, cameraSupported } from './camera.js';
 import { textSheet } from './textview.js';
 import { scanReview } from './scanreview.js';
+import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
 import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
 import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.8.0';
+export const VERSION = '1.9.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -116,7 +117,7 @@ function renderQuick() {
 }
 
 async function allDocs() {
-  const docs = await db.all('docs');
+  const docs = (await db.all('docs')).filter(d => !isDeleted(d));
   return settings.get('sort') === 'name'
     ? docs.sort((a, b) => a.name.localeCompare(b.name, 'de'))
     : docs.sort((a, b) => (b.updated || 0) - (a.updated || 0));
@@ -185,8 +186,8 @@ function docMenu(d) {
           const n = await promptDlg('Umbenennen', d.name.replace(/\.pdf$/i, ''));
           if (n) { d.name = n + '.pdf'; await db.put('docs', d); renderRecents(); }
         }
-        if (a === 'del' && await confirmDlg('PDF löschen?', `„${d.name}“ wird von diesem Gerät gelöscht.`)) {
-          await db.del('docs', d.id); await db.del('files', d.id); renderRecents(); toast('Gelöscht');
+        if (a === 'del' && await confirmDlg('PDF löschen?', `„${d.name}“ kommt in den Papierkorb und kann ${TRASH_DAYS} Tage lang wiederhergestellt werden.`, 'In den Papierkorb')) {
+          await moveToTrash(d.id); renderRecents(); toast('In den Papierkorb verschoben');
         }
       });
     },
@@ -828,7 +829,8 @@ function fabSheet() {
 async function renderSettings() {
   let usage = '';
   try { const e = await navigator.storage.estimate(); usage = fmtSize(e.usage || 0); } catch {}
-  const docs = await db.all('docs');
+  const all = await db.all('docs');
+  const docs = all.filter(d => !isDeleted(d)), trashed = all.length - docs.length;
   const th = settings.get('theme');
   $('settings-list').innerHTML = `
     <div class="group-title">Darstellung</div>
@@ -849,6 +851,7 @@ async function renderSettings() {
       <div class="row"><span class="row-ic c-teal">${icon('storage')}</span><span class="row-main"><span class="row-title">Belegt</span><span class="row-sub" style="display:block">${docs.length} Dokument(e)</span></span><span class="row-end">${usage}</span></div>
       <button class="row" data-s="backup"><span class="row-ic c-blue">${icon('archive')}</span><span class="row-main"><span class="row-title">Backup erstellen</span><span class="row-sub" style="display:block">${settings.get('lastBackup') ? 'Zuletzt: ' + fmtDate(settings.get('lastBackup')) : 'Alle PDFs, Unterschriften & Stempel als ZIP sichern'}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
       <button class="row" data-s="restore"><span class="row-ic c-violet">${icon('restore')}</span><span class="row-main"><span class="row-title">Backup wiederherstellen</span><span class="row-sub" style="display:block">ZIP-Datei aus „Dateien“ oder iCloud wählen</span></span><span class="row-end">${icon('chevronRight')}</span></button>
+      <button class="row" data-s="trash"><span class="row-ic c-orange">${icon('trash')}</span><span class="row-main"><span class="row-title">Papierkorb</span><span class="row-sub" style="display:block">${trashed ? `${trashed} PDF(s) · ${TRASH_DAYS} Tage wiederherstellbar` : `Gelöschte PDFs ${TRASH_DAYS} Tage wiederherstellen`}</span></span><span class="row-end">${trashed ? `<span class="soon">${trashed}</span>` : ''}${icon('chevronRight')}</span></button>
       <button class="row" data-s="wipe"><span class="row-ic c-red">${icon('trash')}</span><span class="row-main"><span class="row-title" style="color:var(--danger)">Alle Dokumente löschen</span></span></button>
     </div>
 
@@ -890,8 +893,10 @@ async function renderSettings() {
         setTimeout(() => location.reload(), 900);
       } catch (e) { console.error(e); busy(false); toast('Wiederherstellen fehlgeschlagen', true); }
     }
-    if (s === 'wipe' && await confirmDlg('Alles löschen?', 'Alle importierten PDFs werden von diesem Gerät gelöscht. Unterschriften und Stempel bleiben erhalten.')) {
-      await db.clear('docs'); await db.clear('files'); renderSettings(); renderRecents(); toast('Alle Dokumente gelöscht');
+    if (s === 'trash') trashSheet(() => { renderSettings(); renderRecents(); });
+    if (s === 'wipe' && await confirmDlg('Alle Dokumente löschen?', `Alle PDFs kommen in den Papierkorb und können ${TRASH_DAYS} Tage lang wiederhergestellt werden. Unterschriften und Stempel bleiben erhalten.`, 'In den Papierkorb')) {
+      const ids = (await db.all('docs')).filter(d => !isDeleted(d)).map(d => d.id);
+      await moveToTrash(ids); renderSettings(); renderRecents(); toast(`${ids.length} PDF(s) in den Papierkorb verschoben`);
     }
     if (s === 'install') sheet({ title: 'Als App installieren', html: `<ol style="color:var(--text2);line-height:1.8;padding-left:20px;margin:0 0 8px">
       <li>Seite in <b style="color:var(--text)">Safari</b> öffnen</li><li>Auf <b style="color:var(--text)">Teilen</b> ${icon('share', 'inline')} tippen</li><li><b style="color:var(--text)">„Zum Home-Bildschirm“</b> wählen</li></ol>` });
@@ -913,6 +918,7 @@ function switchTab(tab) {
 // ======================= Start =======================
 async function init() {
   measureGap();
+  try { await purgeExpired(); } catch {}
   hydrateIcons(document);
   initEditor();
   renderQuick(); renderTools();
