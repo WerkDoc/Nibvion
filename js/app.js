@@ -7,10 +7,21 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.3.3';
+export const VERSION = '1.3.4';
 const $ = id => document.getElementById(id);
 
 applyTheme();
+
+// Echte Bildschirmhöhe (iOS-PWA-Fehler: innerHeight endet über dem Home-Balken)
+function fixAppHeight() {
+  const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  const portrait = window.innerWidth < window.innerHeight;
+  const h = standalone && portrait ? Math.max(window.innerHeight, screen.height) : window.innerHeight;
+  document.documentElement.style.setProperty('--app-h', h + 'px');
+}
+fixAppHeight();
+window.addEventListener('resize', fixAppHeight);
+window.addEventListener('orientationchange', () => setTimeout(fixAppHeight, 300));
 
 // ======================= Bibliothek =======================
 async function saveNewDoc(bytes, name) {
