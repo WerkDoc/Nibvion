@@ -342,3 +342,53 @@ html.splashing, html.splashing body { background: #15171c; }
 .prot-ic { display: grid; place-items: center; margin: 4px 0 12px; }
 .prot-ic .ico { width: 54px; height: 54px; color: var(--accent); stroke-width: 1.6; }
 .btn:disabled { opacity: .45; box-shadow: none; }
+
+/* ---------- 3D-Look: Kacheln, Karten und Buttons leicht plastisch ---------- */
+:root {
+  --card-3d: linear-gradient(180deg, #2a2f39 0%, #20242c 100%);
+  --depth: inset 0 1px 0 rgba(255,255,255,.08), inset 0 -1px 0 rgba(0,0,0,.35), 0 1px 2px rgba(0,0,0,.45), 0 10px 20px -8px rgba(0,0,0,.6);
+  --depth-press: inset 0 2px 8px rgba(0,0,0,.5), 0 1px 1px rgba(0,0,0,.3);
+  --ic-shine: linear-gradient(180deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,0) 62%);
+  --ic-depth: inset 0 1px 0 rgba(255,255,255,.14), inset 0 -2px 5px rgba(0,0,0,.28), 0 4px 10px -3px rgba(0,0,0,.5);
+}
+[data-theme="light"] {
+  --card-3d: linear-gradient(180deg, #ffffff 0%, #f6f7fa 100%);
+  --depth: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(20,24,32,.05), 0 1px 2px rgba(20,24,32,.07), 0 4px 10px rgba(20,24,32,.05), 0 14px 26px -10px rgba(20,24,32,.18);
+  --depth-press: inset 0 2px 6px rgba(20,24,32,.12), 0 1px 1px rgba(20,24,32,.04);
+  --ic-shine: linear-gradient(180deg, rgba(255,255,255,.42) 0%, rgba(255,255,255,0) 58%);
+  --ic-depth: inset 0 1px 0 rgba(255,255,255,.9), inset 0 -2px 5px rgba(20,24,32,.07), 0 4px 10px -3px rgba(20,24,32,.22);
+}
+
+/* Karten & Kacheln */
+.qt, .doc-row, .group, .menu { background: var(--card-3d); box-shadow: var(--depth); border-color: transparent; }
+.qt, .doc-row { transition: transform .22s var(--spring), box-shadow .22s var(--ease), background .2s; }
+.qt:active, .doc-row:active { transform: translateY(2px) scale(.97); box-shadow: var(--depth-press); background: var(--card-3d); }
+.group .row:active, .menu .row:active { background: rgba(127,127,140,.10); box-shadow: inset 0 2px 6px rgba(0,0,0,.10); }
+
+/* Symbol-Kacheln mit Glanz von oben und Schatten */
+.qt-ic, .row-ic, .menu-grid .qt-ic { background-image: var(--ic-shine); box-shadow: var(--ic-depth); }
+.qt-ic .ico, .row-ic .ico { filter: drop-shadow(0 1px 1px rgba(0,0,0,.12)); }
+
+/* Großer Button „PDF öffnen“ */
+.hero { box-shadow: inset 0 1px 0 rgba(255,255,255,.4), inset 0 -3px 0 rgba(0,0,0,.10), 0 4px 8px rgba(255,106,91,.22), 0 16px 30px -10px rgba(255,106,91,.6); }
+.hero:active { transform: translateY(3px) scale(.98); box-shadow: inset 0 3px 10px rgba(0,0,0,.18), 0 2px 6px rgba(255,106,91,.3); }
+.hero-icon { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -2px 4px rgba(0,0,0,.08), 0 4px 10px -2px rgba(0,0,0,.18); }
+
+/* Buttons */
+.btn { background: var(--card-3d); box-shadow: var(--depth); }
+.btn:active { transform: translateY(2px) scale(.98); box-shadow: var(--depth-press); }
+.btn.primary { background: var(--grad); box-shadow: inset 0 1px 0 rgba(255,255,255,.4), inset 0 -3px 0 rgba(0,0,0,.10), 0 4px 8px rgba(255,106,91,.22), 0 12px 24px -8px rgba(255,106,91,.55); }
+.btn.primary:active { box-shadow: inset 0 3px 10px rgba(0,0,0,.18), 0 2px 6px rgba(255,106,91,.3); }
+.btn:disabled { box-shadow: none; }
+.icon-btn, .round-btn { background: var(--card-3d); box-shadow: var(--depth); border-color: transparent; }
+.icon-btn:active, .round-btn:active { box-shadow: var(--depth-press); }
+.chip { box-shadow: var(--depth); border-color: transparent; background: var(--card-3d); }
+.chip.on { background: var(--grad); box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 6px 14px -4px rgba(255,106,91,.55); }
+.seg { box-shadow: inset 0 1px 3px rgba(0,0,0,.12); }
+.seg button.on { background: var(--card-3d); box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 1px 2px rgba(0,0,0,.18), 0 3px 8px -2px rgba(0,0,0,.18); }
+
+/* „+“ und Tab-Leiste */
+.fab { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -3px 0 rgba(0,0,0,.12), 0 6px 12px rgba(255,106,91,.3), 0 16px 30px -8px rgba(255,106,91,.6); }
+.fab:active { box-shadow: inset 0 3px 10px rgba(0,0,0,.2), 0 3px 8px rgba(255,106,91,.35); }
+.tabbar { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 2px 6px rgba(0,0,0,.08), 0 16px 34px -10px rgba(0,0,0,.35); }
+.tab-indicator { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 2px 6px -1px rgba(255,106,91,.25); }
