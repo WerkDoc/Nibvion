@@ -44,6 +44,7 @@
   color-scheme: light;
 }
 
+[hidden] { display: none !important; }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overscroll-behavior: none; }
 body { overflow: hidden; -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none; }
@@ -489,3 +490,37 @@ textarea.tv-area { min-height: 52vh; font-size: 15px; line-height: 1.5; resize: 
 .adj-toggle.open .ico { transform: rotate(180deg); }
 .adj-body { display: none; }
 .adj-body.open { display: block; animation: fadeUp .25s var(--ease); }
+
+/* ---------- Scan-Ansicht (Vollbild) ---------- */
+.rv-wrap { position: fixed; inset: 0; z-index: 90; background: var(--bg); display: flex; flex-direction: column; animation: rvIn .35s var(--ease); transition: transform .3s var(--ease), opacity .28s; }
+@keyframes rvIn { from { transform: translateY(40px); opacity: 0; } }
+.rv-wrap.out { transform: translateY(60px); opacity: 0; }
+.rv-top { position: relative; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: calc(var(--safe-top) + 14px) 14px 8px; }
+.rv-grab { position: absolute; top: calc(var(--safe-top) + 4px); left: 50%; transform: translateX(-50%); width: 40px; height: 5px; border-radius: 3px; background: var(--line2); }
+.rv-round { width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: var(--card); border: 1px solid var(--line); }
+.rv-count { text-align: center; font-weight: 700; font-size: 16px; }
+.rv-save { height: 42px; padding: 0 18px; border-radius: 21px; background: var(--grad); color: #fff; font-weight: 750; display: flex; align-items: center; gap: 6px; box-shadow: 0 6px 16px rgba(255,106,91,.3); }
+.rv-save .ico { width: 18px; height: 18px; stroke-width: 2.4; }
+.rv-save:disabled { opacity: .4; }
+.rv-stage { flex: 1; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.rv-stage::-webkit-scrollbar { display: none; }
+.rv-page { position: relative; flex: 0 0 100%; height: 100%; scroll-snap-align: center; display: grid; place-items: center; padding: 8px 18px 12px; }
+.rv-page img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; border-radius: 4px; box-shadow: 0 8px 28px rgba(0,0,0,.28); transition: opacity .2s; }
+.rv-page img:not([src]) { width: 70%; aspect-ratio: .72; }
+.rv-spin { position: absolute; width: 30px; height: 30px; border-radius: 50%; border: 3px solid rgba(255,255,255,.4); border-top-color: var(--accent); animation: spin .8s linear infinite; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.rv-page.busy .rv-spin { opacity: 1; }
+.rv-page.busy img { opacity: .55; }
+.rv-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--text2); text-align: center; padding: 30px; }
+.rv-empty .ico { width: 40px; height: 40px; color: var(--text3); }
+.rv-empty b { color: var(--text); }
+.rv-panel { background: var(--bg2); border-top: 1px solid var(--line); padding: 10px 14px 4px; }
+.rv-tabs { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.rv-chip { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 16px; background: var(--card2); color: var(--text2); font-size: 13px; font-weight: 650; transition: background .2s, color .2s; }
+.rv-chip .ico { width: 16px; height: 16px; }
+.rv-chip.on { background: var(--accent-soft); color: var(--accent); }
+.rv-adj { padding: 2px 0 6px; }
+.rv-tools { display: grid; grid-template-columns: repeat(6, 1fr); background: var(--bg2); padding: 6px 6px calc(var(--safe-bottom) + 8px); }
+.rv-tools button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; font-size: 11px; font-weight: 600; color: var(--text2); border-radius: 12px; transition: transform .2s var(--spring), background .15s; }
+.rv-tools button:active { transform: scale(.9); background: var(--card2); }
+.rv-tools .ico { width: 22px; height: 22px; color: var(--text); }
+.rv-tools [data-t="del"] .ico { color: var(--danger); }
