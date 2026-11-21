@@ -26,9 +26,13 @@ export function applyTheme() {
   const t = settings.get('theme');
   const light = t === 'light' || (t === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
   document.documentElement.dataset.theme = light ? 'light' : 'dark';
-  // Farbe für den unteren Streifen, den iOS bei Home-Bildschirm-Apps selbst füllt:
-  // muss genau dem App-Hintergrund entsprechen (beim Start dunkel wie der Startbildschirm)
-  const splash = document.documentElement.classList.contains('splashing');
-  document.querySelector('meta[name=theme-color]').content = splash ? '#15171c' : light ? '#f3f4f7' : '#15171c';
+  // Statusleiste (iOS liest theme-color): genau die App-Hintergrundfarbe.
+  // Meta-Tag neu einsetzen, damit Safari den Wechsel sicher übernimmt.
+  const color = light ? '#f3f4f7' : '#15171c';
+  const old = document.querySelector('meta[name=theme-color]');
+  if (old && old.content !== color) {
+    const m = document.createElement('meta'); m.name = 'theme-color'; m.content = color;
+    old.replaceWith(m);
+  }
 }
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
