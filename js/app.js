@@ -7,7 +7,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.2.4';
+export const VERSION = '1.3.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -28,13 +28,59 @@ async function saveNewDoc(bytes, name) {
   return id;
 }
 
+// Geschützte PDF: Passwort abfragen und entsperrte Kopie speichern
+async function importLocked(buf, name) {
+  for (let tries = 0; tries < 3; tries++) {
+    busy(false);
+    const pw = await passwordPrompt(name, tries > 0);
+    if (pw == null) return null;
+    busy(true, 'PDF wird entsperrt …');
+    try {
+      const { decryptPdf } = await import('./tools.js');
+      return await saveNewDoc(await decryptPdf(buf, pw), name);
+    } catch (e) { console.warn(e); }
+  }
+  busy(false); toast('Passwort falsch', true);
+  return null;
+}
+
+function passwordPrompt(name, wrong) {
+  return new Promise(res => {
+    let out = null;
+    sheet({
+      title: 'Geschützte PDF',
+      html: `<p style="color:var(--text2);margin:0 2px 12px;line-height:1.45">„${esc(name)}“ ist mit einem Passwort geschützt.${wrong ? ' <b style="color:var(--danger)">Das Passwort war falsch.</b>' : ''} Nach dem Entsperren wird die PDF ohne Passwort in Nibvion gespeichert.</p>
+        <input class="field" type="password" data-in placeholder="Passwort" autocomplete="off">
+        <div class="btn-row"><button class="btn" data-c>Abbrechen</button><button class="btn primary" data-ok>${icon('unlock')} Entsperren</button></div>`,
+      onMount(el, api) {
+        const inp = el.querySelector('[data-in]');
+        setTimeout(() => inp.focus(), 350);
+        const ok = () => { if (!inp.value) return; out = inp.value; api.close(); };
+        inp.onkeydown = e => { if (e.key === 'Enter') ok(); };
+        el.querySelector('[data-c]').onclick = () => api.close();
+        el.querySelector('[data-ok]').onclick = ok;
+      },
+      onClose: () => res(out),
+    });
+  });
+}
+
+async function importFile(f) {
+  const buf = await f.arrayBuffer();
+  try { return await saveNewDoc(buf, f.name); }
+  catch (e) {
+    if (e?.name === 'PasswordException') return importLocked(buf, f.name);
+    throw e;
+  }
+}
+
 async function importPdfs(mode) {
   const files = await pickFiles('file-pdf');
   if (!files.length) return;
   busy(true, files.length > 1 ? `${files.length} PDFs werden importiert …` : 'PDF wird importiert …');
   let first = null, fails = 0;
   for (const f of files) {
-    try { const id = await saveNewDoc(await f.arrayBuffer(), f.name); first ??= id; }
+    try { const id = await importFile(f); if (id) first ??= id; busy(true, 'PDF wird importiert …'); }
     catch (e) { console.warn(e); fails++; }
   }
   busy(false);
@@ -68,18 +114,24 @@ async function allDocs() {
 }
 
 async function renderRecents() {
-  const docs = await allDocs();
+  const all = await allDocs();
+  const favOnly = settings.get('favOnly');
+  const docs = favOnly ? all.filter(d => d.fav) : all;
   $('btn-sort').textContent = settings.get('sort') === 'name' ? 'Name A–Z' : 'Neueste';
+  $('btn-fav').innerHTML = icon(favOnly ? 'heartFill' : 'heart');
+  $('btn-fav').classList.toggle('on', !!favOnly);
   const list = $('recent-list');
   if (!docs.length) {
-    list.innerHTML = `<div class="empty">${icon('file')}<b>Noch keine PDFs</b>Tippe auf „PDF öffnen“ oder das <b style="display:inline;color:var(--accent)">+</b>, um loszulegen.</div>`;
+    list.innerHTML = favOnly && all.length
+      ? `<div class="empty">${icon('heart')}<b>Noch keine Favoriten</b>Tippe bei einer PDF auf ⋯ → „Zu Favoriten hinzufügen“.</div>`
+      : `<div class="empty">${icon('file')}<b>Noch keine PDFs</b>Tippe auf „PDF öffnen“ oder das <b style="display:inline;color:var(--accent)">+</b>, um loszulegen.</div>`;
     return;
   }
   list.innerHTML = docs.map((d, i) => `
     <div class="doc-row" data-id="${d.id}" style="animation-delay:${Math.min(i, 8) * 40}ms">
       <div class="doc-thumb" style="background-image:url('${d.thumb || ''}')"></div>
       <button class="doc-info" data-open>
-        <div class="doc-name">${esc(d.name)}</div>
+        <div class="doc-name">${d.fav ? `<span class="doc-fav">${icon('heartFill')}</span>` : ''}${esc(d.name)}</div>
         <div class="doc-meta">${fmtDate(d.updated)} · ${fmtSize(d.size || 0)} · ${d.pages || 1} S.${d.objects?.length ? '<span class="doc-badge">bearbeitet</span>' : ''}</div>
       </button>
       <button class="doc-more" data-more aria-label="Mehr">${icon('more')}</button>
@@ -96,7 +148,10 @@ function docMenu(d) {
   sheet({
     title: d.name,
     html: `<div class="menu">
-      ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'], ['word', 'Als Word exportieren', 'word', 'c-blue'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
+      ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
+        ['fav', d.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen', d.fav ? 'heartFill' : 'heart', 'c-red'],
+        ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
+        ['word', 'Als Word exportieren', 'word', 'c-blue'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
     </div>`,
     onMount(el, api) {
@@ -104,6 +159,10 @@ function docMenu(d) {
         const a = b.dataset.a; api.close();
         if (['view', 'edit', 'sign'].includes(a)) return openDoc(d.id, a);
         if (a === 'word') return exportWord(d);
+        if (a === 'fav') { d.fav = !d.fav; await db.put('docs', d); haptic(); renderRecents(); return toast(d.fav ? 'Zu Favoriten hinzugefügt' : 'Aus Favoriten entfernt'); }
+        if (a === 'wm') return watermarkSheet(d);
+        if (a === 'compress') return compressSheet(d);
+        if (a === 'protect') return protectSheet(d);
         if (a === 'share') {
           if (d.objects?.length) { openDoc(d.id); return toast('Zum Teilen mit Änderungen: ⋯ → Teilen'); }
           const f = await db.get('files', d.id); return shareBytes(new Uint8Array(f.data), d.name);
@@ -159,6 +218,11 @@ const TOOL_GROUPS = [
     { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
     { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern', icon: 'word', c: 'c-blue' },
   ] },
+  { title: 'Schützen & Optimieren', items: [
+    { id: 'compress', label: 'Komprimieren', sub: 'PDF-Datei verkleinern', icon: 'compress', c: 'c-green' },
+    { id: 'wm', label: 'Wasserzeichen', sub: 'z. B. VERTRAULICH, KOPIE, ENTWURF', icon: 'drop', c: 'c-violet' },
+    { id: 'protect', label: 'Mit Passwort schützen', sub: 'Nur mit Passwort zu öffnen', icon: 'shieldLock', c: 'c-orange' },
+  ] },
   { title: 'Vorlagen', items: [
     { id: 'sigs', label: 'Meine Unterschriften', icon: 'sign', c: 'c-green' },
     { id: 'stamps', label: 'Meine Stempel', icon: 'stamp', c: 'c-red' },
@@ -191,6 +255,9 @@ function runTool(id) {
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
     case 'pdf2word': return pdfToWordSheet();
+    case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
+    case 'wm': return docPicker('Wasserzeichen', 'Text quer über alle Seiten, z. B. VERTRAULICH oder KOPIE.', watermarkSheet);
+    case 'protect': return docPicker('Mit Passwort schützen', 'Die PDF lässt sich danach nur mit Passwort öffnen.', protectSheet);
     case 'sigs': return signatureSheet(null);
     case 'stamps': return stampSheet(null);
     default: toast('Kommt in einem der nächsten Updates');
@@ -263,7 +330,7 @@ async function mergeSheet() {
       el.querySelector('[data-imp]').onclick = async () => {
         const files = await pickFiles('file-pdf'); if (!files.length) return;
         busy(true, 'Import …');
-        for (const f of files) { try { const id = await saveNewDoc(await f.arrayBuffer(), f.name); order.push(id); } catch {} }
+        for (const f of files) { try { const id = await importFile(f); if (id) order.push(id); } catch {} busy(true, 'Import …'); }
         docs.splice(0, docs.length, ...(await allDocs())); busy(false); render(); renderRecents();
       };
       el.querySelector('[data-ok]').onclick = async () => {
@@ -382,14 +449,14 @@ function excelOptions(book, base, go) {
   });
 }
 
-// ----- PDF → Word -----
-async function pdfToWordSheet() {
+// ----- Datei für ein Werkzeug wählen -----
+async function docPicker(title, desc, onPick) {
   const docs = await allDocs();
   sheet({
-    title: 'PDF → Word',
-    html: `<p style="color:var(--text2);margin:0 2px 12px;font-size:14px;line-height:1.4">Text, Absätze, Spalten und Bilder werden als bearbeitbare Word-Datei (.docx) übernommen.</p>
+    title,
+    html: `<p style="color:var(--text2);margin:0 2px 12px;font-size:14px;line-height:1.4">${desc}</p>
       <div class="menu" style="margin-bottom:14px"><button class="row" data-imp><span class="row-ic c-red">${icon('filePlus')}</span><span class="row-main"><span class="row-title">PDF aus „Dateien“ wählen</span></span>${icon('chevronRight')}</button></div>
-      ${docs.length ? `<div class="lbl" style="margin-top:0">Zuletzt</div><div class="menu">${docs.slice(0, 15).map(d => `<button class="row" data-id="${d.id}"><span class="doc-thumb" style="width:34px;height:44px;background-image:url('${d.thumb || ''}')"></span><span class="row-main"><span class="row-title" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.name)}</span><span class="row-sub">${d.pages || 1} Seiten</span></span></button>`).join('')}</div>` : ''}`,
+      ${docs.length ? `<div class="lbl" style="margin-top:0">Zuletzt</div><div class="menu">${docs.slice(0, 15).map(d => `<button class="row" data-id="${d.id}"><span class="doc-thumb" style="width:34px;height:44px;background-image:url('${d.thumb || ''}')"></span><span class="row-main"><span class="row-title" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.fav ? '♥ ' : ''}${esc(d.name)}</span><span class="row-sub">${d.pages || 1} Seiten · ${fmtSize(d.size || 0)}</span></span></button>`).join('')}</div>` : ''}`,
     onMount(el, api) {
       el.querySelector('[data-imp]').onclick = async () => {
         api.close();
@@ -397,12 +464,191 @@ async function pdfToWordSheet() {
         if (!files.length) return;
         let id;
         busy(true, 'PDF wird importiert …');
-        try { id = await saveNewDoc(await files[0].arrayBuffer(), files[0].name); }
+        try { id = await importFile(files[0]); }
         catch { busy(false); return toast('Datei konnte nicht gelesen werden', true); }
+        busy(false);
+        if (!id) return;
         await renderRecents();
-        exportWord(await db.get('docs', id));
+        onPick(await db.get('docs', id));
       };
-      el.querySelectorAll('[data-id]').forEach(b => b.onclick = async () => { api.close(); exportWord(docs.find(d => d.id === b.dataset.id)); });
+      el.querySelectorAll('[data-id]').forEach(b => b.onclick = () => { api.close(); onPick(docs.find(d => d.id === b.dataset.id)); });
+    },
+  });
+}
+
+// ----- PDF → Word -----
+function pdfToWordSheet() {
+  return docPicker('PDF → Word', 'Text, Absätze, Spalten und Bilder werden als bearbeitbare Word-Datei (.docx) übernommen.', exportWord);
+}
+
+// Aktuelle Bytes eines Dokuments inkl. Änderungen aus dem Editor
+async function docBytes(d) {
+  let bytes = (await db.get('files', d.id)).data;
+  if (d.objects?.length) {
+    const pdf = await loadPdf(bytes);
+    const infos = await pageInfos(pdf);
+    closePdf(pdf);
+    bytes = await flatten(bytes, d.objects, infos);
+  }
+  return bytes;
+}
+
+// Ergebnis speichern: als Kopie oder das Dokument ersetzen
+async function storeResult(d, bytes, suffix, asCopy) {
+  const base = d.name.replace(/\.pdf$/i, '');
+  if (asCopy) return saveNewDoc(bytes, `${base} (${suffix}).pdf`);
+  const data = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  const pdf = await loadPdf(data);
+  let thumb = d.thumb;
+  try { thumb = await renderThumb(pdf, 1); } catch {}
+  const meta = { ...d, size: data.byteLength, pages: pdf.numPages, thumb, objects: [], updated: Date.now() };
+  closePdf(pdf);
+  await db.put('files', { id: d.id, data });
+  await db.put('docs', meta);
+  return d.id;
+}
+
+const copyRow = on => `<div class="row" style="padding:12px 2px 2px;border:0"><span class="row-main"><span class="row-title">Als Kopie speichern</span><span class="row-sub" style="display:block">Aus: Original wird ersetzt</span></span>
+  <div class="seg" data-copy><button data-v="1" class="${on ? 'on' : ''}">An</button><button data-v="0" class="${on ? '' : 'on'}">Aus</button></div></div>`;
+function bindCopy(el, get, set) {
+  el.querySelectorAll('[data-copy] button').forEach(b => b.onclick = () => { set(b.dataset.v === '1'); el.querySelectorAll('[data-copy] button').forEach(x => x.classList.toggle('on', (x.dataset.v === '1') === get())); });
+}
+
+// ----- Wasserzeichen -----
+const WM_TEXTS = ['VERTRAULICH', 'KOPIE', 'ENTWURF', 'BEZAHLT', 'ORIGINAL', 'MUSTER', 'REPAIRMOBILE'];
+async function watermarkSheet(d) {
+  if (!d) return;
+  busy(true, 'Vorschau wird geladen …');
+  let bytes, img, pw, ph, tools;
+  try {
+    [bytes, tools] = await Promise.all([docBytes(d), import('./tools.js')]);
+    const pdf = await loadPdf(bytes);
+    const p1 = await pdf.getPage(1);
+    const vp = p1.getViewport({ scale: 1 });
+    pw = vp.width; ph = vp.height;
+    img = await new Promise(async (res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = await renderThumb(pdf, 1, 900); });
+    closePdf(pdf);
+  } catch (e) { console.error(e); busy(false); return toast('PDF konnte nicht geladen werden', true); }
+  busy(false);
+  const st = { text: settings.get('wmText') || 'VERTRAULICH', opacity: settings.get('wmOpacity') ?? 0.25, color: settings.get('wmColor') || tools.WM_COLORS.rot, diagonal: settings.get('wmDiag') ?? true, scale: 1, copy: true };
+  sheet({
+    title: 'Wasserzeichen',
+    html: `<div class="wm-prev"><canvas data-cv></canvas></div>
+      <div class="lbl">Text</div>
+      <input class="field" data-t maxlength="40" value="${esc(st.text)}" autocapitalize="characters">
+      <div class="chips no-swipe" data-chips>${WM_TEXTS.map(t => `<button class="chip" data-v="${t}">${t}</button>`).join('')}</div>
+      <div class="lbl">Farbe</div>
+      <div class="colors" data-cols>${Object.entries(tools.WM_COLORS).map(([n, c]) => `<button class="color" data-c="${c}" aria-label="${n}" style="background:${c}"></button>`).join('')}</div>
+      <div class="lbl">Deckkraft <span data-ov style="float:right;color:var(--text)"></span></div>
+      <input type="range" class="range" data-o min="5" max="80" step="1">
+      <div class="lbl">Größe</div>
+      <input type="range" class="range" data-s min="40" max="130" step="1" value="100">
+      <div class="row" style="padding:14px 2px 2px;border:0"><span class="row-main"><span class="row-title">Ausrichtung</span></span>
+        <div class="seg" data-dir><button data-v="1">Diagonal</button><button data-v="0">Waagerecht</button></div></div>
+      ${copyRow(st.copy)}
+      <div class="btn-row"><button class="btn primary" data-ok>${icon('drop')} Wasserzeichen anwenden</button></div>`,
+    onMount(el, api) {
+      const cv = el.querySelector('[data-cv]');
+      cv.width = 900; cv.height = Math.round(900 * ph / pw);
+      const ctx = cv.getContext('2d');
+      const inp = el.querySelector('[data-t]'), op = el.querySelector('[data-o]'), sz = el.querySelector('[data-s]');
+      op.value = Math.round(st.opacity * 100);
+      const draw = () => {
+        tools.drawWatermarkPreview(ctx, img, pw, ph, st);
+        el.querySelector('[data-ov]').textContent = Math.round(st.opacity * 100) + ' %';
+        el.querySelectorAll('[data-chips] .chip').forEach(b => b.classList.toggle('on', b.dataset.v === st.text));
+        el.querySelectorAll('[data-cols] .color').forEach(b => b.classList.toggle('on', b.dataset.c === st.color));
+        el.querySelectorAll('[data-dir] button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === st.diagonal));
+      };
+      inp.oninput = () => { st.text = inp.value; draw(); };
+      el.querySelectorAll('[data-chips] .chip').forEach(b => b.onclick = () => { st.text = b.dataset.v; inp.value = st.text; haptic(); draw(); });
+      el.querySelectorAll('[data-cols] .color').forEach(b => b.onclick = () => { st.color = b.dataset.c; draw(); });
+      el.querySelectorAll('[data-dir] button').forEach(b => b.onclick = () => { st.diagonal = b.dataset.v === '1'; draw(); });
+      op.oninput = () => { st.opacity = op.value / 100; draw(); };
+      sz.oninput = () => { st.scale = sz.value / 100; draw(); };
+      bindCopy(el, () => st.copy, v => { st.copy = v; });
+      el.querySelector('[data-ok]').onclick = async () => {
+        if (!st.text.trim()) return toast('Bitte einen Text eingeben', true);
+        settings.set('wmText', st.text); settings.set('wmOpacity', st.opacity); settings.set('wmColor', st.color); settings.set('wmDiag', st.diagonal);
+        api.close(); busy(true, 'Wasserzeichen wird gesetzt …');
+        try {
+          const out = await tools.addWatermark(bytes, st);
+          const id = await storeResult(d, out, 'Wasserzeichen', st.copy);
+          busy(false); await renderRecents(); toast('Wasserzeichen gesetzt'); openDoc(id);
+        } catch (e) { console.error(e); busy(false); toast('Wasserzeichen fehlgeschlagen', true); }
+      };
+      draw();
+    },
+  });
+}
+
+// ----- Komprimieren -----
+function compressSheet(d) {
+  if (!d) return;
+  let level = 'standard', copy = true;
+  const opts = [['standard', 'Standard', 'Ausgewogene Qualität und Größe'], ['stark', 'Stark', 'Kleinste Datei, Bilder etwas unschärfer'], ['leicht', 'Leicht', 'Beste Qualität, etwas größere Datei']];
+  sheet({
+    title: 'Komprimieren',
+    html: `<p style="color:var(--text2);margin:0 2px 12px;font-size:14px;line-height:1.4">„${esc(d.name)}“ · aktuell <b style="color:var(--text)">${fmtSize(d.size || 0)}</b><br>Fotos und Scans in der PDF werden verkleinert, Text bleibt gestochen scharf.</p>
+      <div class="menu" data-lv>${opts.map(([v, t, sub]) => `<button class="row" data-v="${v}"><span class="row-main"><span class="row-title">${t}</span><span class="row-sub" style="display:block">${sub}</span></span><span class="radio"></span></button>`).join('')}</div>
+      ${copyRow(copy)}
+      <div class="btn-row"><button class="btn primary" data-ok>${icon('compress')} PDF komprimieren</button></div>`,
+    onMount(el, api) {
+      const render = () => el.querySelectorAll('[data-lv] .row').forEach(b => b.classList.toggle('sel', b.dataset.v === level));
+      el.querySelectorAll('[data-lv] .row').forEach(b => b.onclick = () => { level = b.dataset.v; haptic(); render(); });
+      bindCopy(el, () => copy, v => { copy = v; });
+      el.querySelector('[data-ok]').onclick = async () => {
+        api.close(); busy(true, 'PDF wird komprimiert …');
+        try {
+          const tools = await import('./tools.js');
+          const before = await docBytes(d);
+          const res = await tools.compressPdf(before, level, (i, n) => busy(true, `Bild ${i} von ${n} wird verkleinert …`));
+          const a = (d.objects?.length ? before.byteLength : d.size) || before.byteLength, b = res.bytes.byteLength;
+          if (b >= a * 0.97) { busy(false); return toast(res.images ? 'Die PDF ist bereits gut komprimiert' : 'Keine Bilder zum Verkleinern gefunden'); }
+          const id = await storeResult(d, res.bytes, 'komprimiert', copy);
+          busy(false); await renderRecents();
+          toast(`${fmtSize(a)} → ${fmtSize(b)} (−${Math.round((1 - b / a) * 100)} %)`);
+        } catch (e) { console.error(e); busy(false); toast('Komprimieren fehlgeschlagen', true); }
+      };
+      render();
+    },
+  });
+}
+
+// ----- Passwort -----
+function protectSheet(d) {
+  if (!d) return;
+  sheet({
+    title: 'Mit Passwort schützen',
+    html: `<div class="prot-ic">${icon('shieldLock')}</div>
+      <p style="color:var(--text2);margin:0 4px 14px;line-height:1.45;text-align:center;font-size:14px">Wer die Datei öffnet, muss das Passwort eingeben. Gut merken – es lässt sich <b style="color:var(--text)">nicht wiederherstellen</b>. Deine PDF in Nibvion bleibt ungeschützt, geschützt wird die Datei, die du teilst oder sicherst.</p>
+      <input class="field" type="password" data-p1 placeholder="Passwort (mind. 4 Zeichen)" autocomplete="new-password">
+      <input class="field" type="password" data-p2 placeholder="Passwort wiederholen" autocomplete="new-password" style="margin-top:10px">
+      <div class="row" style="padding:12px 2px 2px;border:0"><span class="row-main"><span class="row-title">Passwort anzeigen</span></span>
+        <div class="seg" data-show><button data-v="0" class="on">Aus</button><button data-v="1">An</button></div></div>
+      <div class="btn-row"><button class="btn primary" data-ok disabled>${icon('lock')} Geschützt teilen / sichern</button></div>`,
+    onMount(el, api) {
+      const p1 = el.querySelector('[data-p1]'), p2 = el.querySelector('[data-p2]'), ok = el.querySelector('[data-ok]');
+      const check = () => { ok.disabled = !(p1.value.length >= 4 && p1.value === p2.value); };
+      p1.oninput = p2.oninput = check;
+      el.querySelectorAll('[data-show] button').forEach(b => b.onclick = () => {
+        const on = b.dataset.v === '1';
+        p1.type = p2.type = on ? 'text' : 'password';
+        el.querySelectorAll('[data-show] button').forEach(x => x.classList.toggle('on', x === b));
+      });
+      ok.onclick = async () => {
+        if (ok.disabled) return;
+        const pw = p1.value;
+        api.close(); busy(true, 'PDF wird verschlüsselt …');
+        try {
+          const tools = await import('./tools.js');
+          const out = await tools.encryptPdf(await docBytes(d), pw);
+          busy(false);
+          toast('PDF ist geschützt (AES-256)');
+          await shareBytes(out, d.name.replace(/\.pdf$/i, '') + ' (geschützt).pdf');
+        } catch (e) { console.error(e); busy(false); toast('Verschlüsseln fehlgeschlagen', true); }
+      };
+      setTimeout(() => p1.focus(), 350);
     },
   });
 }
@@ -412,13 +658,7 @@ async function exportWord(d) {
   busy(true, 'Word-Datei wird erstellt …');
   try {
     const conv = await import('./pdf2word.js');
-    let bytes = (await db.get('files', d.id)).data;
-    if (d.objects?.length) {   // Änderungen aus dem Editor mitnehmen
-      const pdf = await loadPdf(bytes);
-      const infos = await pageInfos(pdf);
-      closePdf(pdf);
-      bytes = await flatten(bytes, d.objects, infos);
-    }
+    const bytes = await docBytes(d);   // inkl. Änderungen aus dem Editor
     const name = d.name.replace(/\.pdf$/i, '') + '.docx';
     const res = await conv.pdfToWord(bytes, { title: d.name.replace(/\.pdf$/i, ''), onProgress: (i, n) => busy(true, n > 1 ? `Seite ${i} von ${n} wird gelesen …` : 'Word-Datei wird erstellt …') });
     busy(false);
@@ -534,6 +774,7 @@ async function init() {
     if (a === 'fab') fabSheet();
     if (a === 'go-settings') switchTab('settings');
     if (a === 'toggle-sort') { settings.set('sort', settings.get('sort') === 'name' ? 'new' : 'name'); renderRecents(); }
+    if (a === 'toggle-fav') { settings.set('favOnly', !settings.get('favOnly')); haptic(); renderRecents(); }
   });
   await renderRecents();
   try { navigator.storage?.persist?.(); } catch {}
