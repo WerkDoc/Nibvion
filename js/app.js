@@ -7,7 +7,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.3.1';
+export const VERSION = '1.3.2';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -778,7 +778,7 @@ async function init() {
   });
   await renderRecents();
   try { navigator.storage?.persist?.(); } catch {}
-  setTimeout(() => { $('splash').classList.add('hide'); document.documentElement.classList.remove('splashing'); }, 650);
+  setTimeout(() => { $('splash').classList.add('hide'); document.documentElement.classList.remove('splashing'); applyTheme(); }, 650);
   setTimeout(() => $('splash').remove(), 1300);
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
