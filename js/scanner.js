@@ -14,8 +14,8 @@ export async function loadFileImage(file) {
   return { img, url };
 }
 
-function toCanvas(img, maxSide) {
-  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+export function toCanvas(img, maxSide) {
+  const w = img.videoWidth || img.naturalWidth || img.width, h = img.videoHeight || img.naturalHeight || img.height;
   const s = Math.min(1, maxSide / Math.max(w, h));
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
@@ -45,9 +45,12 @@ function boxBlur(src, w, h, r) {
 }
 
 // ---------- Kanten erkennen ----------
-export function detectCorners(img) {
+// detectQuad: Ecken oder null (kein Dokument gefunden). detectCorners: mit Rückfall auf ganzes Bild.
+export function detectCorners(img) { return detectQuad(img) || FULL.map(p => [...p]); }
+
+export function detectQuad(img, maxSide = 360) {
   try {
-    const c = toCanvas(img, 360), w = c.width, h = c.height, N = w * h;
+    const c = toCanvas(img, maxSide), w = c.width, h = c.height, N = w * h;
     const d = c.getContext('2d').getImageData(0, 0, w, h).data;
     const g = new Float32Array(N);
     for (let i = 0; i < N; i++) g[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
@@ -80,7 +83,7 @@ export function detectCorners(img) {
       }
       if (n > bestN) { bestN = n; bestLab = cur; }
     }
-    if (bestN < N * 0.12 || bestN > N * 0.97) return FULL.map(p => [...p]);
+    if (bestN < N * 0.12 || bestN > N * 0.97) return null;
     // Extrempunkte als Ecken
     let tl = [0, 0, 1e9], tr = [0, 0, -1e9], br = [0, 0, -1e9], bl = [0, 0, 1e9];
     for (let i = 0; i < N; i++) {
@@ -92,8 +95,8 @@ export function detectCorners(img) {
       if (df < bl[2]) bl = [x, y, df];
     }
     const q = [tl, tr, br, bl].map(([x, y]) => [Math.min(1, Math.max(0, (x + 0.5) / w)), Math.min(1, Math.max(0, (y + 0.5) / h))]);
-    return quadArea(q) > 0.12 ? q : FULL.map(p => [...p]);
-  } catch { return FULL.map(p => [...p]); }
+    return quadArea(q) > 0.12 ? q : null;
+  } catch { return null; }
 }
 
 function quadArea(q) {
@@ -154,49 +157,84 @@ export function rotateCanvas(c, deg) {
 }
 
 // ---------- Aufbereiten (Schatten raus, Papier weiß) ----------
-export function enhance(c, mode) {
-  if (!mode) return c;
-  const w = c.width, h = c.height, ctx = c.getContext('2d');
-  const id = ctx.getImageData(0, 0, w, h), d = id.data;
-  // Hintergrund (Papierhelligkeit) grob schätzen: verkleinern, weichzeichnen, wieder hochziehen
+export const FILTERS = [
+  ['', 'Original'], ['color', 'Verbessern'], ['gray', 'Graustufen'],
+  ['doc', 'Dokument'], ['bw', 'Schwarz-Weiß'], ['invert', 'Umkehren'],
+];
+export const NO_ADJ = { brightness: 0, contrast: 0, sharp: 0 };
+
+// Papierhelligkeit je Pixel schätzen (für Schattenentfernung)
+function paperLevel(c) {
+  const w = c.width, h = c.height;
   const sw = Math.max(8, Math.round(w / 24)), sh = Math.max(8, Math.round(h / 24));
   const sc = document.createElement('canvas'); sc.width = sw; sc.height = sh;
   const sctx = sc.getContext('2d'); sctx.drawImage(c, 0, 0, sw, sh);
   const sdat = sctx.getImageData(0, 0, sw, sh).data;
-  let lum = new Float32Array(sw * sh);
+  const lum = new Float32Array(sw * sh);
   for (let i = 0; i < sw * sh; i++) lum[i] = Math.max(sdat[i * 4], sdat[i * 4 + 1], sdat[i * 4 + 2]);
-  // Text-Pixel ignorieren: lokales Maximum, dann glätten
   const mx = new Float32Array(sw * sh);
   for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-    let m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    let m = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const xx = Math.min(sw - 1, Math.max(0, x + dx)), yy = Math.min(sh - 1, Math.max(0, y + dy)); m = Math.max(m, lum[yy * sw + xx]);
     }
     mx[y * sw + x] = m;
   }
-  lum = boxBlur(mx, sw, sh, 2);
-  for (let i = 0; i < sw * sh; i++) { sdat[i * 4] = sdat[i * 4 + 1] = sdat[i * 4 + 2] = Math.max(40, lum[i]); sdat[i * 4 + 3] = 255; }
+  const bl = boxBlur(mx, sw, sh, 2);
+  for (let i = 0; i < sw * sh; i++) { sdat[i * 4] = sdat[i * 4 + 1] = sdat[i * 4 + 2] = Math.max(40, bl[i]); sdat[i * 4 + 3] = 255; }
   sctx.putImageData(new ImageData(sdat, sw, sh), 0, 0);
   const bc = document.createElement('canvas'); bc.width = w; bc.height = h;
   const bctx = bc.getContext('2d'); bctx.imageSmoothingQuality = 'high'; bctx.drawImage(sc, 0, 0, w, h);
-  const bg = bctx.getImageData(0, 0, w, h).data;
-  const lo = mode === 'doc' ? 70 : 40, hi = mode === 'doc' ? 232 : 245;
-  const curve = v => Math.max(0, Math.min(255, (v - lo) * 255 / (hi - lo)));
-  for (let i = 0; i < d.length; i += 4) {
-    const k = 255 / bg[i];
-    if (mode === 'doc') {
-      const gy = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) * k;
-      d[i] = d[i + 1] = d[i + 2] = curve(gy);
-    } else {
-      d[i] = curve(d[i] * k); d[i + 1] = curve(d[i + 1] * k); d[i + 2] = curve(d[i + 2] * k);
+  return bctx.getImageData(0, 0, w, h).data;
+}
+
+export function enhance(c, mode, adj = NO_ADJ) {
+  const { brightness = 0, contrast = 0, sharp = 0 } = adj || NO_ADJ;
+  if (!mode && !brightness && !contrast && !sharp) return c;
+  const w = c.width, h = c.height, ctx = c.getContext('2d');
+  const id = ctx.getImageData(0, 0, w, h), d = id.data;
+  const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
+  if (mode) {
+    const bg = paperLevel(c);
+    const curve = (v, lo, hi) => clamp((v - lo) * 255 / (hi - lo));
+    for (let i = 0; i < d.length; i += 4) {
+      const k = 255 / bg[i];
+      if (mode === 'color') {
+        d[i] = curve(d[i] * k, 40, 245); d[i + 1] = curve(d[i + 1] * k, 40, 245); d[i + 2] = curve(d[i + 2] * k, 40, 245);
+      } else {
+        const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) * k;
+        let v;
+        if (mode === 'gray') v = curve(g, 25, 248);
+        else if (mode === 'bw') v = clamp((g - 150) * 7 + 128);       // weiches Schwellwert-S/W (glatte Kanten)
+        else v = curve(g, 70, 232);                                    // doc & invert
+        if (mode === 'invert') v = 255 - v;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
     }
+  }
+  // Schärfe (Unscharf maskieren auf der Helligkeit)
+  if (sharp > 0) {
+    const N = w * h, L = new Float32Array(N);
+    for (let i = 0; i < N; i++) L[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
+    const B = boxBlur(L, w, h, 1), amt = sharp / 40;
+    for (let i = 0; i < N; i++) {
+      const dl = (L[i] - B[i]) * amt;
+      d[i * 4] = clamp(d[i * 4] + dl); d[i * 4 + 1] = clamp(d[i * 4 + 1] + dl); d[i * 4 + 2] = clamp(d[i * 4 + 2] + dl);
+    }
+  }
+  if (brightness || contrast) {
+    const cf = (100 + contrast * 1.5) / 100, br = brightness * 1.6;
+    const lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) lut[v] = (v - 128) * cf + 128 + br;
+    for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i + 1] = lut[d[i + 1]]; d[i + 2] = lut[d[i + 2]]; }
   }
   ctx.putImageData(id, 0, 0);
   return c;
 }
 
-export function render(item, filter, maxSide) {
+export function render(item, filter, maxSide, adj) {
   const c = rotateCanvas(warp(item.img, item.corners, maxSide), item.rot || 0);
-  return enhance(c, filter);
+  return enhance(c, filter, adj);
 }
 
 // ---------- Zuschneiden (Vollbild) ----------

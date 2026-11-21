@@ -432,3 +432,60 @@ html.splashing, html.splashing body { background: var(--bg); }
 /* Startbildschirm im hellen Design ebenfalls hell (passt zur Statusleiste) */
 [data-theme="light"] #splash { background: radial-gradient(circle at 50% 40%, #ffffff 0%, #f3f4f7 70%); }
 [data-theme="light"] .splash-name { color: #5d6472; }
+
+/* ---------- Live-Scanner ---------- */
+.cam-wrap { position: fixed; inset: 0; z-index: 130; background: #000; color: #fff; display: flex; flex-direction: column; animation: fadeIn .25s; }
+.cam-wrap.out { opacity: 0; transition: opacity .25s; }
+.cam-top { display: flex; justify-content: space-between; align-items: center; padding: calc(var(--safe-top) + 10px) 16px 10px; }
+.cam-top-r { display: flex; gap: 10px; align-items: center; }
+.cam-round { width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,.12); display: grid; place-items: center; }
+.cam-round.on { background: #ffd60a; color: #111; }
+.cam-pill { height: 36px; padding: 0 16px; border-radius: 18px; background: rgba(255,255,255,.12); font-weight: 700; font-size: 14px; color: #c9ccd3; transition: background .2s, color .2s; }
+.cam-pill.on { background: var(--grad); color: #fff; }
+.cam-stage { position: relative; flex: 1; overflow: hidden; }
+.cam-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.cam-quad { fill: rgba(255,106,91,.18); stroke: #ff6a5b; stroke-width: 3; stroke-linejoin: round; opacity: 0; transition: opacity .2s, fill .3s, stroke .3s; }
+.cam-quad.show { opacity: 1; }
+.cam-quad.steady { fill: rgba(52,199,123,.22); stroke: #34c77b; }
+.cam-hint { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(0,0,0,.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 9px 16px; border-radius: 18px; font-size: 14px; font-weight: 600; white-space: nowrap; transition: background .3s; }
+.cam-hint.ok { background: rgba(255,106,91,.85); }
+.cam-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.cam-flash.go { animation: camFlash .35s ease-out; }
+@keyframes camFlash { 0% { opacity: .85; } 100% { opacity: 0; } }
+.cam-bottom { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 18px 24px calc(var(--safe-bottom) + 18px); }
+.cam-thumb { justify-self: start; position: relative; width: 52px; height: 66px; border-radius: 8px; background: rgba(255,255,255,.1) center/cover; border: 2px solid rgba(255,255,255,.7); opacity: .35; }
+.cam-thumb.has { opacity: 1; }
+.cam-thumb.pop { animation: camPop .45s var(--spring); }
+@keyframes camPop { 0% { transform: scale(1.35); } 100% { transform: none; } }
+.cam-badge { position: absolute; top: -8px; right: -8px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--accent); font-size: 12px; font-weight: 800; display: grid; place-items: center; }
+.cam-badge:empty { display: none; }
+.cam-shutter { width: 76px; height: 76px; border-radius: 50%; border: 4px solid #fff; display: grid; place-items: center; transition: transform .15s; }
+.cam-shutter span { width: 60px; height: 60px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.cam-shutter:active span { transform: scale(.85); }
+.cam-done { justify-self: end; height: 40px; padding: 0 18px; border-radius: 20px; background: var(--grad); font-weight: 700; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.cam-done.show { opacity: 1; pointer-events: auto; }
+
+/* ---------- Erkannter Text ---------- */
+.tv-meta { font-size: 12.5px; color: var(--text3); margin: -4px 4px 10px; }
+textarea.tv-area { min-height: 52vh; font-size: 15px; line-height: 1.5; resize: none; }
+.tv-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 12px; }
+.tv-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 4px; border-radius: 16px; background: var(--card2); font-size: 13px; font-weight: 650; transition: transform .2s var(--spring); }
+.tv-btn:active { transform: scale(.94); }
+.tv-btn .ico { color: var(--accent); }
+
+/* ---------- Scan: Filter & Anpassen ---------- */
+.flt-row { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 8px; scrollbar-width: none; }
+.flt-row::-webkit-scrollbar { display: none; }
+.flt { flex: none; width: 78px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; color: var(--text2); }
+.flt-img { width: 78px; height: 96px; border-radius: 10px; background: #fff center/cover no-repeat; border: 2.5px solid transparent; box-shadow: 0 2px 8px rgba(0,0,0,.18); transition: border-color .2s, transform .2s var(--spring); }
+.flt.on { color: var(--accent); }
+.flt.on .flt-img { border-color: var(--accent); transform: scale(1.04); }
+.adj { margin-top: 4px; }
+.adj-row { display: grid; grid-template-columns: 92px 1fr 34px; align-items: center; gap: 10px; padding: 6px 2px; font-size: 14px; font-weight: 600; }
+.adj-row span:last-child { text-align: right; color: var(--text2); font-variant-numeric: tabular-nums; font-size: 13px; }
+.adj-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 2px 6px; font-weight: 650; }
+.adj-toggle .ico { width: 18px; height: 18px; color: var(--text3); transition: transform .25s; }
+.adj-toggle.open .ico { transform: rotate(180deg); }
+.adj-body { display: none; }
+.adj-body.open { display: block; animation: fadeUp .25s var(--ease); }
