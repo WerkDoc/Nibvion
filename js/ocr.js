@@ -219,3 +219,28 @@ export async function extractPdfText(bytes, { onProgress } = {}) {
     return texts;
   } finally { try { pdf.loadingTask.destroy(); } catch {} }
 }
+
+/**
+ * Wie recognizeCanvases, liefert aber die Struktur (Blöcke → Absätze → Zeilen → Wörter mit Position)
+ * und das gelesene Bild – für Scan → Word/Excel.
+ */
+export async function recognizeLayout(canvases, { onProgress, prepare } = {}) {
+  const say = (t, f) => onProgress && onProgress(t, f);
+  let cur = 0;
+  say('Texterkennung wird geladen …', 0);
+  const worker = await makeWorker(m => { if (m.status === 'recognizing text' && cur) say(`Seite ${cur} von ${canvases.length} wird gelesen …`, (cur - 1 + m.progress) / canvases.length); });
+  try {
+    const out = [];
+    for (let i = 0; i < canvases.length; i++) {
+      cur = i + 1;
+      say(`Seite ${cur} von ${canvases.length} wird gelesen …`, i / canvases.length);
+      await tick();
+      const c = typeof canvases[i] === 'function' ? await canvases[i]() : canvases[i];
+      const prep = prepare ? prepare(c) : null;
+      const { data } = await worker.recognize(prep ? prep.ocrCanvas : c, {}, { blocks: true, text: false });
+      if (prep) prep.ocrCanvas.width = prep.ocrCanvas.height = 0;
+      out.push({ canvas: c, prep, blocks: data.blocks || [] });
+    }
+    return out;
+  } finally { try { await worker.terminate(); } catch {} }
+}

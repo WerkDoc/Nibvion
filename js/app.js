@@ -13,7 +13,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.7.0';
+export const VERSION = '1.8.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -162,7 +162,7 @@ function docMenu(d) {
         ['ocr', 'Text erkennen (OCR)', 'scan', 'c-teal'],
         ['text', 'Text extrahieren', 'textScan', 'c-blue'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
-        ['word', 'Als Word exportieren', 'word', 'c-blue'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
+        ['word', 'Als Word exportieren', 'word', 'c-blue'], ['excel', 'Als Excel exportieren', 'excel', 'c-green'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
     </div>`,
     onMount(el, api) {
@@ -170,6 +170,7 @@ function docMenu(d) {
         const a = b.dataset.a; api.close();
         if (['view', 'edit', 'sign'].includes(a)) return openDoc(d.id, a);
         if (a === 'word') return exportWord(d);
+        if (a === 'excel') return exportExcel(d);
         if (a === 'fav') { d.fav = !d.fav; await db.put('docs', d); haptic(); renderRecents(); return toast(d.fav ? 'Zu Favoriten hinzugefügt' : 'Aus Favoriten entfernt'); }
         if (a === 'wm') return watermarkSheet(d);
         if (a === 'compress') return compressSheet(d);
@@ -229,7 +230,8 @@ const TOOL_GROUPS = [
     { id: 'word', label: 'Word → PDF', sub: 'DOCX als PDF speichern', icon: 'word', c: 'c-blue' },
     { id: 'excel', label: 'Excel → PDF', sub: 'XLSX, XLS oder CSV als PDF', icon: 'excel', c: 'c-green' },
     { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
-    { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern', icon: 'word', c: 'c-blue' },
+    { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern – auch Scans', icon: 'word', c: 'c-blue' },
+    { id: 'pdf2excel', label: 'PDF / Scan → Excel', sub: 'Tabellen als bearbeitbare XLSX', icon: 'excel', c: 'c-green' },
   ] },
   { title: 'Schützen & Optimieren', items: [
     { id: 'ocr', label: 'Text erkennen (OCR)', sub: 'Scans durchsuchbar & kopierbar machen', icon: 'scan', c: 'c-teal' },
@@ -270,6 +272,7 @@ function runTool(id) {
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
     case 'pdf2word': return pdfToWordSheet();
+    case 'pdf2excel': return docPicker('PDF / Scan → Excel', 'Tabellen und Text werden erkannt und als Excel-Datei gespeichert. Am besten klappt es bei Tabellen mit sichtbaren Linien.', exportExcel);
     case 'text': return docPicker('Text extrahieren', 'Der Text der PDF wird angezeigt – gescannte Seiten werden dafür automatisch gelesen.', textFromDoc);
     case 'ocr': return docPicker('Text erkennen (OCR)', 'Gescannte Seiten werden gelesen – danach kannst du den Text suchen, markieren und kopieren. Alles passiert auf dem iPhone.', ocrDoc);
     case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
@@ -307,6 +310,19 @@ async function imageSheet(kind) {
     onOcr: v => settings.set('scanOcr', v),
     onText: async (list, filter, adj) => {
       if (!list.length) return toast('Bitte zuerst eine Seite scannen', true);
+      const fmt = await new Promise(res => {
+        let v = null;
+        sheet({
+          title: 'Exportieren als',
+          html: `<div class="menu">${[['text', 'Text', 'Anzeigen, kopieren, teilen', 'textScan', 'c-teal'], ['word', 'Word (.docx)', 'Absätze, Überschriften, Tabellen', 'word', 'c-blue'], ['excel', 'Excel (.xlsx)', 'Tabellen mit Linien als Zellen', 'excel', 'c-green']]
+            .map(([k, t, s, ic, c]) => `<button class="row" data-f="${k}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title">${t}</span><span class="row-sub">${s}</span></span>${icon('chevronRight')}</button>`).join('')}</div>`,
+          onMount(el, api) { el.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { v = b.dataset.f; api.close(); }); },
+          onClose: () => res(v),
+        });
+      });
+      if (!fmt) return;
+      const clean = filter === 'invert' || !filter ? 'doc' : filter;
+      if (fmt !== 'text') return scanToOffice(fmt, list.map(it => () => renderScan(it, clean, 2400, adj)), `Scan ${today()}`);
       busy(true, 'Texterkennung wird geladen …');
       try {
         const { recognizeCanvases } = await import('./ocr.js');
@@ -710,13 +726,65 @@ function protectSheet(d) {
   });
 }
 
+// ----- Scan → Word / Excel (Layout-Erkennung) -----
+const MIME = { word: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', excel: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+function pdfCanvases(bytes) {
+  // Liefert Funktionen, die die Seiten nacheinander rendern (spart Speicher)
+  const list = [];
+  const pdfP = loadPdf(bytes);
+  return (async () => {
+    const pdf = await pdfP;
+    for (let i = 1; i <= pdf.numPages; i++) list.push(async () => {
+      const page = await pdf.getPage(i);
+      const base = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(2400 / Math.max(base.width, base.height), 4) });
+      const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+      const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      return c;
+    });
+    return list;
+  })();
+}
+async function scanToOffice(fmt, sources, baseName) {
+  busy(true, 'Texterkennung wird geladen …');
+  try {
+    const list = await sources;
+    const { recognizeLayout } = await import('./ocr.js');
+    const conv = await import('./scan2office.js');
+    const res = await recognizeLayout(list, { prepare: conv.prepare, onProgress: (t, x) => busy(true, x > 0 && x < 1 ? `${t} ${Math.round(x * 100)} %` : t) });
+    busy(true, 'Layout und Tabellen werden erkannt …');
+    await new Promise(r => setTimeout(r, 30));
+    const pages = res.map(r => conv.analyzePage(r.canvas, r.blocks, r.prep));
+    busy(true, fmt === 'word' ? 'Word-Datei wird erstellt …' : 'Excel-Datei wird erstellt …');
+    const bytes = fmt === 'word' ? await conv.pagesToDocx(pages) : await conv.pagesToXlsx(pages);
+    busy(false);
+    const tables = pages.reduce((n, p) => n + p.tables.length, 0);
+    if (fmt === 'excel' && !tables) toast('Keine Tabellenlinien gefunden – Text wurde zeilenweise übernommen');
+    await shareBytes(bytes, baseName.replace(/\.pdf$/i, '') + (fmt === 'word' ? '.docx' : '.xlsx'), MIME[fmt]);
+  } catch (e) {
+    console.error(e); busy(false);
+    toast(e?.message?.includes('geladen') ? e.message : 'Umwandeln fehlgeschlagen', true);
+  }
+}
+async function exportExcel(d) {
+  if (!d) return;
+  busy(true, 'PDF wird vorbereitet …');
+  try { const bytes = await docBytes(d); busy(false); await scanToOffice('excel', pdfCanvases(bytes), d.name); }
+  catch (e) { console.error(e); busy(false); toast('Umwandeln fehlgeschlagen', true); }
+}
+
 async function exportWord(d) {
   if (!d) return;
   busy(true, 'Word-Datei wird erstellt …');
   try {
-    const conv = await import('./pdf2word.js');
     const bytes = await docBytes(d);   // inkl. Änderungen aus dem Editor
     const name = d.name.replace(/\.pdf$/i, '') + '.docx';
+    // Gescannte PDF → Layout-Erkennung (Texterkennung, Tabellen, Absätze)
+    const { needsOcr } = await import('./ocr.js');
+    const scanned = await needsOcr(bytes);
+    if (scanned && scanned >= (d.pages || 1)) { busy(false); return scanToOffice('word', pdfCanvases(bytes), d.name); }
+    const conv = await import('./pdf2word.js');
     const res = await conv.pdfToWord(bytes, { title: d.name.replace(/\.pdf$/i, ''), onProgress: (i, n) => busy(true, n > 1 ? `Seite ${i} von ${n} wird gelesen …` : 'Word-Datei wird erstellt …') });
     busy(false);
     if (res.scanned) toast('Kein Text gefunden (Scan?) – Seiten als Bilder übernommen');
