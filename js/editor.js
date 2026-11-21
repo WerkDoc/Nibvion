@@ -867,9 +867,11 @@ function moreSheet() {
             if (n) { E.doc.name = n + '.pdf'; await saveNow(); toast('Umbenannt'); }
           }
           if (a === 'delete') {
-            if (await confirmDlg('PDF löschen?', `„${E.doc.name}“ wird von diesem Gerät gelöscht.`)) {
-              await db.del('docs', E.doc.id); await db.del('files', E.doc.id);
-              E.doc = null; E.dirtyThumb = false; closeEditor(); toast('Gelöscht');
+            if (await confirmDlg('PDF löschen?', `„${E.doc.name}“ kommt in den Papierkorb und kann 30 Tage lang wiederhergestellt werden.`, 'In den Papierkorb')) {
+              await saveNow();
+              const { moveToTrash } = await import('./trash.js');
+              await moveToTrash(E.doc.id);
+              E.doc = null; E.dirtyThumb = false; closeEditor(); toast('In den Papierkorb verschoben');
             }
           }
         } catch (err) { console.error(err); busy(false); toast('Das hat nicht geklappt', true); }
