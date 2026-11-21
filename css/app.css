@@ -20,7 +20,8 @@
   --radius: 18px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --bar-bottom: max(8px, calc(var(--safe-bottom) - 22px)); /* Tab-Leiste tief unten, knapp über dem Home-Balken */
+  --tabbar-h: 60px;                                   /* Höhe der Tab-Leiste ohne Home-Balken-Bereich */
+  --bar-pad: max(var(--safe-bottom), 8px);           /* Platz unter den Tabs (Home-Balken) */
   --kb: 0px;
   --ease: cubic-bezier(.2,.8,.2,1);
   --spring: cubic-bezier(.34,1.4,.5,1);
@@ -64,7 +65,7 @@ input, textarea, select { font: inherit; color: var(--text); -webkit-user-select
 #app { position: fixed; top: 0; left: 0; right: 0; height: var(--app-h, 100%); }
 .view { position: absolute; inset: 0; display: flex; flex-direction: column; opacity: 0; pointer-events: none; transform: translateY(10px); transition: opacity .3s var(--ease), transform .35s var(--ease); }
 .view.active { opacity: 1; pointer-events: auto; transform: none; }
-.scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 18px calc(170px + var(--bar-bottom)); }
+.scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 18px calc(var(--tabbar-h) + var(--bar-pad) + 100px); }
 .topbar { padding: calc(var(--safe-top) + 14px) 18px 10px; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand-logo { width: 44px; height: 44px; border-radius: 12px; box-shadow: 0 6px 18px rgba(255,106,91,.25); }
@@ -122,16 +123,17 @@ input, textarea, select { font: inherit; color: var(--text); -webkit-user-select
 .empty b { color: var(--text); display: block; margin-bottom: 4px; }
 
 /* ---------- Tab bar & FAB ---------- */
-.tabbar { position: fixed; left: 50%; bottom: var(--bar-bottom); transform: translateX(-50%); width: min(340px, calc(100% - 80px)); height: 64px; display: grid; grid-template-columns: repeat(3,1fr); padding: 6px; border-radius: 32px; background: var(--glass); backdrop-filter: blur(22px) saturate(1.6); -webkit-backdrop-filter: blur(22px) saturate(1.6); border: 1px solid var(--line2); box-shadow: var(--shadow); z-index: 20; transition: transform .4s var(--ease), opacity .3s; }
+/* Tab-Leiste unten angedockt (volle Breite, bis in den Home-Balken-Bereich) */
+.tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--tabbar-h) + var(--bar-pad)); display: grid; grid-template-columns: repeat(3,1fr); grid-template-rows: calc(var(--tabbar-h) - 12px); align-content: start; padding: 6px max(10px, calc(50% - 230px)) var(--bar-pad); background: var(--glass); backdrop-filter: blur(22px) saturate(1.6); -webkit-backdrop-filter: blur(22px) saturate(1.6); border-top: 1px solid var(--line2); border-radius: 0; z-index: 20; transition: transform .4s var(--ease), opacity .3s; }
 .tab { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--text2); font-size: 10.5px; font-weight: 600; transition: color .25s; }
 .tab .ico { width: 22px; height: 22px; }
 .tab.active { color: var(--accent); }
-.tab-indicator { position: absolute; top: 6px; bottom: 6px; left: 6px; width: calc((100% - 12px)/3); border-radius: 26px; background: var(--accent-soft); transition: transform .45s var(--spring); }
-.fab { position: fixed; right: 16px; bottom: calc(var(--bar-bottom) + 64px + 18px); width: 60px; height: 60px; border-radius: 50%; background: var(--grad); color: #fff; display: grid; place-items: center; box-shadow: 0 10px 26px rgba(255,106,91,.45); z-index: 21; transition: transform .3s var(--spring); }
+.tab-indicator { position: absolute; top: 6px; height: calc(var(--tabbar-h) - 12px); left: max(10px, calc(50% - 230px)); width: calc((100% - 2 * max(10px, calc(50% - 230px))) / 3); border-radius: 18px; background: var(--accent-soft); transition: transform .45s var(--spring); }
+.fab { position: absolute; right: 16px; bottom: calc(var(--tabbar-h) + var(--bar-pad) + 16px); width: 60px; height: 60px; border-radius: 50%; background: var(--grad); color: #fff; display: grid; place-items: center; box-shadow: 0 10px 26px rgba(255,106,91,.45); z-index: 21; transition: transform .3s var(--spring); }
 .fab .ico { width: 28px; height: 28px; stroke-width: 2.2; }
 .fab:active { transform: scale(.88) rotate(90deg); }
 body:not(.tab-home) .fab { transform: scale(0); pointer-events: none; }
-body.in-editor .tabbar { transform: translate(-50%, 140%); }
+body.in-editor .tabbar { transform: translateY(110%); }
 body.in-editor .fab { transform: scale(0); }
 
 /* ---------- Lists (Werkzeuge / Einstellungen) ---------- */
@@ -320,7 +322,7 @@ textarea.field { min-height: 90px; resize: none; line-height: 1.4; }
    Manche iOS-Versionen zeichnen als Home-Bildschirm-App unten einen Streifen ohne App-Inhalt.
    Dort ist nur die Hintergrundfarbe zu sehen – sie passt sich deshalb der Ansicht an,
    und die Tab-Leiste rückt ganz nach unten an den sichtbaren Rand. */
-html.ios-gap { --bar-bottom: 6px; }
+html.ios-gap { --bar-pad: max(var(--safe-bottom), 30px); } /* Home-Balken liegt im Streifen, iOS meldet ihn dann nicht */
 html.splashing, html.splashing body { background: #15171c; }
 
 /* ---------- Favoriten, Wasserzeichen, Komprimieren, Passwort ---------- */
@@ -391,6 +393,6 @@ html.splashing, html.splashing body { background: #15171c; }
 /* „+“ und Tab-Leiste */
 .fab { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -3px 0 rgba(0,0,0,.12), 0 6px 12px rgba(255,106,91,.3), 0 16px 30px -8px rgba(255,106,91,.6); }
 .fab:active { box-shadow: inset 0 3px 10px rgba(0,0,0,.2), 0 3px 8px rgba(255,106,91,.35); }
-/* Schatten nur nach oben/seitlich: nach unten würde er am iOS-Streifen hart abgeschnitten */
-.tabbar { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 1px 2px rgba(0,0,0,.06), 0 -8px 24px -10px rgba(0,0,0,.22); }
+/* Angedockte Leiste: Schatten nur nach oben */
+.tabbar { box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 -6px 20px -10px rgba(0,0,0,.22); }
 .tab-indicator { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 2px 6px -1px rgba(255,106,91,.25); }
