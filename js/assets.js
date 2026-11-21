@@ -107,7 +107,7 @@ function customStamp(onSave) {
       <div class="lbl">Text</div>
       <input class="field" data-t value="BEZAHLT" maxlength="24" style="text-transform:uppercase">
       <div class="lbl">Zusatzzeile (optional)</div>
-      <input class="field" data-s value="${esc(settings.get('stampName'))}" placeholder="z. B. RepairMobile" maxlength="40">
+      <input class="field" data-s value="${esc(settings.get('stampName'))}" placeholder="z. B. Firmenname" maxlength="40">
       <div class="lbl">Farbe</div>
       <div class="colors" data-cols>${STAMP_COLORS.map((c, i) => `<button class="color ${i ? '' : 'on'}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
       <div class="row" style="padding:14px 2px 0;border:0"><div class="row-main"><div class="row-title">Datum anfügen</div></div><div class="seg" data-date><button class="on" data-v="1">Ja</button><button data-v="0">Nein</button></div></div>
