@@ -397,6 +397,16 @@ export function aspectRatio(P, W, H) {
   return isFinite(r) && r > 0 ? r : null;
 }
 
+// Echtes Seitenverhältnis (Breite/Höhe) der Seite – gleiche Rechnung wie in warp(), ohne Pixel
+export function pageRatio(img, corners) {
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const P = corners.map(([x, y]) => [x * iw, y * ih]);
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const w = Math.max(dist(P[0], P[1]), dist(P[3], P[2])), h = Math.max(dist(P[0], P[3]), dist(P[1], P[2]));
+  const edgeR = w / h, r = isFull(corners) ? null : aspectRatio(P, iw, ih);
+  return r && r / edgeR < 2.2 && edgeR / r < 2.2 ? r : edgeR;
+}
+
 export function warp(img, corners, maxSide = 2200) {
   if (isFull(corners)) return toCanvas(img, maxSide);
   const src = toCanvas(img, Math.max(maxSide * 1.25, 1200));
@@ -778,7 +788,19 @@ export function render(item, filter, maxSide, adj) {
   // Online-Scan (js/online.js): fertiges Ergebnis von TextIn, nur noch drehen + eigene Anpassungen
   if (filter === 'online') {
     if (item._onl && item._onl.ck === JSON.stringify(item.corners)) {
-      const oc = toCanvas(item._onl.canvas, maxSide), ox = oc.getContext('2d'), od = ox.getImageData(0, 0, oc.width, oc.height);
+      let oc = toCanvas(item._onl.canvas, maxSide);
+      // TextIn misst die Seite nur an den Kanten im Foto → bei Schrägaufnahmen zu schmal/breit.
+      // Auf das echte Seitenverhältnis (aus der Kamera-Perspektive) bringen; Höhe bzw. Breite bleibt.
+      const r = pageRatio(item.img, item.corners), cur = oc.width / oc.height;
+      if (r && Math.abs(r / cur - 1) > 0.02 && r / cur < 1.8 && cur / r < 1.8) {
+        let w = oc.width, h = oc.height;
+        if (r > cur) w = Math.round(h * r); else h = Math.round(w / r);
+        const k = Math.min(1, maxSide / Math.max(w, h)); w = Math.round(w * k); h = Math.round(h * k);
+        const rc = document.createElement('canvas'); rc.width = w; rc.height = h;
+        const rx = rc.getContext('2d'); rx.imageSmoothingQuality = 'high'; rx.drawImage(oc, 0, 0, w, h);
+        oc = rc;
+      }
+      const ox = oc.getContext('2d'), od = ox.getImageData(0, 0, oc.width, oc.height);
       cleanBorders(od.data, oc.width, oc.height, innerPaper(od.data, oc.width, oc.height));   // schwarze Kantenstriche weg
       ox.putImageData(od, 0, 0);
       return enhance(rotateCanvas(oc, item.rot || 0), '', adj);
