@@ -115,6 +115,28 @@ function squareToQuad(p) {
   return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h];
 }
 
+// ---------- Echtes Seitenverhältnis ----------
+// Aus den 4 Ecken im Foto und der Kamerageometrie (Zhang & He, „Whiteboard Scanning“)
+// wird das wahre Breite/Höhe-Verhältnis des Blatts berechnet. Ohne das wirken schräg
+// fotografierte Blätter gestaucht, weil entfernte Kanten im Foto kürzer erscheinen.
+export function aspectRatio(P, W, H) {
+  const cx = W / 2, cy = H / 2;
+  const m = p => [p[0] - cx, p[1] - cy, 1];
+  const m1 = m(P[0]), m2 = m(P[1]), m3 = m(P[3]), m4 = m(P[2]);   // oben-links, oben-rechts, unten-links, unten-rechts
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const k2 = dot(cross(m1, m4), m3) / dot(cross(m2, m4), m3);
+  const k3 = dot(cross(m1, m4), m2) / dot(cross(m3, m4), m2);
+  const n2 = m2.map((v, i) => k2 * v - m1[i]), n3 = m3.map((v, i) => k3 * v - m1[i]);
+  const long = Math.max(W, H);
+  let f2 = -(n2[0] * n3[0] + n2[1] * n3[1]) / (n2[2] * n3[2]);
+  const f = Math.sqrt(f2);
+  // Unplausibel (fast frontal fotografiert, Rundungsfehler) → typische Handy-Brennweite annehmen
+  if (!isFinite(f) || f < long * 0.45 || f > long * 3) f2 = (0.82 * long) ** 2;
+  const r = Math.sqrt((n2[0] ** 2 + n2[1] ** 2) / f2 + n2[2] ** 2) / Math.sqrt((n3[0] ** 2 + n3[1] ** 2) / f2 + n3[2] ** 2);
+  return isFinite(r) && r > 0 ? r : null;
+}
+
 export function warp(img, corners, maxSide = 2200) {
   if (isFull(corners)) return toCanvas(img, maxSide);
   const src = toCanvas(img, Math.max(maxSide * 1.25, 1200));
@@ -122,6 +144,9 @@ export function warp(img, corners, maxSide = 2200) {
   const P = corners.map(([x, y]) => [x * sw, y * sh]);
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   let w = Math.max(dist(P[0], P[1]), dist(P[3], P[2])), h = Math.max(dist(P[0], P[3]), dist(P[1], P[2]));
+  // Seitenverhältnis korrigieren (Fläche bleibt etwa gleich)
+  const edgeR = w / h, r = aspectRatio(P, sw, sh);
+  if (r && r / edgeR < 2.2 && edgeR / r < 2.2) { const base = Math.sqrt(w * h); w = base * Math.sqrt(r); h = base / Math.sqrt(r); }
   const k = Math.min(1, maxSide / Math.max(w, h)); w = Math.max(8, Math.round(w * k)); h = Math.max(8, Math.round(h * k));
   const sd = src.getContext('2d').getImageData(0, 0, sw, sh).data;
   const out = document.createElement('canvas'); out.width = w; out.height = h;
@@ -146,6 +171,153 @@ export function warp(img, corners, maxSide = 2200) {
   octx.putImageData(od, 0, 0);
   return out;
 }
+
+// ---------- Begradigen (Rest-Schräglage, Trapez, Wölbung) ----------
+// Nach dem Entzerren über die 4 Ecken bleiben oft leichte Schräglagen oder eine Wölbung
+// (z. B. Etikett auf rundem Karton). Die Richtung der Textzeilen und Linien wird in
+// mehreren Feldern gemessen (Projektionsprofil) und daraus ein Verschiebungsfeld gebaut,
+// das alle Zeilen waagerecht und senkrechte Linien senkrecht zieht.
+export function inkPoints(c, x0, y0, x1, y1, thr, data, W, maxN) {
+  // Zufällige Stichprobe (ein festes Raster würde 0° vortäuschen)
+  let ink = [];
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+    const i = (y * W + x) * 4;
+    if (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114 < thr) ink.push(x, y);
+  }
+  const n = ink.length / 2;
+  if (n <= maxN) return ink;
+  const out = [], p = maxN / n;
+  let seed = 12345;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let k = 0; k < ink.length; k += 2) if (rnd() < p) out.push(ink[k], ink[k + 1]);
+  return out;
+}
+export function bestAngle(pts, vertical, maxDeg = 6, stepDeg = 0.2) {
+  const n = pts.length / 2;
+  if (n < 150) return null;
+  let minR = 1e9, maxR = -1e9;
+  for (let i = 0; i < pts.length; i += 2) { const v = vertical ? pts[i] : pts[i + 1]; if (v < minR) minR = v; if (v > maxR) maxR = v; }
+  let ext = 0; for (let i = 0; i < pts.length; i += 2) ext = Math.max(ext, Math.abs(vertical ? pts[i + 1] : pts[i]));
+  const pad = Math.ceil(ext * Math.tan(maxDeg * Math.PI / 180)) + 4;
+  const size = Math.ceil(maxR - minR) + pad * 2 + 2;
+  const bins = new Float32Array(size);
+  const scores = [];
+  for (let a = -maxDeg; a <= maxDeg + 1e-9; a += stepDeg) {
+    const t = a * Math.PI / 180, sn = Math.sin(t), cs = Math.cos(t);
+    bins.fill(0);
+    for (let i = 0; i < pts.length; i += 2) {
+      const x = pts[i], y = pts[i + 1];
+      const r = vertical ? x * cs + y * sn : y * cs - x * sn;
+      bins[Math.round(r - minR) + pad]++;
+    }
+    // Schärfe des Profils: Summe der quadrierten Sprünge (Linien/Zeilen ergeben scharfe Spitzen)
+    let sc = 0; for (let k = 1; k < size; k++) { const d = bins[k] - bins[k - 1]; sc += d * d; }
+    scores.push(sc);
+  }
+  let bi = 0; for (let i = 1; i < scores.length; i++) if (scores[i] > scores[bi]) bi = i;
+  // Parabel-Feinjustierung zwischen den Nachbarwinkeln
+  let off = 0;
+  if (bi > 0 && bi < scores.length - 1) { const l = scores[bi - 1], c = scores[bi], r = scores[bi + 1], den = l - 2 * c + r; if (den < 0) off = 0.5 * (l - r) / den; }
+  const mean = scores.reduce((x, y) => x + y, 0) / scores.length;
+  return { angle: -maxDeg + (bi + off) * stepDeg, conf: scores[bi] / mean };
+}
+
+export function estimateStraighten(c) {
+  try {
+    const W = c.width, H = c.height;
+    const data = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+    const hist = new Array(256).fill(0);
+    for (let i = 0; i < data.length; i += 16) hist[(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) | 0]++;
+    const tot = hist.reduce((x, y) => x + y, 0); let acc = 0, paper = 200;
+    for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > tot * 0.35) { paper = v; break; } }
+    const thr = paper * 0.62;
+    const pts = (x0, y0, x1, y1, n) => inkPoints(c, Math.max(0, x0 | 0), Math.max(0, y0 | 0), Math.min(W, x1 | 0), Math.min(H, y1 | 0), thr, data, W, n);
+    const g = bestAngle(pts(0, 0, W, H, 40000), false);
+    if (!g || g.conf < 1.15) return null;
+    // Verlauf über die Breite (Wölbung) aus überlappenden Spaltenstreifen
+    const GX = 6, GY = 4;
+    const col = [], row = [];
+    for (let i = 0; i < GX; i++) {
+      const cx = (i + 0.5) * W / GX, hw = W / GX * 0.9;
+      const r = bestAngle(pts(cx - hw, 0, cx + hw, H, 12000), false);
+      col.push(r && r.conf > 1.15 ? r.angle : NaN);
+    }
+    // Verlauf über die Höhe (Trapez) aus überlappenden Zeilenbändern
+    for (let j = 0; j < GY; j++) {
+      const cy = (j + 0.5) * H / GY, hh = H / GY * 0.75;
+      const r = bestAngle(pts(0, cy - hh, W, cy + hh, 12000), false);
+      row.push(r && r.conf > 1.15 ? r.angle : NaN);
+    }
+    const fill = a => a.map(v => isNaN(v) ? g.angle : v);
+    const cA = fill(col), rA = fill(row);
+    // Einzelne Ausreißer (> 2,5° vom Nachbarschnitt) dämpfen
+    const damp = a => a.map((v, i) => { const nb = [a[i - 1], a[i + 1]].filter(x => x != null); const m = nb.reduce((x, y) => x + y, 0) / nb.length; return Math.abs(v - m) > 2.5 ? m : v; });
+    const cS = damp(cA), rS = damp(rA);
+    const grid = [];
+    for (let j = 0; j < GY; j++) for (let i = 0; i < GX; i++) grid.push(cS[i] + rS[j] - g.angle);
+    // Senkrechte: eigene Messung, sonst mit der Schräglage mitdrehen
+    const v = bestAngle(pts(0, 0, W, H, 40000), true);
+    const shear = Math.tan(((v && v.conf > 1.4) ? v.angle : g.angle) * Math.PI / 180);
+    if (Math.max(...grid.map(Math.abs)) < 0.15 && Math.abs(shear) < 0.003) return null;
+    return { GX, GY, grid, shear };
+  } catch { return null; }
+}
+
+// Verschiebungsfeld anwenden: Ausgabe(x,y) = Eingabe(x + u(y), y + v(x,y))
+export function applyStraighten(c, st) {
+  if (!st) return c;
+  const W = c.width, H = c.height, { GX, GY, grid, shear } = st;
+  const S = 64;
+  // v je Band: v(x) = ∫ tan θ dx ab Bildmitte
+  const bandV = [];
+  for (let gy = 0; gy < GY; gy++) {
+    const slope = x => {
+      const fx = clampN(x / W * GX - 0.5, 0, GX - 1), i = Math.floor(fx), f = fx - i;
+      const a = grid[gy * GX + i], b = grid[gy * GX + Math.min(GX - 1, i + 1)];
+      return Math.tan((a + (b - a) * f) * Math.PI / 180);
+    };
+    const vs = new Float32Array(S + 1);
+    for (let k = 1; k <= S; k++) { const xa = (k - 1) / S * W, xb = k / S * W; vs[k] = vs[k - 1] + (slope(xa) + slope(xb)) / 2 * (xb - xa); }
+    const mid = vs[S >> 1];
+    for (let k = 0; k <= S; k++) vs[k] -= mid;
+    bandV.push(vs);
+  }
+  const vAt = (x, y) => {
+    const fy = clampN(y / H * GY - 0.5, 0, GY - 1), j = Math.floor(fy), g = fy - j, j2 = Math.min(GY - 1, j + 1);
+    const fx = clampN(x / W * S, 0, S), k = Math.min(S - 1, Math.floor(fx)), f = fx - k;
+    const a = bandV[j][k] + (bandV[j][k + 1] - bandV[j][k]) * f, b = bandV[j2][k] + (bandV[j2][k + 1] - bandV[j2][k]) * f;
+    return a + (b - a) * g;
+  };
+  const sd = c.getContext('2d').getImageData(0, 0, W, H).data;
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const octx = out.getContext('2d'), od = octx.createImageData(W, H), o = od.data;
+  // v auf grobem Raster vorberechnen (schnell), dazwischen linear
+  const RX = Math.min(W, 128), RY = Math.min(H, 128);
+  const vg = new Float32Array((RX + 1) * (RY + 1));
+  for (let j = 0; j <= RY; j++) for (let i = 0; i <= RX; i++) vg[j * (RX + 1) + i] = vAt(i / RX * W, j / RY * H);
+  for (let y = 0; y < H; y++) {
+    const fy = y / H * RY, j = Math.min(RY - 1, Math.floor(fy)), gy = fy - j;
+    const u = -(y - H / 2) * shear;
+    for (let x = 0; x < W; x++) {
+      const fx = x / W * RX, i = Math.min(RX - 1, Math.floor(fx)), gx = fx - i;
+      const p = j * (RX + 1) + i;
+      const v = (vg[p] * (1 - gx) + vg[p + 1] * gx) * (1 - gy) + (vg[p + RX + 1] * (1 - gx) + vg[p + RX + 2] * gx) * gy;
+      let sx = x + u, sy = y + v;
+      const q = (y * W + x) * 4;
+      if (sx < 0 || sy < 0 || sx > W - 1.001 || sy > H - 1.001) { o[q] = o[q + 1] = o[q + 2] = 255; o[q + 3] = 255; continue; }
+      const x0 = sx | 0, y0 = sy | 0, ax = sx - x0, ay = sy - y0;
+      const p00 = (y0 * W + x0) * 4, p10 = p00 + 4, p01 = p00 + W * 4, p11 = p01 + 4;
+      for (let ch = 0; ch < 3; ch++) {
+        const t = sd[p00 + ch] * (1 - ax) + sd[p10 + ch] * ax, b = sd[p01 + ch] * (1 - ax) + sd[p11 + ch] * ax;
+        o[q + ch] = t * (1 - ay) + b * ay;
+      }
+      o[q + 3] = 255;
+    }
+  }
+  octx.putImageData(od, 0, 0);
+  return out;
+}
+const clampN = (v, a, b) => v < a ? a : v > b ? b : v;
 
 export function rotateCanvas(c, deg) {
   deg = ((deg % 360) + 360) % 360; if (!deg) return c;
@@ -200,23 +372,32 @@ export function enhance(c, mode, adj = NO_ADJ) {
     for (let i = 0; i < d.length; i += 4) {
       const k = 255 / bg[i];
       if (mode === 'color') {
-        d[i] = curve(d[i] * k, 40, 245); d[i + 1] = curve(d[i + 1] * k, 40, 245); d[i + 2] = curve(d[i + 2] * k, 40, 245);
+        // Verbessern: Papier reinweiß, Schrift kräftig dunkel, Farben bleiben (z. B. blaue Unterschrift)
+        const r = d[i] * k, g = d[i + 1] * k, b = d[i + 2] * k;
+        const L = r * 0.299 + g * 0.587 + b * 0.114;
+        const t = clamp((L - 55) / (222 - 55) * 255) / 255;
+        const nl = 255 * Math.pow(t, 1.65);                 // Mitteltöne dunkler, Weiß sättigt
+        if (nl >= 250) { d[i] = d[i + 1] = d[i + 2] = 255; continue; }
+        const sat = 1.25 * (1 - t * 0.6);
+        d[i] = clamp(nl + (r - L) * sat); d[i + 1] = clamp(nl + (g - L) * sat); d[i + 2] = clamp(nl + (b - L) * sat);
       } else {
         const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) * k;
         let v;
         if (mode === 'gray') v = curve(g, 25, 248);
         else if (mode === 'bw') v = clamp((g - 150) * 7 + 128);       // weiches Schwellwert-S/W (glatte Kanten)
-        else v = curve(g, 70, 232);                                    // doc & invert
+        else { const t = clamp((g - 60) / (225 - 60) * 255) / 255; v = 255 * Math.pow(t, 1.9); }   // doc & invert: Schwarz auf Weiß
         if (mode === 'invert') v = 255 - v;
         d[i] = d[i + 1] = d[i + 2] = v;
       }
     }
   }
-  // Schärfe (Unscharf maskieren auf der Helligkeit)
-  if (sharp > 0) {
+  // Schärfe (Unscharf maskieren auf der Helligkeit) – Verbessern/Dokument immer etwas nachgeschärft
+  const autoSharp = mode === 'color' || mode === 'doc' || mode === 'invert' ? 22 : 0;
+  const sharpAll = sharp + autoSharp;
+  if (sharpAll > 0) {
     const N = w * h, L = new Float32Array(N);
     for (let i = 0; i < N; i++) L[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
-    const B = boxBlur(L, w, h, 1), amt = sharp / 40;
+    const B = boxBlur(L, w, h, 1), amt = sharpAll / 40;
     for (let i = 0; i < N; i++) {
       const dl = (L[i] - B[i]) * amt;
       d[i * 4] = clamp(d[i * 4] + dl); d[i * 4 + 1] = clamp(d[i * 4 + 1] + dl); d[i * 4 + 2] = clamp(d[i * 4 + 2] + dl);
@@ -233,7 +414,14 @@ export function enhance(c, mode, adj = NO_ADJ) {
 }
 
 export function render(item, filter, maxSide, adj) {
-  const c = rotateCanvas(warp(item.img, item.corners, maxSide), item.rot || 0);
+  let c = warp(item.img, item.corners, maxSide);
+  // Begradigen: Feld einmal je Zuschnitt auf kleiner Kopie schätzen, dann in jeder Größe anwenden
+  if (item.straighten !== false) {
+    const key = JSON.stringify(item.corners);
+    if (item._stKey !== key) { item._st = estimateStraighten(warp(item.img, item.corners, 1000)); item._stKey = key; }
+    if (item._st) c = applyStraighten(c, item._st);
+  }
+  c = rotateCanvas(c, item.rot || 0);
   return enhance(c, filter, adj);
 }
 
