@@ -84,8 +84,13 @@ export function detectQuad(img, maxSide = 360) {
       const q = st[--sp], x = q % w;
       if (x > 0) seed(q - 1); if (x < w - 1) seed(q + 1); if (q >= w) seed(q - w); if (q < N - w) seed(q + w);
     }
-    const runs = [[b, t0], [b, t0 + 14], [b, t0 + 28], [b, t0 - 12], [nb, t1], [nb, t1 - 15], [nb, 215], [rg, 128]];
-    for (const [src, t] of runs) {
+    // Vierter Kanal: reine Helligkeit – für farbiges Papier (gelb, rosa, blau …)
+    const lv = new Float32Array(N);
+    for (let i = 0; i < N; i++) lv[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
+    const lumB = boxBlur(boxBlur(lv, w, h, 1), w, h, 2), t2 = otsu(lumB, N);
+    const runs = [[b, t0], [b, t0 + 14], [b, t0 + 28], [b, t0 - 12], [nb, t1], [nb, t1 - 15], [nb, 215], [rg, 128],
+      [lumB, t2, 1], [lumB, t2 + 20, 1], [lumB, t2 + 40, 1], [lumB, t2 - 15, 1]];
+    for (const [src, t, lum] of runs) {
       lab.fill(0); const comps = [];
       let cur = 0;
       for (let i = 0; i < N; i++) {
@@ -109,14 +114,14 @@ export function detectQuad(img, maxSide = 360) {
         const qa = polyArea(quad);
         if (qa < N * 0.1) continue;
         const fill = Math.min(1, n / qa);
-        const con = edgeContrast(b, w, h, quad);
+        const con = edgeContrast(lum ? lumB : b, w, h, quad) * (lum ? 0.85 : 1);
         const score = fill ** 3 * Math.sqrt(qa / N) * con;
-        if (!best || score > best.score) best = { score, quad, fill, con };
+        if (!best || score > best.score) best = { score, quad, fill, con, lum };
       }
     }
     if (!best || best.fill < 0.72 || best.con < 6) return null;
     let quad = best.quad;
-    if (fine) quad = refineQuad(img, quad, w, h) || quad;
+    if (fine) quad = refineQuad(img, quad, w, h, best.lum) || quad;
     const q = quad.map(([x, y]) => [Math.min(1, Math.max(0, x / w)), Math.min(1, Math.max(0, y / h))]);
     return quadArea(q) > 0.1 ? q : null;
   } catch (e) { console.warn(e); return null; }
@@ -152,6 +157,12 @@ function maxFilter(src, w, h, r) {
     }
   }
   return out;
+}
+
+function lumValues(d, N) {
+  const v = new Float32Array(N);
+  for (let i = 0; i < N; i++) v[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
+  return v;
 }
 
 function otsu(b, N) {
@@ -236,10 +247,10 @@ function edgeContrast(b, w, h, q) {
 }
 
 // Kanten auf doppelter Auflösung an den stärksten Sprung legen (Gerade per Ausgleich), Ecken = Schnittpunkte
-function refineQuad(img, q, w, h) {
+function refineQuad(img, q, w, h, lum) {
   const S = 2, c = toCanvas(img, Math.max(w, h) * S), W = c.width, H = c.height;
   const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
-  const pv = boxBlur(paperValues(d, W * H), W, H, 1);
+  const pv = boxBlur(lum ? lumValues(d, W * H) : paperValues(d, W * H), W, H, 1);
   const sx = W / w, sy = H / h;
   const Q = q.map(([x, y]) => [x * sx, y * sy]);
   const cx = Q.reduce((s, p) => s + p[0], 0) / 4, cy = Q.reduce((s, p) => s + p[1], 0) / 4;
