@@ -620,6 +620,25 @@ function paperLevel(c) {
   return bctx.getImageData(0, 0, w, h).data;
 }
 
+// Papierfarbe schätzen (Median heller Hintergrund-Pixel). Nur wenn deutlich farbig:
+// wb = Weißabgleich (Papier → weiß), out = kräftige Papierfarbe für die Ausgabe
+function paperTint(d, bg) {
+  const rs = [], gs = [], bs = [];
+  const step = Math.max(4, Math.floor(d.length / 4 / 40000)) * 4;
+  for (let i = 0; i < d.length; i += step) {
+    const k = 255 / bg[i], r = d[i] * k, g = d[i + 1] * k, b = d[i + 2] * k;
+    if (r * 0.299 + g * 0.587 + b * 0.114 > 225) { rs.push(r); gs.push(g); bs.push(b); }
+  }
+  if (rs.length < 200) return null;
+  const med = a => a.sort((x, y) => x - y)[a.length >> 1];
+  const P = [med(rs), med(gs), med(bs)];
+  if (Math.max(...P) - Math.min(...P) < 28) return null;                 // weißes/graues Papier
+  const L = P[0] * 0.299 + P[1] * 0.587 + P[2] * 0.114;
+  let out = P.map(v => L + (v - L) * 1.5);                                // etwas kräftiger
+  const m = Math.max(...out); out = out.map(v => Math.max(0, Math.min(255, v * 252 / m)));
+  return { wb: P.map(v => 255 / Math.max(40, Math.min(255, v))), out };
+}
+
 export function enhance(c, mode, adj = NO_ADJ) {
   const { brightness = 0, contrast = 0, sharp = 0 } = adj || NO_ADJ;
   if (!mode && !brightness && !contrast && !sharp) return c;
@@ -629,14 +648,23 @@ export function enhance(c, mode, adj = NO_ADJ) {
   if (mode) {
     const bg = paperLevel(c);
     const curve = (v, lo, hi) => clamp((v - lo) * 255 / (hi - lo));
+    // Farbiges Papier (gelb, rosa …)? Dann Papierfarbe kräftig behalten statt zu Weiß auszubleichen
+    const tint = mode === 'color' ? paperTint(d, bg) : null;
+    const [wr, wg, wb] = tint ? tint.wb : [1, 1, 1];
     for (let i = 0; i < d.length; i += 4) {
       const k = 255 / bg[i];
       if (mode === 'color') {
-        // Verbessern: Papier reinweiß, Schrift kräftig dunkel, Farben bleiben (z. B. blaue Unterschrift)
-        const r = d[i] * k, g = d[i + 1] * k, b = d[i + 2] * k;
+        // Verbessern: Papier reinweiß (bzw. kräftige Papierfarbe), Schrift kräftig dunkel, Farben bleiben
+        const r = d[i] * k * wr, g = d[i + 1] * k * wg, b = d[i + 2] * k * wb;
         const L = r * 0.299 + g * 0.587 + b * 0.114;
         const t = clamp((L - 55) / (222 - 55) * 255) / 255;
         const nl = 255 * Math.pow(t, 1.65);                 // Mitteltöne dunkler, Weiß sättigt
+        if (tint) {
+          const sat = 1.25 * (1 - t * 0.6), T = tint.out;
+          const rr = nl >= 250 ? 255 : clamp(nl + (r - L) * sat), gg = nl >= 250 ? 255 : clamp(nl + (g - L) * sat), bb = nl >= 250 ? 255 : clamp(nl + (b - L) * sat);
+          d[i] = rr * T[0] / 255; d[i + 1] = gg * T[1] / 255; d[i + 2] = bb * T[2] / 255;
+          continue;
+        }
         if (nl >= 250) { d[i] = d[i + 1] = d[i + 2] = 255; continue; }
         const sat = 1.25 * (1 - t * 0.6);
         d[i] = clamp(nl + (r - L) * sat); d[i + 1] = clamp(nl + (g - L) * sat); d[i + 2] = clamp(nl + (b - L) * sat);
