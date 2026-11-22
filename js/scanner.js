@@ -596,28 +596,46 @@ export const FILTERS = [
 export const NO_ADJ = { brightness: 0, contrast: 0, sharp: 0 };
 
 // Papierhelligkeit je Pixel schätzen (für Schattenentfernung)
+// Papierhelligkeit je Pixel schätzen (für Schatten/Knicke): auf ~1/6 Größe die Schrift per
+// „Schließen“ (Maximum, dann Minimum) entfernen – Kanten von Knicken bleiben scharf, damit
+// beide Seiten eines Knicks sauber weiß werden. Danach leicht weichzeichnen und hochskalieren.
 function paperLevel(c) {
   const w = c.width, h = c.height;
-  const sw = Math.max(8, Math.round(w / 24)), sh = Math.max(8, Math.round(h / 24));
+  const f = Math.max(1, Math.round(Math.max(w, h) / 320));
+  const sw = Math.max(8, Math.round(w / f)), sh = Math.max(8, Math.round(h / f));
   const sc = document.createElement('canvas'); sc.width = sw; sc.height = sh;
-  const sctx = sc.getContext('2d'); sctx.drawImage(c, 0, 0, sw, sh);
+  const sctx = sc.getContext('2d'); sctx.imageSmoothingQuality = 'high'; sctx.drawImage(c, 0, 0, sw, sh);
   const sdat = sctx.getImageData(0, 0, sw, sh).data;
-  const lum = new Float32Array(sw * sh);
-  for (let i = 0; i < sw * sh; i++) lum[i] = Math.max(sdat[i * 4], sdat[i * 4 + 1], sdat[i * 4 + 2]);
-  const mx = new Float32Array(sw * sh);
-  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
-    let m = 0;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const xx = Math.min(sw - 1, Math.max(0, x + dx)), yy = Math.min(sh - 1, Math.max(0, y + dy)); m = Math.max(m, lum[yy * sw + xx]);
-    }
-    mx[y * sw + x] = m;
-  }
-  const bl = boxBlur(mx, sw, sh, 2);
-  for (let i = 0; i < sw * sh; i++) { sdat[i * 4] = sdat[i * 4 + 1] = sdat[i * 4 + 2] = Math.max(40, bl[i]); sdat[i * 4 + 3] = 255; }
+  const N = sw * sh, lum = new Float32Array(N);
+  for (let i = 0; i < N; i++) lum[i] = Math.max(sdat[i * 4], sdat[i * 4 + 1], sdat[i * 4 + 2]);
+  const r = Math.max(3, Math.round(Math.max(sw, sh) * 0.022));          // größer als Schrifthöhe
+  const closed = minFilter(maxFilterExact(lum, sw, sh, r), sw, sh, r);
+  const bl = boxBlur(closed, sw, sh, 1);
+  for (let i = 0; i < N; i++) { sdat[i * 4] = sdat[i * 4 + 1] = sdat[i * 4 + 2] = Math.max(40, bl[i]); sdat[i * 4 + 3] = 255; }
   sctx.putImageData(new ImageData(sdat, sw, sh), 0, 0);
   const bc = document.createElement('canvas'); bc.width = w; bc.height = h;
   const bctx = bc.getContext('2d'); bctx.imageSmoothingQuality = 'high'; bctx.drawImage(sc, 0, 0, w, h);
   return bctx.getImageData(0, 0, w, h).data;
+}
+
+function minFilter(src, w, h, r) {
+  const neg = src.map(v => -v);
+  return maxFilterExact(neg, w, h, r).map(v => -v);
+}
+// exakter (nicht ausgedünnter) Maximum-Filter, getrennt nach Zeilen/Spalten
+function maxFilterExact(src, w, h, r) {
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let m = -Infinity; const a = Math.max(0, x - r), z = Math.min(w - 1, x + r);
+    for (let k = a; k <= z; k++) if (src[y * w + k] > m) m = src[y * w + k];
+    tmp[y * w + x] = m;
+  }
+  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) {
+    let m = -Infinity; const a = Math.max(0, y - r), z = Math.min(h - 1, y + r);
+    for (let k = a; k <= z; k++) if (tmp[k * w + x] > m) m = tmp[k * w + x];
+    out[y * w + x] = m;
+  }
+  return out;
 }
 
 // Papierfarbe schätzen (Median heller Hintergrund-Pixel). Nur wenn deutlich farbig:
@@ -639,17 +657,57 @@ function paperTint(d, bg) {
   return { wb: P.map(v => 255 / Math.max(40, Math.min(255, v))), out };
 }
 
+function thicken(d, w, h, bg) {
+  const N = w * h, L = new Float32Array(N);
+  for (let i = 0; i < N; i++) L[i] = (d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114) / bg[i * 4];
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x, l = L[i];
+    if (l > 0.9) continue;
+    let m = l;
+    for (let k of [i - 1, i + 1, i - w, i + w]) if (L[k] < m) m = L[k];
+    if (m >= l - 0.02) continue;
+    const f = (l * 0.55 + m * 0.45) / l;                          // etwas Richtung dunkelster Nachbar
+    d[i * 4] *= f; d[i * 4 + 1] *= f; d[i * 4 + 2] *= f;
+  }
+}
+
+// Vom Bildrand aus zusammenhängende dunkle Flächen in einem schmalen Randstreifen → Papierfarbe
+function cleanBorders(d, w, h, fill) {
+  const band = Math.max(4, Math.round(Math.min(w, h) * 0.03)), N = w * h;
+  const dark = i => d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114 < 200;
+  const seen = new Uint8Array(N), st = new Int32Array(N); let sp = 0;
+  const inBand = (x, y) => x < band || y < band || x >= w - band || y >= h - band;
+  const push = (x, y) => { const i = y * w + x; if (!seen[i] && inBand(x, y) && dark(i)) { seen[i] = 1; st[sp++] = i; } };
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+  while (sp) {
+    const i = st[--sp], x = i % w, y = (i / w) | 0;
+    d[i * 4] = fill[0]; d[i * 4 + 1] = fill[1]; d[i * 4 + 2] = fill[2];
+    if (x > 0) push(x - 1, y); if (x < w - 1) push(x + 1, y); if (y > 0) push(x, y - 1); if (y < h - 1) push(x, y + 1);
+  }
+  // äußerster Rand (1 %) – dort steht nie Text, nur Krümel der Blattkante
+  const e = Math.max(2, Math.round(Math.min(w, h) * 0.01));
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (x >= e && y >= e && x < w - e && y < h - e) { x = w - e - 1; continue; }
+    const i = y * w + x; d[i * 4] = fill[0]; d[i * 4 + 1] = fill[1]; d[i * 4 + 2] = fill[2];
+  }
+}
+
 export function enhance(c, mode, adj = NO_ADJ) {
   const { brightness = 0, contrast = 0, sharp = 0 } = adj || NO_ADJ;
   if (!mode && !brightness && !contrast && !sharp) return c;
   const w = c.width, h = c.height, ctx = c.getContext('2d');
   const id = ctx.getImageData(0, 0, w, h), d = id.data;
   const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
+  let paperFill = null;
   if (mode) {
     const bg = paperLevel(c);
+    // Dünne, blasse Schrift etwas kräftiger: Schrift-Pixel mit dem dunkelsten Nachbarn mischen
+    if (mode === 'color' || mode === 'doc' || mode === 'invert') thicken(d, w, h, bg);
     const curve = (v, lo, hi) => clamp((v - lo) * 255 / (hi - lo));
     // Farbiges Papier (gelb, rosa …)? Dann Papierfarbe kräftig behalten statt zu Weiß auszubleichen
     const tint = mode === 'color' ? paperTint(d, bg) : null;
+    if (tint) paperFill = tint.out;
     const [wr, wg, wb] = tint ? tint.wb : [1, 1, 1];
     for (let i = 0; i < d.length; i += 4) {
       const k = 255 / bg[i];
@@ -657,8 +715,9 @@ export function enhance(c, mode, adj = NO_ADJ) {
         // Verbessern: Papier reinweiß (bzw. kräftige Papierfarbe), Schrift kräftig dunkel, Farben bleiben
         const r = d[i] * k * wr, g = d[i + 1] * k * wg, b = d[i + 2] * k * wb;
         const L = r * 0.299 + g * 0.587 + b * 0.114;
-        const t = clamp((L - 55) / (222 - 55) * 255) / 255;
-        const nl = 255 * Math.pow(t, 1.65);                 // Mitteltöne dunkler, Weiß sättigt
+        // Papier ab 86 % Helligkeit reinweiß (Knick-Reste, Struktur weg); graue Schrift kräftig dunkel
+        const t = clamp((L - 90) / (219 - 90) * 255) / 255;
+        const nl = 255 * Math.pow(t, 2.1);
         if (tint) {
           const sat = 1.25 * (1 - t * 0.6), T = tint.out;
           const rr = nl >= 250 ? 255 : clamp(nl + (r - L) * sat), gg = nl >= 250 ? 255 : clamp(nl + (g - L) * sat), bb = nl >= 250 ? 255 : clamp(nl + (b - L) * sat);
@@ -673,12 +732,14 @@ export function enhance(c, mode, adj = NO_ADJ) {
         let v;
         if (mode === 'gray') v = curve(g, 25, 248);
         else if (mode === 'bw') v = clamp((g - 150) * 7 + 128);       // weiches Schwellwert-S/W (glatte Kanten)
-        else { const t = clamp((g - 60) / (225 - 60) * 255) / 255; v = 255 * Math.pow(t, 1.9); }   // doc & invert: Schwarz auf Weiß
+        else { const t = clamp((g - 95) / (218 - 95) * 255) / 255; v = 255 * Math.pow(t, 2.2); }   // doc & invert: Schwarz auf Weiß
         if (mode === 'invert') v = 255 - v;
         d[i] = d[i + 1] = d[i + 2] = v;
       }
     }
   }
+  // Dunkle Ränder (Tisch, Schatten an der Blattkante) entfernen
+  if (mode && mode !== 'invert') cleanBorders(d, w, h, mode === 'color' && paperFill ? paperFill : [255, 255, 255]);
   // Schärfe (Unscharf maskieren auf der Helligkeit) – Verbessern/Dokument immer etwas nachgeschärft
   const autoSharp = mode === 'color' || mode === 'doc' || mode === 'invert' ? 22 : 0;
   const sharpAll = sharp + autoSharp;
