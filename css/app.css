@@ -538,3 +538,10 @@ textarea.tv-area { min-height: 52vh; font-size: 15px; line-height: 1.5; resize: 
 .trash-btn:active { transform: scale(.88); }
 .trash-btn.del { color: var(--danger); }
 .trash-btn .ico { width: 19px; height: 19px; }
+
+/* Texterkennung für „Text ändern“ */
+.ocr-pill { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 16px; background: rgba(30,32,38,.86); color: #fff; font-size: 13px; font-weight: 650; box-shadow: 0 4px 14px rgba(0,0,0,.25); pointer-events: none; animation: ocrIn .3s var(--ease) both; transition: opacity .3s; }
+.ocr-pill.out { opacity: 0; }
+.ocr-pill .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: ocrSpin .8s linear infinite; }
+@keyframes ocrSpin { to { transform: rotate(360deg); } }
+@keyframes ocrIn { from { opacity: 0; transform: translate(-50%, -6px); } }

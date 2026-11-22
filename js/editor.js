@@ -6,6 +6,7 @@ import { pdfjsLib, loadPdf, closePdf, pageInfos, flatten, pagesOp, renderThumb, 
 import { makeSymbol } from './sign.js';
 import { signatureSheet, stampSheet, freshStamp } from './assets.js';
 import { settings } from './settings.js';
+import { ocrEditItems, releaseEditOcr } from './ocr.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
@@ -80,12 +81,13 @@ async function loadDocument() {
   if (E.pdf) closePdf(E.pdf);
   E.pdf = await loadPdf(E.bytes);
   E.infos = await pageInfos(E.pdf);
-  E.text = {};
+  E.text = {}; E.ocr = {}; E.needOcr = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
 }
 
 async function closeEditor() {
   await saveNow();
+  E.ocrGen++; ocrQueue = []; releaseEditOcr();
   if (E.dirtyThumb) await updateThumb();
   E.open = false;
   $('editor').classList.remove('open'); $('editor').setAttribute('aria-hidden', 'true');
@@ -300,6 +302,16 @@ async function loadText(i) {
       const w = it.width; if (w < 0.5) return;
       items.push({ key: `${i}:${k}`, str: it.str, x: tx[4], base: tx[5], top: tx[5] - fh * asc, h: fh * (asc - desc), w, size: fh, bold });
     });
+    // Gescannte Seite? Kein Text oder nur eine unsichtbare Texterkennungs-Ebene → zum Ändern selbst lesen
+    let invisible = false;
+    const chars = items.reduce((n, t) => n + t.str.replace(/\s/g, '').length, 0);
+    if (chars >= 5) {
+      try {
+        const ol = await page.getOperatorList(), OPS = pdfjsLib.OPS;
+        for (let k = 0; k < ol.fnArray.length; k++) if (ol.fnArray[k] === OPS.setTextRenderingMode && (ol.argsArray[k][0] & 3) === 3) { invisible = true; break; }
+      } catch {}
+    }
+    E.needOcr[i] = invisible || chars < 5;
     return items;
   })();
   const items = await E.text[i];
@@ -308,6 +320,53 @@ async function loadText(i) {
   return items;
 }
 const textItems = i => Array.isArray(E.text[i]) ? E.text[i] : [];
+// Für „Text ändern“: bei gescannten Seiten die selbst erkannten Textstücke
+const editItems = i => E.needOcr[i] ? (Array.isArray(E.ocr[i]) ? E.ocr[i] : []) : textItems(i);
+
+// ---------- Texterkennung für „Text ändern“ (eine Seite nach der anderen) ----------
+let ocrQueue = [], ocrRunning = false;
+function ensureOcr(i) {
+  if (!E.needOcr[i] || E.ocr[i]) return;
+  E.ocr[i] = 'pending';
+  ocrQueue.push(i);
+  ocrQueue.sort((a, b) => Math.abs(a - currentPage()) - Math.abs(b - currentPage()));
+  runOcrQueue();
+}
+async function runOcrQueue() {
+  if (ocrRunning) return;
+  ocrRunning = true;
+  const gen = E.ocrGen;
+  try {
+    while (ocrQueue.length && E.open && gen === E.ocrGen) {
+      const i = ocrQueue.shift(), p = E.pages[i];
+      const pill = document.createElement('div');
+      pill.className = 'ocr-pill'; pill.innerHTML = '<span class="spin"></span>Text wird erkannt …';
+      p?.el.appendChild(pill);
+      try {
+        const page = await E.pdf.getPage(i + 1);
+        const base = page.getViewport({ scale: 1 });
+        const sc = Math.min(2600 / Math.max(base.width, base.height), 4);
+        const vp = page.getViewport({ scale: sc });
+        const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+        const ctx = c.getContext('2d', { willReadFrequently: true }); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        // Tabellenlinien vorher entfernen, sonst werden Zellen nicht gelesen
+        let prep = null;
+        try { prep = (await import('./scan2office.js')).prepare(c); } catch (e) { console.warn(e); }
+        const items = await ocrEditItems(c, sc, `${i}:o`, prep?.ocrCanvas);
+        if (prep?.ocrCanvas) prep.ocrCanvas.width = prep.ocrCanvas.height = 0;
+        c.width = c.height = 0;
+        if (gen !== E.ocrGen) break;
+        E.ocr[i] = items;
+        if (!items.length) toast(`Seite ${i + 1}: kein Text gefunden`);
+      } catch (err) {
+        console.warn(err);
+        if (gen === E.ocrGen) { E.ocr[i] = []; toast('Texterkennung fehlgeschlagen', true); }
+      } finally { pill.classList.add('out'); setTimeout(() => pill.remove(), 300); }
+      if (gen === E.ocrGen) renderLayer(i);
+    }
+  } finally { ocrRunning = false; }
+}
 
 // Farben aus dem gerenderten Canvas lesen
 function sampleColors(i, box) {
@@ -399,7 +458,8 @@ function renderLayer(i) {
   const svg = p.svg; svg.textContent = '';
   if (E.mode === 'edit' && E.tool === 'textedit') {
     const replaced = new Set(E.objects.filter(o => o.srcKey).map(o => o.srcKey));
-    textItems(i).forEach(t => { if (!replaced.has(t.key)) el('rect', { class: 'titem', x: t.x - 0.5, y: t.top - 0.5, width: t.w + 1, height: t.h + 1, rx: 0.8, 'data-key': t.key }, svg); });
+    if (E.needOcr[i]) ensureOcr(i);
+    editItems(i).forEach(t => { if (!replaced.has(t.key)) el('rect', { class: 'titem', x: t.x - 0.5, y: t.top - 0.5, width: t.w + 1, height: t.h + 1, rx: 0.8, 'data-key': t.key }, svg); });
   }
   E.objects.filter(o => o.page === i).forEach(o => drawObj(o, svg));
   const s = E.sel && byId(E.sel);
@@ -669,7 +729,7 @@ function placeAt(i, x, y) {
 }
 
 async function replaceText(i, key) {
-  const it = textItems(i).find(t => t.key === key); if (!it) return;
+  const it = editItems(i).find(t => t.key === key); if (!it) return;
   const ex = E.objects.find(o => o.srcKey === key);
   if (ex) { select(ex.id); return openTextEditor(ex, false); }
   const cols = sampleColors(i, { x: it.x, y: it.top, w: it.w, h: it.h });
