@@ -547,3 +547,24 @@ textarea.tv-area { min-height: 52vh; font-size: 15px; line-height: 1.5; resize: 
 .ocr-pill .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: ocrSpin .8s linear infinite; }
 @keyframes ocrSpin { to { transform: rotate(360deg); } }
 @keyframes ocrIn { from { opacity: 0; transform: translate(-50%, -6px); } }
+
+/* Scan-Animation beim „Text ändern“: Lichtlinie wandert von unten nach oben, Textfelder erscheinen beim Überstreichen */
+.page .scan-fx { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 4; border-radius: inherit; transition: opacity .4s ease; }
+.page .scan-fx.out { opacity: 0; }
+.scan-band { position: absolute; left: 0; right: 0; height: 34%; top: 100%;
+  background: linear-gradient(to bottom, rgba(255,122,69,.30), rgba(255,154,60,.12) 45%, rgba(255,154,60,0));
+  border-top: 2px solid rgba(255,255,255,.95);
+  box-shadow: 0 -2px 14px 2px rgba(255,122,69,.75), 0 -1px 0 rgba(255,122,69,.9);
+  animation: scanLoop 1.7s cubic-bezier(.45,0,.55,1) infinite alternate; will-change: top; }
+.scan-fx.final .scan-band { animation: scanOnce 1.3s linear forwards; }
+@keyframes scanLoop { from { top: 100%; } to { top: -2%; } }
+@keyframes scanOnce { from { top: 100%; } to { top: -15%; } }
+.scan-msg-wrap { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 9px;
+  padding: 9px 16px; border-radius: 20px; background: rgba(30,32,38,.82); color: #fff; font-size: 13.5px; font-weight: 650; white-space: nowrap;
+  box-shadow: 0 6px 20px rgba(0,0,0,.25); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); transition: opacity .25s; }
+.scan-fx.final .scan-msg-wrap { opacity: 0; }
+.scan-spark { width: 16px; height: 16px; border-radius: 50%; background: conic-gradient(from 0deg, #ff6b4a, #ffb347, #ff6b4a); animation: ocrSpin 1s linear infinite;
+  -webkit-mask: radial-gradient(circle, transparent 4px, #000 5px); mask: radial-gradient(circle, transparent 4px, #000 5px); }
+svg.layer .titem.rev { animation: titemIn .45s cubic-bezier(.2,.9,.3,1.2) both; transform-box: fill-box; transform-origin: center; }
+@keyframes titemIn { from { opacity: 0; transform: scale(.92); } 60% { opacity: 1; } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .scan-band, .scan-spark, svg.layer .titem.rev { animation: none !important; } }

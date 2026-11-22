@@ -81,7 +81,7 @@ async function loadDocument() {
   if (E.pdf) closePdf(E.pdf);
   E.pdf = await loadPdf(E.bytes);
   E.infos = await pageInfos(E.pdf);
-  E.text = {}; E.ocr = {}; E.needOcr = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
+  E.text = {}; E.ocr = {}; E.needOcr = {}; E.scanFx = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
 }
 
@@ -237,6 +237,7 @@ function updPageChip() { $('page-chip').textContent = `${currentPage() + 1} / ${
 // ======================= Modus & Werkzeuge =======================
 function setMode(mode, first) {
   E.mode = mode; E.tool = DEFAULT_TOOL[mode];
+  if (E.tool === 'textedit') E.scanFx = {};
   $('mode-label').textContent = MODES[mode].label;
   E.sel = null; hideSelMenu();
   renderToolbar();
@@ -248,7 +249,9 @@ function setMode(mode, first) {
 function setTool(id) {
   const t = MODES[E.mode].tools.find(x => x.id === id);
   if (t.kind === 'action') return runAction(id);
+  const was = E.tool;
   E.tool = (E.tool === id && id !== 'select' && E.mode !== 'edit') ? 'select' : id;
+  if (E.tool === 'textedit' && was !== 'textedit') E.scanFx = {};
   E.sel = null; hideSelMenu();
   renderToolbar();
   E.pages.forEach((_, i) => renderLayer(i));
@@ -339,9 +342,7 @@ async function runOcrQueue() {
   try {
     while (ocrQueue.length && E.open && gen === E.ocrGen) {
       const i = ocrQueue.shift(), p = E.pages[i];
-      const pill = document.createElement('div');
-      pill.className = 'ocr-pill'; pill.innerHTML = '<span class="spin"></span>Text wird erkannt …';
-      p?.el.appendChild(pill);
+      p?.el.querySelector('.scan-fx .scan-msg')?.replaceChildren('Text wird erkannt …');
       try {
         const page = await E.pdf.getPage(i + 1);
         const base = page.getViewport({ scale: 1 });
@@ -362,7 +363,7 @@ async function runOcrQueue() {
       } catch (err) {
         console.warn(err);
         if (gen === E.ocrGen) { E.ocr[i] = []; toast('Texterkennung fehlgeschlagen', true); }
-      } finally { pill.classList.add('out'); setTimeout(() => pill.remove(), 300); }
+      }
       if (gen === E.ocrGen) renderLayer(i);
     }
   } finally { ocrRunning = false; }
@@ -453,14 +454,52 @@ function drawObj(o, parent) {
   return g;
 }
 
+// ---------- Scan-Animation beim „Text ändern“ (wie ein Scanner, von unten nach oben) ----------
+const SWEEP = 1300;
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function scanState(i) {
+  const p = E.pages[i];
+  const ready = Array.isArray(E.text[i]) && (!E.needOcr[i] || Array.isArray(E.ocr[i]));
+  let st = E.scanFx[i];
+  if (st === 'done' || st === 'reveal') return st;
+  if (reduceMotion()) return (E.scanFx[i] = ready ? 'done' : 'loop');
+  let fx = p.el.querySelector('.scan-fx');
+  if (!st) {
+    fx?.remove();
+    fx = document.createElement('div'); fx.className = 'scan-fx';
+    fx.innerHTML = '<div class="scan-band"></div><div class="scan-msg-wrap"><span class="scan-spark"></span><span class="scan-msg">Text wird analysiert …</span></div>';
+    p.el.appendChild(fx);
+    st = E.scanFx[i] = 'loop';
+  }
+  if (ready && fx) {
+    // letzter Durchlauf: Textfelder erscheinen genau dann, wenn die Linie sie überstreicht
+    fx.classList.add('final');
+    E.scanFx[i] = 'reveal'; E.scanT0 = E.scanT0 || {}; E.scanT0[i] = performance.now();
+    setTimeout(() => {
+      if (E.scanFx[i] !== 'reveal') return;
+      E.scanFx[i] = 'done'; fx.classList.add('out'); setTimeout(() => fx.remove(), 400);
+    }, SWEEP);
+    return 'reveal';
+  }
+  return st;
+}
+
 function renderLayer(i) {
   const p = E.pages[i]; if (!p) return;
   const svg = p.svg; svg.textContent = '';
   if (E.mode === 'edit' && E.tool === 'textedit') {
     const replaced = new Set(E.objects.filter(o => o.srcKey).map(o => o.srcKey));
     if (E.needOcr[i]) ensureOcr(i);
-    editItems(i).forEach(t => { if (!replaced.has(t.key)) el('rect', { class: 'titem', x: t.x - 0.5, y: t.top - 0.5, width: t.w + 1, height: t.h + 1, rx: 0.8, 'data-key': t.key }, svg); });
-  }
+    const st = scanState(i);
+    if (st !== 'loop') {
+      const H = E.infos[i]?.h || 842, el0 = st === 'reveal' ? performance.now() - E.scanT0[i] : 0;
+      editItems(i).forEach(t => {
+        if (replaced.has(t.key)) return;
+        const r = el('rect', { class: 'titem' + (st === 'reveal' ? ' rev' : ''), x: t.x - 0.5, y: t.top - 0.5, width: t.w + 1, height: t.h + 1, rx: 0.8, 'data-key': t.key }, svg);
+        if (st === 'reveal') r.style.animationDelay = `${Math.round(SWEEP * (1 - (t.top + t.h / 2) / H) / 1.15 - el0)}ms`;
+      });
+    }
+  } else p.el.querySelector('.scan-fx')?.remove();
   E.objects.filter(o => o.page === i).forEach(o => drawObj(o, svg));
   const s = E.sel && byId(E.sel);
   if (s && s.page === i) {
