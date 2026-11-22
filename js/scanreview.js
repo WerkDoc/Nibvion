@@ -6,6 +6,7 @@ import { sheet, toast, busy, haptic, pickFiles } from './ui.js';
 import { render as renderScan, enhance, FILTERS, cropEditor, detectCorners, loadFileImage, FULL } from './scanner.js';
 import { liveScanner, cameraSupported } from './camera.js';
 import { ensureAI, edgeCut, aiPref, setAiPref, aiLoaded } from './ai.js';
+import { ensureEnhance, enhReady, enhLoaded } from './aienhance.js';
 
 const BIG = 1400;                       // Kantenlänge der großen Vorschau
 const tick = () => new Promise(r => setTimeout(r, 16));
@@ -75,7 +76,7 @@ export function scanReview(opts) {
 
   // ---------- Vorschau ----------
   const aiReady = it => !!(it.ai && it._ai && it._ai.key === JSON.stringify(it.corners));
-  const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it)]);
+  const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it), filter === 'ai' && enhReady(it)]);
   const preview = it => {
     const k = key(it);
     if (it._bigKey !== k) { it._big = renderScan(it, filter, BIG, adj).toDataURL('image/jpeg', 0.85); it._bigKey = k; }
@@ -106,6 +107,21 @@ export function scanReview(opts) {
           if (closed) return;
           if (i === cur) renderFilters();
         }
+        if (filter === 'ai' && !enhReady(it)) {
+          el.classList.add('busy');
+          let pct = el.querySelector('.rv-pct');
+          if (!pct) { pct = document.createElement('div'); pct.className = 'rv-pct'; el.appendChild(pct); }
+          pct.textContent = '✨ KI-Scan …';
+          const first = !enhLoaded();
+          if (first) busy(true, 'KI wird geladen … (einmalig ca. 21 MB)');
+          try {
+            await ensureEnhance(it, (msg, f) => { if (f != null) { if (first) busy(false); pct.textContent = `✨ KI-Scan … ${Math.round(f * 100)} %`; } });
+          } catch (e) { console.warn(e); toast('KI-Scan hat nicht geklappt – „Verbessern“ wird verwendet', true); }
+          if (first) busy(false);
+          pct.remove();
+          if (closed) return;
+          if (i === cur) renderFilters();
+        }
         if (img.dataset.k === key(it)) { el.classList.remove('busy'); continue; }
         el.classList.add('busy'); await tick();
         img.src = preview(it); img.dataset.k = key(it);
@@ -128,7 +144,7 @@ export function scanReview(opts) {
   let fltFor = null, fltPrev = {};
   const renderFilters = () => {
     const it = items[cur];
-    const fk = it && JSON.stringify([it._id, it.rot, it.corners, aiReady(it)]);
+    const fk = it && JSON.stringify([it._id, it.rot, it.corners, aiReady(it), enhReady(it)]);
     if (it && fltFor !== fk) {
       fltFor = fk; fltPrev = {};
       const base = renderScan(it, '', 240);
@@ -137,6 +153,7 @@ export function scanReview(opts) {
         c.getContext('2d').drawImage(base, 0, 0);
         fltPrev[k] = enhance(c, k).toDataURL('image/jpeg', 0.75);
       }
+      if (enhReady(it)) fltPrev.ai = renderScan(it, 'ai', 240).toDataURL('image/jpeg', 0.75);
     }
     flt.innerHTML = FILTERS.map(([k, l]) => `<button class="flt ${k === (filter || '') ? 'on' : ''}" data-fk="${k}"><span class="flt-img" style="background-image:url(${fltPrev[k] || ''})"></span>${l}</button>`).join('');
     flt.querySelectorAll('[data-fk]').forEach(b => b.onclick = () => {
@@ -183,10 +200,17 @@ export function scanReview(opts) {
   // Vor Speichern/Export alle Seiten mit KI fertig berechnen
   const prepAll = async () => {
     const todo = items.filter(it => it.ai && !aiReady(it));
-    if (!todo.length) return;
     for (let n = 0; n < todo.length; n++) {
       busy(true, `KI glättet Seite ${n + 1} von ${todo.length} …`);
       try { await ensureAI(todo[n]); } catch (e) { console.warn(e); todo[n].ai = false; aiFail(); }
+    }
+    if (filter === 'ai') {
+      const list = items.filter(it => !enhReady(it));
+      for (let n = 0; n < list.length; n++) {
+        busy(true, `✨ KI-Scan Seite ${n + 1} von ${list.length} …`);
+        try { await ensureEnhance(list[n], (m, f) => { if (f != null) busy(true, `✨ KI-Scan Seite ${n + 1} von ${list.length} … ${Math.round(f * 100)} %`); }); }
+        catch (e) { console.warn(e); toast('KI-Scan hat nicht geklappt – „Verbessern“ wird verwendet', true); break; }
+      }
     }
     busy(false);
   };
