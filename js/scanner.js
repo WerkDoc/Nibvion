@@ -48,55 +48,254 @@ function boxBlur(src, w, h, r) {
 // detectQuad: Ecken oder null (kein Dokument gefunden). detectCorners: mit Rückfall auf ganzes Bild.
 export function detectCorners(img) { return detectQuad(img) || FULL.map(p => [...p]); }
 
+// Erkennung in 3 Schritten:
+//  1. „Papier-Wert“ je Pixel: hell UND farblos (Holz, Karton, Tisch sind farbig → fallen raus)
+//  2. Mehrere Schwellen × größte Flächen → je ein bestes Viereck (aus der konvexen Hülle);
+//     bewertet nach Füllgrad (Rechteckigkeit) und Kontrast entlang aller vier Kanten
+//  3. Feinjustierung: jede Kante auf höherer Auflösung an den stärksten Hell/Dunkel-Sprung gelegt
 export function detectQuad(img, maxSide = 360) {
   try {
+    const fine = maxSide >= 440;
     const c = toCanvas(img, maxSide), w = c.width, h = c.height, N = w * h;
-    const d = c.getContext('2d').getImageData(0, 0, w, h).data;
-    const g = new Float32Array(N);
-    for (let i = 0; i < N; i++) g[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
-    const b = boxBlur(boxBlur(g, w, h, 2), w, h, 2);
-    // Otsu-Schwelle
-    const hist = new Array(256).fill(0);
-    for (let i = 0; i < N; i++) hist[b[i] | 0]++;
-    let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
-    let sB = 0, wB = 0, best = 0, thr = 128;
-    for (let t = 0; t < 256; t++) {
-      wB += hist[t]; if (!wB) continue;
-      const wF = N - wB; if (!wF) break;
-      sB += t * hist[t];
-      const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2;
-      if (v > best) { best = v; thr = t; }
+    const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    const pv = paperValues(d, N);
+    const b = boxBlur(boxBlur(pv, w, h, 1), w, h, 2);
+    // Zweiter Kanal gegen Schatten: Wert relativ zum hellsten Wert der Umgebung.
+    // Neben dem Blatt wird der Tisch dadurch dunkel, auch wenn er im Schatten liegt.
+    const mx = maxFilter(b, w, h, Math.max(4, Math.round(Math.max(w, h) * 0.05)));
+    const nb = new Float32Array(N);
+    for (let i = 0; i < N; i++) nb[i] = 230 * b[i] / Math.max(20, mx[i]);
+    const lab = new Int32Array(N), stack = new Int32Array(N);
+    let best = null;
+    const t0 = otsu(b, N), t1 = otsu(nb, N);
+    // Dritter Kanal: Flächen zwischen Kanten (helligkeitsunabhängig, findet auch weißes Blatt auf hellem Tisch)
+    const lb = boxBlur(pv, w, h, 1), eg = new Float32Array(N);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, lg = v => Math.log(v + 8);
+      const gx = lg(lb[i + 1]) - lg(lb[i - 1]), gy = lg(lb[i + w]) - lg(lb[i - w]);
+      if (gx * gx + gy * gy > 0.05 * 0.05) { eg[i] = 1; eg[i - 1] = eg[i + 1] = eg[i - w] = eg[i + w] = 1; }
     }
-    // Größte helle Fläche (Papier) suchen
-    const lab = new Int32Array(N); let bestLab = 0, bestN = 0, cur = 0;
-    const stack = new Int32Array(N);
-    for (let i = 0; i < N; i++) {
-      if (lab[i] || b[i] <= thr) continue;
-      cur++; let sp = 0, n = 0; stack[sp++] = i; lab[i] = cur;
-      while (sp) {
-        const p = stack[--sp]; n++;
-        const x = p % w, y = (p / w) | 0;
-        if (x > 0 && !lab[p - 1] && b[p - 1] > thr) { lab[p - 1] = cur; stack[sp++] = p - 1; }
-        if (x < w - 1 && !lab[p + 1] && b[p + 1] > thr) { lab[p + 1] = cur; stack[sp++] = p + 1; }
-        if (y > 0 && !lab[p - w] && b[p - w] > thr) { lab[p - w] = cur; stack[sp++] = p - w; }
-        if (y < h - 1 && !lab[p + w] && b[p + w] > thr) { lab[p + w] = cur; stack[sp++] = p + w; }
+    // vom Bildrand aus über kantenfreie Pixel füllen = Tisch; Rest = Blatt samt Inhalt
+    const rg = new Float32Array(N).fill(255), st = new Int32Array(N); let sp = 0;
+    const seed = i => { if (!eg[i] && rg[i]) { rg[i] = 0; st[sp++] = i; } };
+    for (let x = 0; x < w; x++) { seed(x); seed(N - w + x); }
+    for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1); }
+    while (sp) {
+      const q = st[--sp], x = q % w;
+      if (x > 0) seed(q - 1); if (x < w - 1) seed(q + 1); if (q >= w) seed(q - w); if (q < N - w) seed(q + w);
+    }
+    const runs = [[b, t0], [b, t0 + 14], [b, t0 + 28], [b, t0 - 12], [nb, t1], [nb, t1 - 15], [nb, 215], [rg, 128]];
+    for (const [src, t] of runs) {
+      lab.fill(0); const comps = [];
+      let cur = 0;
+      for (let i = 0; i < N; i++) {
+        if (lab[i] || src[i] <= t) continue;
+        cur++; let sp = 0, n = 0; stack[sp++] = i; lab[i] = cur;
+        while (sp) {
+          const q = stack[--sp]; n++;
+          const x = q % w;
+          if (x > 0 && !lab[q - 1] && src[q - 1] > t) { lab[q - 1] = cur; stack[sp++] = q - 1; }
+          if (x < w - 1 && !lab[q + 1] && src[q + 1] > t) { lab[q + 1] = cur; stack[sp++] = q + 1; }
+          if (q >= w && !lab[q - w] && src[q - w] > t) { lab[q - w] = cur; stack[sp++] = q - w; }
+          if (q < N - w && !lab[q + w] && src[q + w] > t) { lab[q + w] = cur; stack[sp++] = q + w; }
+        }
+        if (n > N * 0.06) comps.push([cur, n]);
       }
-      if (n > bestN) { bestN = n; bestLab = cur; }
+      comps.sort((x, y) => y[1] - x[1]);
+      for (const [id, n] of comps.slice(0, 3)) {
+        if (n > N * 0.97) continue;
+        const quad = hullQuad(lab, id, w, h);
+        if (!quad) continue;
+        const qa = polyArea(quad);
+        if (qa < N * 0.1) continue;
+        const fill = Math.min(1, n / qa);
+        const con = edgeContrast(b, w, h, quad);
+        const score = fill ** 3 * Math.sqrt(qa / N) * con;
+        if (!best || score > best.score) best = { score, quad, fill, con };
+      }
     }
-    if (bestN < N * 0.12 || bestN > N * 0.97) return null;
-    // Extrempunkte als Ecken
-    let tl = [0, 0, 1e9], tr = [0, 0, -1e9], br = [0, 0, -1e9], bl = [0, 0, 1e9];
-    for (let i = 0; i < N; i++) {
-      if (lab[i] !== bestLab) continue;
-      const x = i % w, y = (i / w) | 0, s = x + y, df = x - y;
-      if (s < tl[2]) tl = [x, y, s];
-      if (s > br[2]) br = [x, y, s];
-      if (df > tr[2]) tr = [x, y, df];
-      if (df < bl[2]) bl = [x, y, df];
+    if (!best || best.fill < 0.72 || best.con < 6) return null;
+    let quad = best.quad;
+    if (fine) quad = refineQuad(img, quad, w, h) || quad;
+    const q = quad.map(([x, y]) => [Math.min(1, Math.max(0, x / w)), Math.min(1, Math.max(0, y / h))]);
+    return quadArea(q) > 0.1 ? q : null;
+  } catch (e) { console.warn(e); return null; }
+}
+
+// Hell und farblos = Papier
+function paperValues(d, N) {
+  const pv = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], bl = d[i * 4 + 2];
+    const L = r * 0.299 + g * 0.587 + bl * 0.114;
+    const ch = Math.max(r, g, bl) - Math.min(r, g, bl);
+    pv[i] = Math.max(0, L - 1.1 * Math.max(0, ch - 12));
+  }
+  return pv;
+}
+
+function maxFilter(src, w, h, r) {
+  const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let m = 0; const a = Math.max(0, x - r), z = Math.min(w - 1, x + r);
+      for (let k = a; k <= z; k += 2) if (src[row + k] > m) m = src[row + k];
+      tmp[row + x] = m;
     }
-    const q = [tl, tr, br, bl].map(([x, y]) => [Math.min(1, Math.max(0, (x + 0.5) / w)), Math.min(1, Math.max(0, (y + 0.5) / h))]);
-    return quadArea(q) > 0.12 ? q : null;
-  } catch { return null; }
+  }
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      let m = 0; const a = Math.max(0, y - r), z = Math.min(h - 1, y + r);
+      for (let k = a; k <= z; k += 2) if (tmp[k * w + x] > m) m = tmp[k * w + x];
+      out[y * w + x] = m;
+    }
+  }
+  return out;
+}
+
+function otsu(b, N) {
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < N; i++) hist[Math.min(255, b[i] | 0)]++;
+  let sum = 0; for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sB = 0, wB = 0, best = 0, thr = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t]; if (!wB) continue;
+    const wF = N - wB; if (!wF) break;
+    sB += t * hist[t];
+    const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2;
+    if (v > best) { best = v; thr = t; }
+  }
+  return thr;
+}
+
+function polyArea(q) {
+  let a = 0; for (let i = 0; i < q.length; i++) { const [x1, y1] = q[i], [x2, y2] = q[(i + 1) % q.length]; a += x1 * y2 - x2 * y1; }
+  return Math.abs(a) / 2;
+}
+
+// Konvexe Hülle der Fläche → Viereck mit größter Fläche (Ecken im Uhrzeigersinn ab oben-links)
+function hullQuad(lab, id, w, h) {
+  const pts = [];
+  for (let y = 0; y < h; y++) {
+    let l = -1, r = -1; const row = y * w;
+    for (let x = 0; x < w; x++) if (lab[row + x] === id) { if (l < 0) l = x; r = x; }
+    if (l >= 0) { pts.push([l, y]); if (r !== l) pts.push([r + 1, y]); }
+  }
+  if (pts.length < 8) return null;
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  let H = lo.slice(0, -1).concat(up.slice(0, -1));
+  if (H.length < 4) return null;
+  if (H.length > 48) { const st = H.length / 48; H = Array.from({ length: 48 }, (_, i) => H[Math.floor(i * st)]); }
+  const K = H.length, tri = (a, b, c) => Math.abs(cross(H[a], H[b], H[c])) / 2;
+  let best = -1, bq = null;
+  for (let i = 0; i < K; i++) for (let k = i + 2; k < K; k++) {
+    let m1 = 0, j1 = -1, m2 = 0, j2 = -1;
+    for (let j = i + 1; j < k; j++) { const a = tri(i, j, k); if (a > m1) { m1 = a; j1 = j; } }
+    for (let j = k + 1; j < K + i; j++) { const jj = j % K; if (jj === i) continue; const a = tri(i, jj, k); if (a > m2) { m2 = a; j2 = jj; } }
+    if (j1 >= 0 && j2 >= 0 && m1 + m2 > best) { best = m1 + m2; bq = [H[i], H[j1], H[k], H[j2]]; }
+  }
+  return bq && orderQuad(bq);
+}
+
+function orderQuad(q) {
+  const cx = q.reduce((s, p) => s + p[0], 0) / 4, cy = q.reduce((s, p) => s + p[1], 0) / 4;
+  const s = q.slice().sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
+  // Start = Ecke mit kleinster x+y (oben links); Reihenfolge im Uhrzeigersinn (Bildkoordinaten)
+  let k = 0; for (let i = 1; i < 4; i++) if (s[i][0] + s[i][1] < s[k][0] + s[k][1]) k = i;
+  return [0, 1, 2, 3].map(i => s[(k + i) % 4]);
+}
+
+// Mittlerer Hell/Dunkel-Unterschied quer zu den Kanten (innen minus außen); Kanten am Bildrand zählen halb
+function edgeContrast(b, w, h, q) {
+  const cx = q.reduce((s, p) => s + p[0], 0) / 4, cy = q.reduce((s, p) => s + p[1], 0) / 4;
+  const at = (x, y) => b[Math.min(h - 1, Math.max(0, Math.round(y))) * w + Math.min(w - 1, Math.max(0, Math.round(x)))];
+  const vals = [];
+  for (let e = 0; e < 4; e++) {
+    const [x1, y1] = q[e], [x2, y2] = q[(e + 1) % 4];
+    const L = Math.hypot(x2 - x1, y2 - y1) || 1;
+    let nx = -(y2 - y1) / L, ny = (x2 - x1) / L;
+    if ((cx - x1) * nx + (cy - y1) * ny < 0) { nx = -nx; ny = -ny; }    // Normale zeigt nach innen
+    const off = Math.max(3, Math.min(w, h) * 0.012);
+    let acc = 0, cnt = 0, border = 0;
+    for (let k = 1; k < 20; k++) {
+      const t = 0.1 + 0.8 * k / 20, x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t;
+      const ox = x - nx * off, oy = y - ny * off;
+      if (ox < 1 || oy < 1 || ox > w - 2 || oy > h - 2) { border++; continue; }
+      acc += at(x + nx * off, y + ny * off) - at(ox, oy); cnt++;
+    }
+    vals.push(cnt > 5 ? acc / cnt : (border > 10 ? 12 : 0));
+  }
+  if (vals.filter(v => v === 12).length >= 3) return 0;          // praktisch ganzes Bild
+  vals.sort((a, b) => a - b);
+  return Math.max(0, (vals[0] + vals[1]) / 2 * 0.6 + (vals[2] + vals[3]) / 2 * 0.4);
+}
+
+// Kanten auf doppelter Auflösung an den stärksten Sprung legen (Gerade per Ausgleich), Ecken = Schnittpunkte
+function refineQuad(img, q, w, h) {
+  const S = 2, c = toCanvas(img, Math.max(w, h) * S), W = c.width, H = c.height;
+  const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+  const pv = boxBlur(paperValues(d, W * H), W, H, 1);
+  const sx = W / w, sy = H / h;
+  const Q = q.map(([x, y]) => [x * sx, y * sy]);
+  const cx = Q.reduce((s, p) => s + p[0], 0) / 4, cy = Q.reduce((s, p) => s + p[1], 0) / 4;
+  const at = (x, y) => pv[Math.min(H - 1, Math.max(0, Math.round(y))) * W + Math.min(W - 1, Math.max(0, Math.round(x)))];
+  const R = Math.round(Math.max(6, Math.min(W, H) * 0.02));
+  const lines = [];
+  for (let e = 0; e < 4; e++) {
+    const [x1, y1] = Q[e], [x2, y2] = Q[(e + 1) % 4];
+    const L = Math.hypot(x2 - x1, y2 - y1) || 1;
+    let nx = -(y2 - y1) / L, ny = (x2 - x1) / L;
+    if ((cx - x1) * nx + (cy - y1) * ny < 0) { nx = -nx; ny = -ny; }
+    const pts = [];
+    for (let k = 1; k < 40; k++) {
+      const t = 0.08 + 0.84 * k / 40, x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t;
+      let bg = 0, bo = 0;
+      for (let o = -R; o <= R; o++) {
+        const px = x + nx * o, py = y + ny * o;
+        if (px < 2 || py < 2 || px > W - 3 || py > H - 3) continue;
+        const g = at(px + nx * 2, py + ny * 2) - at(px - nx * 2, py - ny * 2);
+        if (g > bg) { bg = g; bo = o; }
+      }
+      if (bg > 10) pts.push([x + nx * bo, y + ny * bo]);
+    }
+    lines.push(pts.length >= 8 ? fitLine(pts) : null);
+  }
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    const a = lines[(i + 3) % 4], b = lines[i];
+    const p = a && b ? intersect(a, b) : null;
+    const o = Q[i];
+    out.push(p && Math.hypot(p[0] - o[0], p[1] - o[1]) < R * 2.5 ? p : o);
+  }
+  return out.map(([x, y]) => [x / sx, y / sy]);
+}
+
+// Gerade durch Punkte (Hauptachse), ein Durchgang Ausreißer entfernen
+function fitLine(pts) {
+  const fit = P => {
+    const n = P.length, mx = P.reduce((s, p) => s + p[0], 0) / n, my = P.reduce((s, p) => s + p[1], 0) / n;
+    let sxx = 0, syy = 0, sxy = 0;
+    for (const [x, y] of P) { sxx += (x - mx) ** 2; syy += (y - my) ** 2; sxy += (x - mx) * (y - my); }
+    const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    return { mx, my, dx: Math.cos(ang), dy: Math.sin(ang) };
+  };
+  let l = fit(pts);
+  const dist = p => Math.abs((p[0] - l.mx) * l.dy - (p[1] - l.my) * l.dx);
+  const ds = pts.map(dist).sort((a, b) => a - b), lim = Math.max(1.5, ds[Math.floor(ds.length * 0.7)] * 2);
+  const keep = pts.filter(p => dist(p) <= lim);
+  if (keep.length >= 6) l = fit(keep);
+  return l;
+}
+function intersect(a, b) {
+  const den = a.dx * b.dy - a.dy * b.dx;
+  if (Math.abs(den) < 1e-6) return null;
+  const t = ((b.mx - a.mx) * b.dy - (b.my - a.my) * b.dx) / den;
+  return [a.mx + a.dx * t, a.my + a.dy * t];
 }
 
 function quadArea(q) {
