@@ -179,7 +179,7 @@ export function scanReview(opts) {
         else if (shots.length) addShots(shots);
       } else addFiles(await pickFiles('file-cam'), true);
     }
-    if (t === 'lib') addFiles(await pickFiles('file-img'), kind === 'scan');
+    if (t === 'lib') addFiles(await pickFiles('file-img'), true);
     if (!it) return;
     if (t === 'rot') { it.rot = ((it.rot || 0) + 90) % 360; haptic(); drawVisible(); renderFilters(); }
     if (t === 'crop') openCrop(cur);

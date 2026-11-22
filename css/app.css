@@ -455,7 +455,10 @@ html.splashing, html.splashing body { background: var(--bg); }
 .cam-flash.go { animation: camFlash .35s ease-out; }
 @keyframes camFlash { 0% { opacity: .85; } 100% { opacity: 0; } }
 .cam-bottom { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 18px 24px calc(var(--safe-bottom) + 18px); }
-.cam-thumb { justify-self: start; position: relative; width: 52px; height: 66px; border-radius: 8px; background: rgba(255,255,255,.1) center/cover; border: 2px solid rgba(255,255,255,.7); opacity: .35; }
+.cam-left { justify-self: start; display: flex; align-items: center; gap: 14px; }
+.cam-gallery { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: #e6e8ec; }
+.cam-gallery .ico { width: 26px; height: 26px; }
+.cam-thumb { position: relative; width: 52px; height: 66px; border-radius: 8px; background: rgba(255,255,255,.1) center/cover; border: 2px solid rgba(255,255,255,.7); opacity: .35; }
 .cam-thumb.has { opacity: 1; }
 .cam-thumb.pop { animation: camPop .45s var(--spring); }
 @keyframes camPop { 0% { transform: scale(1.35); } 100% { transform: none; } }
