@@ -4,11 +4,27 @@
 // Blatt ruhig erkannt ist. Ergebnis: Liste von { img: Canvas, corners, rot }.
 import { icon } from './icons.js';
 import { haptic, toast, pickFiles, busy as showBusy } from './ui.js';
-import { detectQuad, detectCorners, loadFileImage, FULL, render } from './scanner.js';
+import { detectQuad, detectCorners, loadFileImage, FULL, render, warp } from './scanner.js';
 
 export const cameraSupported = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
 const AUTO_KEY = 'nibvion.camAuto';
+
+// CSS-matrix3d, die ein Rechteck (W×H, Ursprung oben links) projektiv auf das Viereck Q legt
+function quadMatrix(W, H, Q) {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = Q;
+  const sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+  let a, b, c = x0, d, e, f = y0, g = 0, h = 0;
+  if (Math.abs(sx) < 1e-6 && Math.abs(sy) < 1e-6) { a = x1 - x0; b = x3 - x0; d = y1 - y0; e = y3 - y0; }
+  else {
+    const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, den = dx1 * dy2 - dx2 * dy1;
+    g = (sx * dy2 - dx2 * sy) / den; h = (dx1 * sy - sx * dy1) / den;
+    a = x1 - x0 + g * x1; b = x3 - x0 + h * x3; d = y1 - y0 + g * y1; e = y3 - y0 + h * y3;
+  }
+  return `matrix3d(${a / W},${d / W},0,${g / W},${b / H},${e / H},0,${h / H},0,0,1,0,${c},${f},0,1)`;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
 export function liveScanner({ startCount = 0 } = {}) {
   return new Promise(async resolve => {
@@ -131,12 +147,56 @@ export function liveScanner({ startCount = 0 } = {}) {
       c.width = video.videoWidth; c.height = video.videoHeight;
       c.getContext('2d').drawImage(video, 0, 0);
       const corners = detectQuad(c, 480) || quad || FULL.map(p => [...p]);
-      items.push({ img: c, corners, rot: 0 });
+      const item = { img: c, corners, rot: 0 };
+      items.push(item);
       haptic();
       const fl = wrap.querySelector('.cam-flash'); fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go');
-      thumbBtn.classList.remove('pop'); void thumbBtn.offsetWidth; thumbBtn.classList.add('pop');
-      updThumb();
-      setTimeout(() => { busy = false; }, 500);
+      const done = () => {
+        thumbBtn.classList.remove('pop'); void thumbBtn.offsetWidth; thumbBtn.classList.add('pop');
+        updThumb();
+        busy = false;
+      };
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) { done(); return; }
+      unfold(item).catch(e => console.warn(e)).finally(done);
+    };
+
+    // Aufklapp-Animation: das erkannte Blatt löst sich aus dem Foto, klappt gerade auf,
+    // eine Scan-Linie läuft von unten nach oben und zeigt die verbesserte Seite, dann fliegt es zur Vorschau.
+    const unfold = async item => {
+      const sw = stage.clientWidth, sh = stage.clientHeight;
+      const raw = warp(item.img, item.corners, 1000);
+      const r = raw.width / raw.height, m = 26;
+      let W = sw - 2 * m, H = W / r;
+      if (H > sh - 2 * m) { H = sh - 2 * m; W = H * r; }
+      const L = (sw - W) / 2, T = (sh - H) / 2;
+      const pop = document.createElement('div'); pop.className = 'cam-pop';
+      pop.innerHTML = '<div class="cam-pop-bg"></div><div class="cam-page"><div class="cam-sweep"></div></div>';
+      const page = pop.querySelector('.cam-page'), sweep = pop.querySelector('.cam-sweep');
+      Object.assign(page.style, { left: L + 'px', top: T + 'px', width: W + 'px', height: H + 'px' });
+      raw.className = 'raw'; page.prepend(raw);
+      const Q = item.corners.map(toScreen).map(([x, y]) => [x - L, y - T]);
+      page.style.transform = quadMatrix(W, H, Q);
+      stage.appendChild(pop);
+      await nextFrame();
+      pop.classList.add('open');                      // Hintergrund abdunkeln, Blatt klappt auf
+      page.style.transform = 'none';
+      // verbesserte Seite währenddessen berechnen
+      await sleep(80);
+      const enh = render(item, 'color', 1000); enh.className = 'enh';
+      page.insertBefore(enh, sweep);
+      await sleep(Math.max(0, 520 - 80));
+      pop.classList.add('scan');                      // Scan-Linie läuft hoch, darunter die fertige Seite
+      await sleep(1050);
+      // zur Vorschau unten links fliegen
+      const tb = thumbBtn.getBoundingClientRect(), pb = page.getBoundingClientRect();
+      const k = Math.min(tb.width / pb.width, tb.height / pb.height);
+      page.style.transition = 'transform .45s cubic-bezier(.5,0,.3,1), opacity .45s ease-in';
+      page.style.transformOrigin = '0 0';
+      page.style.transform = `translate(${tb.left - pb.left + (tb.width - pb.width * k) / 2}px, ${tb.top - pb.top + (tb.height - pb.height * k) / 2}px) scale(${k})`;
+      page.style.opacity = '.4';
+      pop.classList.remove('open');
+      await sleep(460);
+      pop.remove();
     };
 
     const close = v => {
