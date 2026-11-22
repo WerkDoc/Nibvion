@@ -244,3 +244,98 @@ export async function recognizeLayout(canvases, { onProgress, prepare } = {}) {
     return out;
   } finally { try { await worker.terminate(); } catch {} }
 }
+
+// ================= Text ändern auf gescannten Seiten =================
+// Für „Text ändern“ im Editor: Seite lesen und in bearbeitbare Textstücke zerlegen
+// (eine Zeile, an großen Lücken getrennt – so wird jede Tabellenzelle ein eigenes Stück).
+let edWorkerP = null, edIdle = null;
+function edWorker() {
+  clearTimeout(edIdle);
+  edWorkerP ??= makeWorker(() => {});
+  edWorkerP.catch(() => { edWorkerP = null; });
+  return edWorkerP;
+}
+export function releaseEditOcr() {
+  clearTimeout(edIdle);
+  const p = edWorkerP; edWorkerP = null;
+  p?.then(w => w.terminate()).catch(() => {});
+}
+
+/**
+ * canvas: gerenderte Seite, s: Canvas-Pixel je PDF-Einheit.
+ * Gibt Textstücke im Format des Editors zurück (x, top, w, h, base, size, str, bold).
+ */
+export async function ocrEditItems(canvas, s, keyPrefix, ocrCanvas) {
+  const w = await edWorker();
+  const { data } = await w.recognize(ocrCanvas || canvas, {}, { blocks: true, text: false });
+  edIdle = setTimeout(releaseEditOcr, 90000);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const items = [];
+  for (const b of data.blocks || []) for (const par of b.paragraphs || []) for (const line of par.lines || []) {
+    const ws = (line.words || []).filter(x => x.text && x.text.trim() && x.confidence >= 30);
+    if (!ws.length) continue;
+    const rowH = line.rowAttributes?.rowHeight || (line.bbox.y1 - line.bbox.y0) * 0.8;
+    const bl = line.baseline || { x0: line.bbox.x0, y0: line.bbox.y1, x1: line.bbox.x1, y1: line.bbox.y1 };
+    let slope = bl.x1 !== bl.x0 ? (bl.y1 - bl.y0) / (bl.x1 - bl.x0) : 0;
+    if (Math.abs(slope) > 0.06) {
+      if (ws.length > 3) continue;                              // wirklich schräge Zeile – nicht bearbeitbar
+      slope = 0;                                                // kurze Stücke: Grundlinien-Schätzung unzuverlässig
+    }
+    // an großen Lücken trennen
+    const segs = [[ws[0]]];
+    for (let k = 1; k < ws.length; k++) {
+      const gap = ws[k].bbox.x0 - ws[k - 1].bbox.x1;
+      if (gap > rowH * 1.6) segs.push([ws[k]]); else segs[segs.length - 1].push(ws[k]);
+    }
+    for (const sg of segs) {
+      const str = sg.map(x => x.text.trim()).join(' ');
+      if (!/[\p{L}\p{N}]/u.test(str)) continue;
+      const x0 = Math.min(...sg.map(x => x.bbox.x0)), x1 = Math.max(...sg.map(x => x.bbox.x1));
+      const y0 = Math.min(...sg.map(x => x.bbox.y0)), y1 = Math.max(...sg.map(x => x.bbox.y1));
+      const yb = bl.y0 + slope * ((x0 + x1) / 2 - bl.x0);
+      const size = Math.max(4, rowH * 1.08);
+      items.push({
+        key: `${keyPrefix}${items.length}`, str, ocr: true,
+        x: x0 / s, w: (x1 - x0) / s, top: y0 / s, h: (y1 - y0) / s, base: yb / s, size: size / s,
+        bold: isBold(ctx, x0, y0, x1, y1, size),
+      });
+    }
+  }
+  // Tesseract trennt eine Zeile manchmal in zwei „Zeilen“ – Stücke auf gleicher Grundlinie mit kleiner Lücke zusammenfügen
+  items.sort((p, q) => p.base - q.base || p.x - q.x);
+  const out = [];
+  for (const it of items) {
+    const prev = out.find(o => Math.abs(o.base - it.base) < Math.min(o.size, it.size) * 0.3 && o.bold === it.bold
+      && Math.abs(o.size - it.size) < Math.max(o.size, it.size) * 0.3
+      && it.x - (o.x + o.w) > -o.size * 0.3 && it.x - (o.x + o.w) < Math.max(o.size, it.size) * 1.2);
+    if (prev) {
+      const r = Math.max(prev.x + prev.w, it.x + it.w), b2 = Math.max(prev.top + prev.h, it.top + it.h);
+      prev.str += ' ' + it.str; prev.top = Math.min(prev.top, it.top); prev.w = r - prev.x; prev.h = b2 - prev.top;
+      prev.size = Math.max(prev.size, it.size);
+    } else out.push(it);
+  }
+  out.forEach((it, k) => { it.key = `${keyPrefix}${k}`; });
+  return out;
+}
+
+// Fett? Mittlere Strichstärke (Median der waagrechten Tinten-Läufe) im Verhältnis zur Schriftgröße
+function isBold(ctx, x0, y0, x1, y1, size) {
+  try {
+    const W = Math.max(1, Math.round(x1 - x0)), H = Math.max(1, Math.round(y1 - y0));
+    const d = ctx.getImageData(Math.round(x0), Math.round(y0), W, H).data;
+    let mn = 255, mx = 0;
+    for (let i = 0; i < d.length; i += 4) { const v = d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11; if (v < mn) mn = v; if (v > mx) mx = v; }
+    if (mx - mn < 60) return false;
+    const thr = (mn + mx) / 2, runs = [];
+    for (let y = 0; y < H; y += 2) {
+      let r = 0;
+      for (let x = 0; x <= W; x++) {
+        const o = (y * W + x) * 4, dark = x < W && d[o] * 0.3 + d[o + 1] * 0.59 + d[o + 2] * 0.11 < thr;
+        if (dark) r++; else if (r) { runs.push(r); r = 0; }
+      }
+    }
+    if (runs.length < 6) return false;
+    runs.sort((a, b) => a - b);
+    return runs[runs.length >> 1] / size > 0.12;
+  } catch { return false; }
+}

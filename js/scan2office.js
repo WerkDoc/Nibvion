@@ -34,14 +34,29 @@ function inkMask(canvas) {
 // Lange waagerechte / senkrechte Linien finden
 function findLines({ ink, W, H }) {
   const hs = [], vs = [];
-  const minH = Math.max(80, W * 0.06), minV = Math.max(60, H * 0.018);
+  // Eine echte Linie ist dünn: knapp darüber und darunter ist kaum Tinte. Bei Textzeilen
+  // (eng stehende Buchstaben ergeben auch lange „Läufe“) schon – die werden so nicht gelöscht.
+  const O = 7;
+  const thinH = (y, x0, x1) => {
+    if (y < O || y >= H - O) return true;
+    let a = 0, b = 0, n = 0;
+    for (let x = x0; x <= x1; x += 2) { n++; if (ink[(y - O) * W + x]) a++; if (ink[(y + O) * W + x]) b++; }
+    return Math.max(a, b) / n < 0.2;
+  };
+  const thinV = (x, y0, y1) => {
+    if (x < O || x >= W - O) return true;
+    let a = 0, b = 0, n = 0;
+    for (let y = y0; y <= y1; y += 2) { n++; if (ink[y * W + x - O]) a++; if (ink[y * W + x + O]) b++; }
+    return Math.max(a, b) / n < 0.2;
+  };
+  const minH = Math.max(80, W * 0.06), minV = Math.max(60, H * 0.032);   // senkrecht: länger als große Überschrift-Buchstaben
   for (let y = 1; y < H - 1; y++) {
     let start = -1, gap = 0;
     for (let x = 0; x <= W; x++) {
       const on = x < W && (ink[y * W + x] || ink[(y - 1) * W + x] || ink[(y + 1) * W + x]);
       if (on) { if (start < 0) start = x; gap = 0; }
       else if (start >= 0) {
-        if (++gap > 3 || x === W) { const end = x - gap; if (end - start >= minH) hs.push({ y, x0: start, x1: end }); start = -1; gap = 0; }
+        if (++gap > 3 || x === W) { const end = x - gap; if (end - start >= minH && thinH(y, start, end)) hs.push({ y, x0: start, x1: end }); start = -1; gap = 0; }
       }
     }
   }
@@ -51,7 +66,7 @@ function findLines({ ink, W, H }) {
       const on = y < H && (ink[y * W + x] || ink[y * W + x - 1] || ink[y * W + x + 1]);
       if (on) { if (start < 0) start = y; gap = 0; }
       else if (start >= 0) {
-        if (++gap > 3 || y === H) { const end = y - gap; if (end - start >= minV) vs.push({ x, y0: start, y1: end }); start = -1; gap = 0; }
+        if (++gap > 3 || y === H) { const end = y - gap; if (end - start >= minV && thinV(x, start, end)) vs.push({ x, y0: start, y1: end }); start = -1; gap = 0; }
       }
     }
   }
