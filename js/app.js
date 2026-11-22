@@ -15,7 +15,7 @@ import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.17.0';
+export const VERSION = '1.17.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();

@@ -2,7 +2,7 @@
 
 Optional. Ohne Einrichtung bleibt Nibvion komplett lokal.
 
-1. **TextIn-Konto** anlegen (textin.com) → Konto/Entwickler-Info: `x-ti-app-id` und `x-ti-secret-code` notieren.
+1. **TextIn-Konto** anlegen (textin.ai, international – für textin.com zusätzlich Secret `TEXTIN_HOST=https://api.textin.com` setzen) → Konto/Entwickler-Info: `x-ti-app-id` und `x-ti-secret-code` notieren.
    Den Dienst „文档图像切边增强矫正“ (crop_enhance_image) aktivieren.
 2. **Supabase** (beliebiges eigenes Projekt) → *Edge Functions* → *Deploy a new function* → *Via Editor*
    - Name: `textin-scan`

@@ -25,7 +25,9 @@ Deno.serve(async (req) => {
   const body = await req.arrayBuffer();
   if (body.byteLength > 20 * 1024 * 1024) return json({ code: 413, message: 'Bild zu groß' }, 413);
 
-  const r = await fetch(`https://api.textin.com/ai/service/v1/crop_enhance_image?${q}`, {
+  // Internationales Konto (textin.ai) → api.textin.ai, chinesisches (textin.com) → per Secret TEXTIN_HOST umstellen
+  const host = Deno.env.get('TEXTIN_HOST') || 'https://api.textin.ai';
+  const r = await fetch(`${host}/ai/service/v1/crop_enhance_image?${q}`, {
     method: 'POST',
     headers: { 'x-ti-app-id': appId, 'x-ti-secret-code': secret, 'Content-Type': 'application/octet-stream' },
     body,
