@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import { loadImage, haptic } from './ui.js';
 
 export const FULL = [[0, 0], [1, 0], [1, 1], [0, 1]];
-const isFull = c => c.every((p, i) => Math.abs(p[0] - FULL[i][0]) < 1e-3 && Math.abs(p[1] - FULL[i][1]) < 1e-3);
+export const isFull = c => c.every((p, i) => Math.abs(p[0] - FULL[i][0]) < 1e-3 && Math.abs(p[1] - FULL[i][1]) < 1e-3);
 
 // ---------- Bild laden ----------
 export async function loadFileImage(file) {
@@ -414,6 +414,10 @@ export function enhance(c, mode, adj = NO_ADJ) {
 }
 
 export function render(item, filter, maxSide, adj) {
+  // KI-geglättete Seite (js/ai.js) verwenden, wenn vorhanden und zum Zuschnitt passend
+  if (item.ai && item._ai && item._ai.key === JSON.stringify(item.corners)) {
+    return enhance(rotateCanvas(toCanvas(item._ai.canvas, maxSide), item.rot || 0), filter, adj);
+  }
   let c = warp(item.img, item.corners, maxSide);
   // Begradigen: Feld einmal je Zuschnitt auf kleiner Kopie schätzen, dann in jeder Größe anwenden
   if (item.straighten !== false) {
