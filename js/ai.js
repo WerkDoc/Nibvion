@@ -1,10 +1,11 @@
 // KI-Glätten: entzerrt gewölbte/geknickte Seiten mit einem kleinen neuronalen Netz (UVDoc, MIT-Lizenz).
 // Läuft komplett lokal im Browser über onnxruntime-web (WebAssembly). Modell + Laufzeit (~23 MB)
 // werden erst beim ersten Benutzen geladen und danach vom Service Worker zwischengespeichert.
-import { toCanvas, warp, isFull as isFullQuad } from './scanner.js';
+import { toCanvas, warp, isFull as isFullQuad, estimateStraighten, applyStraighten } from './scanner.js';
 
 const IN_W = 488, IN_H = 712;          // Eingabegröße des Modells (Hochformat)
-let sessionP = null, ortMod = null;
+let sessionP = null, ortMod = null, lastInfo = null;
+export const aiInfo = () => lastInfo;
 
 export function aiLoaded() { return !!sessionP; }
 
@@ -60,7 +61,11 @@ export async function aiFlatten(img, corners, outW, outH, onProgress) {
   const inp = new Float32Array(3 * N);
   for (let i = 0; i < N; i++) { inp[i] = px[i * 4] / 255; inp[N + i] = px[i * 4 + 1] / 255; inp[2 * N + i] = px[i * 4 + 2] / 255; }
   const res = await s.run({ img: new ort.Tensor('float32', inp, [1, 3, IN_H, IN_W]) });
-  const grid = res.grid.data, GH = res.grid.dims[2], GW = res.grid.dims[3];
+  const GH = res.grid.dims[2], GW = res.grid.dims[3];
+  const fx = fixGrid(res.grid.data, GW, GH, sw, sh);
+  lastInfo = fx.info;
+  if (!fx.grid) return null;                       // Seite ist eben – klassisches Entzerren ist genauer
+  const grid = fx.grid;
   await new Promise(r => setTimeout(r, 0));
 
   // Ausgabe im Modell-Hochformat berechnen, danach ggf. zurückdrehen
@@ -113,7 +118,74 @@ export async function ensureAI(item, onProgress) {
   const ref = warp(item.img, item.corners, 600);              // nur für das Seitenverhältnis
   const r = ref.width / ref.height, L = 2200;
   const w = Math.round(r >= 1 ? L : L * r), h = Math.round(r >= 1 ? L / r : L);
-  const canvas = await aiFlatten(item.img, item.corners, w, h, onProgress);
-  item._ai = { key, canvas };
+  let canvas = await aiFlatten(item.img, item.corners, w, h, onProgress);
+  // Rest-Schräglage der Zeilen mit dem klassischen Begradigen nachziehen
+  if (canvas) { const st = estimateStraighten(toCanvas(canvas, 1000)); if (st) canvas = applyStraighten(canvas, st); }
+  item._ai = { key, canvas };                       // canvas = null → Seite eben, klassisch bleibt
   return true;
+}
+
+// Das Netz liefert ein Gitter (wo liegt jeder Punkt der glatten Seite im Foto). Bei ebenen
+// Seiten enthält es leichte Wellen, die gerade Linien krumm machen würden. Darum:
+//  1. Gitter glätten (kleine Wellen weg)
+//  2. Mit einer reinen Perspektive vergleichen: Weicht es kaum ab, ist die Seite eben → null
+//  3. Sonst nur den Anteil der echten Wölbung behalten (je kleiner, desto stärker abgeschwächt)
+function fixGrid(g, GW, GH, sw, sh) {
+  const G = GW * GH;
+  let X = Float32Array.from(g.subarray(0, G)), Y = Float32Array.from(g.subarray(G, 2 * G));
+  const smooth = A => {
+    const o = new Float32Array(G), k = [0.25, 0.5, 0.25];
+    for (let pass = 0; pass < 2; pass++) {
+      const src = pass ? o.slice() : A;
+      for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+        let acc = 0, ws = 0;
+        for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+          const jj = j + dj, ii = i + di; if (jj < 0 || ii < 0 || jj >= GH || ii >= GW) continue;
+          const wgt = k[dj + 1] * k[di + 1]; acc += src[jj * GW + ii] * wgt; ws += wgt;
+        }
+        o[j * GW + i] = acc / ws;
+      }
+    }
+    return o;
+  };
+  // Perspektive (Homographie) per Ausgleichsrechnung: (u,v) Gitter → (x,y) Foto in Pixeln
+  const M = Array.from({ length: 8 }, () => new Float64Array(9));
+  const px = new Float64Array(G), py = new Float64Array(G);
+  for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+    const n = j * GW + i, u = i / (GW - 1), v = j / (GH - 1);
+    const x = (X[n] + 1) / 2 * sw, y = (Y[n] + 1) / 2 * sh; px[n] = x; py[n] = y;
+    for (const [row, t] of [[[u, v, 1, 0, 0, 0, -u * x, -v * x], x], [[0, 0, 0, u, v, 1, -u * y, -v * y], y]]) {
+      for (let r = 0; r < 8; r++) { for (let c = 0; c < 8; c++) M[r][c] += row[r] * row[c]; M[r][8] += row[r] * t; }
+    }
+  }
+  const h = solve(M);
+  const diag = Math.hypot(sw, sh);
+  if (!h) return { grid: pack(X, Y), info: { rms: -1 } };
+  const HX = new Float32Array(G), HY = new Float32Array(G);
+  for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+    const n = j * GW + i, u = i / (GW - 1), v = j / (GH - 1), z = h[6] * u + h[7] * v + 1;
+    HX[n] = (h[0] * u + h[1] * v + h[2]) / z / sw * 2 - 1; HY[n] = (h[3] * u + h[4] * v + h[5]) / z / sh * 2 - 1;
+  }
+  // Abweichung von der Perspektive glätten (kleine Wellen weg)
+  const RX = smooth(X.map((v, n) => v - HX[n])), RY = smooth(Y.map((v, n) => v - HY[n]));
+  let se = 0;
+  for (let n = 0; n < G; n++) se += (RX[n] * sw / 2) ** 2 + (RY[n] * sh / 2) ** 2;
+  const rms = Math.sqrt(se / G) / diag * 100;          // Abweichung in % der Bilddiagonale
+  const A = 0.4, B = 0.8;
+  const f = Math.max(0, Math.min(1, (rms - A) / (B - A)));
+  const info = { rms: +rms.toFixed(3), factor: +f.toFixed(2) };
+  if (f <= 0) return { grid: null, info };
+  for (let n = 0; n < G; n++) { X[n] = HX[n] + RX[n] * f; Y[n] = HY[n] + RY[n] * f; }
+  return { grid: pack(X, Y), info };
+}
+function pack(X, Y) { const o = new Float32Array(X.length * 2); o.set(X, 0); o.set(Y, X.length); return o; }
+function solve(M) {
+  const n = 8;
+  for (let c = 0; c < n; c++) {
+    let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if (Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let r = 0; r < n; r++) if (r !== c) { const k = M[r][c] / M[c][c]; for (let k2 = c; k2 <= n; k2++) M[r][k2] -= k * M[c][k2]; }
+  }
+  return Array.from({ length: n }, (_, i) => M[i][n] / M[i][i]);
 }

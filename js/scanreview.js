@@ -102,6 +102,7 @@ export function scanReview(opts) {
           if (first) busy(true, 'KI wird geladen … (einmalig ca. 23 MB)');
           try { await ensureAI(it); } catch (e) { console.warn(e); it.ai = false; aiFail(); }
           if (first) busy(false);
+          if (it._ai && !it._ai.canvas && !flatShown) { flatShown = true; toast('Seite ist eben – ohne KI wird sie genauer'); }
           if (closed) return;
           if (i === cur) renderFilters();
         }
@@ -169,7 +170,7 @@ export function scanReview(opts) {
   updOcr();
   const aiBtn = wrap.querySelector('[data-ai]');
   const updAi = () => aiBtn.classList.toggle('on', aiOn);
-  let failShown = false;
+  let failShown = false, flatShown = false;
   function aiFail() { if (!failShown) { failShown = true; toast('KI-Glätten hat nicht geklappt – klassische Ansicht', true); } }
   aiBtn.onclick = () => {
     aiOn = !aiOn; setAiPref(aiOn); haptic(); updAi();

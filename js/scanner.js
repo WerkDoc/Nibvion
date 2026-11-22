@@ -614,7 +614,7 @@ export function enhance(c, mode, adj = NO_ADJ) {
 
 export function render(item, filter, maxSide, adj) {
   // KI-geglättete Seite (js/ai.js) verwenden, wenn vorhanden und zum Zuschnitt passend
-  if (item.ai && item._ai && item._ai.key === JSON.stringify(item.corners)) {
+  if (item.ai && item._ai?.canvas && item._ai.key === JSON.stringify(item.corners)) {
     return enhance(rotateCanvas(toCanvas(item._ai.canvas, maxSide), item.rot || 0), filter, adj);
   }
   let c = warp(item.img, item.corners, maxSide);
