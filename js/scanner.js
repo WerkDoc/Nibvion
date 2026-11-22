@@ -88,8 +88,13 @@ export function detectQuad(img, maxSide = 360) {
     const lv = new Float32Array(N);
     for (let i = 0; i < N; i++) lv[i] = d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114;
     const lumB = boxBlur(boxBlur(lv, w, h, 1), w, h, 2), t2 = otsu(lumB, N);
-    const runs = [[b, t0], [b, t0 + 14], [b, t0 + 28], [b, t0 - 12], [nb, t1], [nb, t1 - 15], [nb, 215], [rg, 128],
-      [lumB, t2, 1], [lumB, t2 + 20, 1], [lumB, t2 + 40, 1], [lumB, t2 - 15, 1]];
+    // Fünfter Kanal: Farbähnlichkeit zur Bildmitte (das Blatt liegt meist mittig) – trennt z. B.
+    // gelbes Papier von hautfarbenem/hölzernem Hintergrund gleicher Helligkeit
+    const ref = centerColor(d, w, h);
+    const ccB = boxBlur(boxBlur(colorSim(d, N, ref), w, h, 1), w, h, 2), t3 = otsu(ccB, N);
+    const runs = [[b, t0], [b, t0 + 14], [b, t0 + 28], [nb, t1], [nb, t1 - 15], [rg, 128],
+      [lumB, t2, 1], [lumB, t2 + 20, 1], [lumB, t2 + 40, 1],
+      [ccB, t3, 2], [ccB, Math.max(t3, 175), 2]];
     for (const [src, t, lum] of runs) {
       lab.fill(0); const comps = [];
       let cur = 0;
@@ -114,14 +119,16 @@ export function detectQuad(img, maxSide = 360) {
         const qa = polyArea(quad);
         if (qa < N * 0.1) continue;
         const fill = Math.min(1, n / qa);
-        const con = edgeContrast(lum ? lumB : b, w, h, quad) * (lum ? 0.85 : 1);
-        const score = fill ** 3 * Math.sqrt(qa / N) * con;
+        const con = edgeContrast(lum === 1 ? lumB : lum === 2 ? ccB : b, w, h, quad) * (lum === 2 ? 0.2 : lum ? 0.85 : 1);
+        // Fläche innen einfarbig? (Blatt + angrenzender Tisch/Haut gleicher Helligkeit → Abzug)
+        const mix = mixedColor(d, w, h, quad, ref);
+        const score = fill ** 3 * Math.sqrt(qa / N) * con * Math.max(0.05, 1 - 2.5 * mix);
         if (!best || score > best.score) best = { score, quad, fill, con, lum };
       }
     }
     if (!best || best.fill < 0.72 || best.con < 6) return null;
     let quad = best.quad;
-    if (fine) quad = refineQuad(img, quad, w, h, best.lum) || quad;
+    if (fine) quad = refineQuad(img, quad, w, h, best.lum, ref) || quad;
     const q = quad.map(([x, y]) => [Math.min(1, Math.max(0, x / w)), Math.min(1, Math.max(0, y / h))]);
     return quadArea(q) > 0.1 ? q : null;
   } catch (e) { console.warn(e); return null; }
@@ -157,6 +164,49 @@ function maxFilter(src, w, h, r) {
     }
   }
   return out;
+}
+
+// Anteil heller Pixel im Viereck, deren Farbton deutlich von der Blattfarbe (Bildmitte) abweicht
+function mixedColor(d, w, h, q, ref) {
+  const [R, G, B] = ref, S = R + G + B + 1, rr = R / S, rg = G / S, rb = B / S, Lr = R * 0.3 + G * 0.59 + B * 0.11;
+  let n = 0, bad = 0;
+  for (let j = 1; j < 24; j++) for (let i = 1; i < 24; i++) {
+    const u = i / 24, v = j / 24;
+    const x = (1 - u) * (1 - v) * q[0][0] + u * (1 - v) * q[1][0] + u * v * q[2][0] + (1 - u) * v * q[3][0];
+    const y = (1 - u) * (1 - v) * q[0][1] + u * (1 - v) * q[1][1] + u * v * q[2][1] + (1 - u) * v * q[3][1];
+    const o = (Math.min(h - 1, Math.max(0, Math.round(y))) * w + Math.min(w - 1, Math.max(0, Math.round(x)))) * 4;
+    const r = d[o], g = d[o + 1], b = d[o + 2], L = r * 0.3 + g * 0.59 + b * 0.11;
+    if (L < Lr * 0.55) continue;                       // Schrift/Schatten ignorieren
+    const s2 = r + g + b + 1; n++;
+    if (Math.hypot(r / s2 - rr, g / s2 - rg, b / s2 - rb) > 0.045) bad++;
+  }
+  return n ? bad / n : 0;
+}
+
+// Median-Farbe im mittleren Bildbereich (helle Pixel bevorzugt, Text ignorieren)
+function centerColor(d, w, h) {
+  const rs = [], gs = [], bs = [];
+  for (let y = Math.round(h * 0.35); y < h * 0.65; y += 2) for (let x = Math.round(w * 0.35); x < w * 0.65; x += 2) {
+    const o = (y * w + x) * 4; rs.push(d[o]); gs.push(d[o + 1]); bs.push(d[o + 2]);
+  }
+  const L = rs.map((r, i) => r * 0.3 + gs[i] * 0.59 + bs[i] * 0.11), idx = L.map((_, i) => i).sort((a, b) => L[b] - L[a]);
+  const top = idx.slice(0, Math.max(1, Math.round(idx.length * 0.6)));   // hellere 60 % = Papier, nicht Schrift
+  const med = a => { const v = top.map(i => a[i]).sort((x, y) => x - y); return v[v.length >> 1]; };
+  return [med(rs), med(gs), med(bs)];
+}
+// 255 = gleiche Farbe wie die Mitte. Farbton (unabhängig von Helligkeit/Schatten) zählt stark,
+// deutlich dunklere Pixel zählen zusätzlich als „anders“
+function colorSim(d, N, ref) {
+  const v = new Float32Array(N), [R, G, B] = ref, S = R + G + B + 1;
+  const rr = R / S, rg = G / S, rb = B / S, Lr = R * 0.3 + G * 0.59 + B * 0.11 + 1;
+  for (let i = 0; i < N; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], bl = d[i * 4 + 2], s = r + g + bl + 1;
+    const cd = Math.hypot(r / s - rr, g / s - rg, bl / s - rb);
+    const L = r * 0.3 + g * 0.59 + bl * 0.11;
+    const dark = Math.max(0, 0.6 - L / Lr);
+    v[i] = Math.max(0, 255 - cd * 1500 - dark * 500);
+  }
+  return v;
 }
 
 function lumValues(d, N) {
@@ -247,10 +297,10 @@ function edgeContrast(b, w, h, q) {
 }
 
 // Kanten auf doppelter Auflösung an den stärksten Sprung legen (Gerade per Ausgleich), Ecken = Schnittpunkte
-function refineQuad(img, q, w, h, lum) {
+function refineQuad(img, q, w, h, lum, ref) {
   const S = 2, c = toCanvas(img, Math.max(w, h) * S), W = c.width, H = c.height;
   const d = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
-  const pv = boxBlur(lum ? lumValues(d, W * H) : paperValues(d, W * H), W, H, 1);
+  const pv = boxBlur(lum === 1 ? lumValues(d, W * H) : lum === 2 ? colorSim(d, W * H, ref) : paperValues(d, W * H), W, H, 1);
   const sx = W / w, sy = H / h;
   const Q = q.map(([x, y]) => [x * sx, y * sy]);
   const cx = Q.reduce((s, p) => s + p[0], 0) / 4, cy = Q.reduce((s, p) => s + p[1], 0) / 4;
