@@ -109,7 +109,7 @@ export async function aiEnhance(canvas, onProgress) {
 // ---------- Anbindung an Scan-Elemente ----------
 export const enhKey = it => JSON.stringify([it.corners, it.rot || 0, !!(it.ai && it._ai?.canvas)]);
 export const enhReady = it => !!(it._enh && it._enh.key === enhKey(it));
-const SIDE = 1600;                     // Kompromiss Qualität / Zeit (A4 ≈ 190 dpi)
+const SIDE = 2400;                     // höhere Auflösung = feinere Schrift (Zeit ist zweitrangig)
 /** Berechnet die KI-verbesserte Seite einmal je Zuschnitt/Drehung (Ergebnis in it._enh). */
 export async function ensureEnhance(it, onProgress) {
   if (enhReady(it)) return;

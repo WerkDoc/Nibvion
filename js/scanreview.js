@@ -7,6 +7,7 @@ import { render as renderScan, enhance, FILTERS, cropEditor, detectCorners, load
 import { liveScanner, cameraSupported } from './camera.js';
 import { ensureAI, edgeCut, aiPref, setAiPref, aiLoaded } from './ai.js';
 import { ensureEnhance, enhReady, enhLoaded } from './aienhance.js';
+import { ensureOnline, onlineDone, onlineReady } from './online.js';
 
 const BIG = 1400;                       // Kantenlänge der großen Vorschau
 const tick = () => new Promise(r => setTimeout(r, 16));
@@ -76,7 +77,9 @@ export function scanReview(opts) {
 
   // ---------- Vorschau ----------
   const aiReady = it => !!(it.ai && it._ai && it._ai.key === JSON.stringify(it.corners));
-  const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it), filter === 'ai' && enhReady(it)]);
+  const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it), filter === 'ai' && enhReady(it), filter === 'online' && onlineDone(it)]);
+  // Filterliste: „☁️ Online“ nur, wenn in den Einstellungen eingerichtet
+  const FL = onlineReady() ? [FILTERS[0], FILTERS[1], ['online', '☁️ Online'], ...FILTERS.slice(2)] : FILTERS;
   const preview = it => {
     const k = key(it);
     if (it._bigKey !== k) { it._big = renderScan(it, filter, BIG, adj).toDataURL('image/jpeg', 0.85); it._bigKey = k; }
@@ -122,6 +125,17 @@ export function scanReview(opts) {
           if (closed) return;
           if (i === cur) renderFilters();
         }
+        if (filter === 'online' && !onlineDone(it)) {
+          el.classList.add('busy');
+          let pct = el.querySelector('.rv-pct');
+          if (!pct) { pct = document.createElement('div'); pct.className = 'rv-pct'; el.appendChild(pct); }
+          pct.textContent = '☁️ Online-Scan …';
+          try { await ensureOnline(it); }
+          catch (e) { console.warn(e); toast(`Online-Scan: ${e.message || 'fehlgeschlagen'} – KI-Scan wird verwendet`, true); }
+          pct.remove();
+          if (closed) return;
+          if (i === cur) renderFilters();
+        }
         if (img.dataset.k === key(it)) { el.classList.remove('busy'); continue; }
         el.classList.add('busy'); await tick();
         img.src = preview(it); img.dataset.k = key(it);
@@ -144,18 +158,19 @@ export function scanReview(opts) {
   let fltFor = null, fltPrev = {};
   const renderFilters = () => {
     const it = items[cur];
-    const fk = it && JSON.stringify([it._id, it.rot, it.corners, aiReady(it), enhReady(it)]);
+    const fk = it && JSON.stringify([it._id, it.rot, it.corners, aiReady(it), enhReady(it), onlineDone(it)]);
     if (it && fltFor !== fk) {
       fltFor = fk; fltPrev = {};
       const base = renderScan(it, '', 240);
-      for (const [k] of FILTERS) {
+      for (const [k] of FL) {
         const c = document.createElement('canvas'); c.width = base.width; c.height = base.height;
         c.getContext('2d').drawImage(base, 0, 0);
         fltPrev[k] = enhance(c, k).toDataURL('image/jpeg', 0.75);
       }
       if (enhReady(it)) fltPrev.ai = renderScan(it, 'ai', 240).toDataURL('image/jpeg', 0.75);
+      if (onlineDone(it)) fltPrev.online = renderScan(it, 'online', 240).toDataURL('image/jpeg', 0.75);
     }
-    flt.innerHTML = FILTERS.map(([k, l]) => `<button class="flt ${k === (filter || '') ? 'on' : ''}" data-fk="${k}"><span class="flt-img" style="background-image:url(${fltPrev[k] || ''})"></span>${l}</button>`).join('');
+    flt.innerHTML = FL.map(([k, l]) => `<button class="flt ${k === (filter || '') ? 'on' : ''}" data-fk="${k}"><span class="flt-img" style="background-image:url(${fltPrev[k] || ''})"></span>${l}</button>`).join('');
     flt.querySelectorAll('[data-fk]').forEach(b => b.onclick = () => {
       filter = b.dataset.fk || null; opts.onFilter && opts.onFilter(filter || ''); haptic();
       renderFilters(); drawVisible();
@@ -204,7 +219,15 @@ export function scanReview(opts) {
       busy(true, `KI glättet Seite ${n + 1} von ${todo.length} …`);
       try { await ensureAI(todo[n]); } catch (e) { console.warn(e); todo[n].ai = false; aiFail(); }
     }
-    if (filter === 'ai') {
+    if (filter === 'online') {
+      const list = items.filter(it => !onlineDone(it));
+      for (let n = 0; n < list.length; n++) {
+        busy(true, `☁️ Online-Scan Seite ${n + 1} von ${list.length} …`);
+        try { await ensureOnline(list[n]); }
+        catch (e) { console.warn(e); toast(`Online-Scan: ${e.message || 'fehlgeschlagen'}`, true); break; }
+      }
+    }
+    if (filter === 'ai' || (filter === 'online' && items.some(it => !onlineDone(it)))) {
       const list = items.filter(it => !enhReady(it));
       for (let n = 0; n < list.length; n++) {
         busy(true, `✨ KI-Scan Seite ${n + 1} von ${list.length} …`);
