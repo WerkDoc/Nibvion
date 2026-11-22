@@ -671,6 +671,17 @@ function thicken(d, w, h, bg) {
   }
 }
 
+// Papierfarbe knapp innerhalb des Randes (Median heller Pixel) – zum Auffüllen der Ränder
+function innerPaper(d, w, h) {
+  const m = Math.round(Math.min(w, h) * 0.05), rs = [], gs = [], bs = [];
+  const take = (x, y) => { const o = (y * w + x) * 4; if (d[o] + d[o + 1] + d[o + 2] > 450) { rs.push(d[o]); gs.push(d[o + 1]); bs.push(d[o + 2]); } };
+  for (let x = m; x < w - m; x += 3) { take(x, m); take(x, h - 1 - m); }
+  for (let y = m; y < h - m; y += 3) { take(m, y); take(w - 1 - m, y); }
+  if (rs.length < 20) return [255, 255, 255];
+  const med = a => a.sort((p, q) => p - q)[a.length >> 1];
+  return [med(rs), med(gs), med(bs)];
+}
+
 // Vom Bildrand aus zusammenhängende dunkle Flächen in einem schmalen Randstreifen → Papierfarbe
 function cleanBorders(d, w, h, fill) {
   const band = Math.max(4, Math.round(Math.min(w, h) * 0.03)), N = w * h;
@@ -766,7 +777,12 @@ export function enhance(c, mode, adj = NO_ADJ) {
 export function render(item, filter, maxSide, adj) {
   // Online-Scan (js/online.js): fertiges Ergebnis von TextIn, nur noch drehen + eigene Anpassungen
   if (filter === 'online') {
-    if (item._onl && item._onl.ck === JSON.stringify(item.corners)) return enhance(rotateCanvas(toCanvas(item._onl.canvas, maxSide), item.rot || 0), '', adj);
+    if (item._onl && item._onl.ck === JSON.stringify(item.corners)) {
+      const oc = toCanvas(item._onl.canvas, maxSide), ox = oc.getContext('2d'), od = ox.getImageData(0, 0, oc.width, oc.height);
+      cleanBorders(od.data, oc.width, oc.height, innerPaper(od.data, oc.width, oc.height));   // schwarze Kantenstriche weg
+      ox.putImageData(od, 0, 0);
+      return enhance(rotateCanvas(oc, item.rot || 0), '', adj);
+    }
     filter = 'ai';
   }
   // KI-Scan (js/aienhance.js): fertiges KI-Ergebnis verwenden, danach wie „Verbessern“ nachschärfen
