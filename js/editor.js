@@ -757,7 +757,7 @@ function openTextEditor(o, isNew, isReplace) {
       <div class="txt-tools" style="margin-top:12px">
         <div class="stepper"><button data-s="-1">${icon('minus')}</button><span data-sz>${fmtSz(o.size)}</span><button data-s="1">${icon('plus')}</button></div>
         <button class="toggle ${o.bold ? 'on' : ''}" data-b>${icon('bold')}</button>
-        <div class="colors" style="flex:1;justify-content:flex-end;flex-wrap:nowrap;gap:7px">${TEXT_COLORS.slice(0, 5).map(c => `<button class="color ${c === o.color ? 'on' : ''}" data-c="${c}" style="background:${c};width:28px;height:28px;flex:none"></button>`).join('')}</div>
+        <div class="colors" style="flex:1 0 100%;justify-content:flex-end;flex-wrap:nowrap;gap:7px">${TEXT_COLORS.slice(0, 5).map(c => `<button class="color ${c === o.color ? 'on' : ''}" data-c="${c}" style="background:${c};width:28px;height:28px;flex:none"></button>`).join('')}</div>
       </div>
       <div class="btn-row"><button class="btn danger" data-del style="flex:0 0 auto;width:56px">${icon('trash')}</button><button class="btn primary" data-ok>${icon('check')} Fertig</button></div>`,
     onMount(el, api) {
