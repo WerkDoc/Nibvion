@@ -3,8 +3,8 @@
 // Dokument untersucht, der Rahmen wird live eingeblendet. „Auto“ löst aus, sobald das
 // Blatt ruhig erkannt ist. Ergebnis: Liste von { img: Canvas, corners, rot }.
 import { icon } from './icons.js';
-import { haptic, toast } from './ui.js';
-import { detectQuad, FULL, render } from './scanner.js';
+import { haptic, toast, pickFiles, busy as showBusy } from './ui.js';
+import { detectQuad, detectCorners, loadFileImage, FULL, render } from './scanner.js';
 
 export const cameraSupported = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
@@ -44,7 +44,10 @@ export function liveScanner({ startCount = 0 } = {}) {
         <div class="cam-hint">Dokument ins Bild halten</div>
       </div>
       <div class="cam-bottom">
-        <button class="cam-thumb" data-done aria-label="Fertig"><span class="cam-badge"></span></button>
+        <div class="cam-left">
+          <button class="cam-thumb" data-done aria-label="Fertig"><span class="cam-badge"></span></button>
+          <button class="cam-gallery" data-gal aria-label="Aus Fotos">${icon('image')}<span>Fotos</span></button>
+        </div>
         <button class="cam-shutter" data-shot aria-label="Aufnehmen"><span></span></button>
         <button class="cam-done" data-done>Fertig</button>
       </div>`;
@@ -145,6 +148,18 @@ export function liveScanner({ startCount = 0 } = {}) {
     };
     wrap.querySelector('[data-shot]').onclick = shoot;
     wrap.querySelectorAll('[data-done]').forEach(b => b.onclick = () => close(items));
+    // Fotos aus der Mediathek: Ränder automatisch erkennen, dann direkt weiter zur Scan-Ansicht
+    wrap.querySelector('[data-gal]').onclick = async () => {
+      const files = await pickFiles('file-img');
+      if (!files.length) return;
+      showBusy(true, 'Ränder werden erkannt …');
+      for (const f of files) {
+        try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); }
+        catch { toast('Bild konnte nicht geladen werden', true); }
+      }
+      showBusy(false);
+      if (items.length) close(items);
+    };
     wrap.querySelector('[data-x]').onclick = () => close(items.length ? items : []);
     wrap.querySelector('[data-auto]').onclick = e => {
       auto = !auto; localStorage.setItem(AUTO_KEY, auto ? '1' : '0');

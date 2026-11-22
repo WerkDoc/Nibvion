@@ -14,7 +14,7 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 
-export const VERSION = '1.9.0';
+export const VERSION = '1.9.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -107,7 +107,7 @@ const QUICK = [
   { id: 'comment', label: 'Kommentieren', icon: 'comment', c: 'c-amber' },
   { id: 'draw', label: 'Zeichnen', icon: 'draw', c: 'c-violet' },
   { id: 'sign', label: 'Unter­schreiben', icon: 'sign', c: 'c-green' },
-  { id: 'img2pdf', label: 'Bilder → PDF', icon: 'images', c: 'c-blue' },
+  { id: 'imgscan', label: 'Bild scannen', icon: 'images', c: 'c-blue' },
   { id: 'all', label: 'Alle Werkzeuge', icon: 'grid', c: 'c-gray' },
 ];
 
@@ -222,6 +222,7 @@ const TOOL_GROUPS = [
   ] },
   { title: 'Erstellen', items: [
     { id: 'scan', label: 'Scannen', sub: 'Mit der Kamera zu PDF', icon: 'scan', c: 'c-violet' },
+    { id: 'imgscan', label: 'Bild scannen', sub: 'Foto aus der Mediathek: Ränder erkennen, gerade ziehen', icon: 'fit', c: 'c-teal' },
     { id: 'img2pdf', label: 'Bilder → PDF', sub: 'Fotos & Screenshots zusammenfassen', icon: 'images', c: 'c-blue' },
     { id: 'merge', label: 'PDFs zusammenfügen', sub: 'Mehrere PDFs zu einem', icon: 'merge', c: 'c-orange' },
     { id: 'blank', label: 'Leeres PDF', sub: 'A4-Seite zum Ausfüllen', icon: 'filePlus', c: 'c-gray' },
@@ -266,6 +267,7 @@ function runTool(id) {
     case 'pages': return chooseDoc('pages', 'Seiten verwalten');
     case 'all': return switchTab('tools');
     case 'scan': return imageSheet('scan');
+    case 'imgscan': return imageSheet('imgscan');
     case 'img2pdf': return imageSheet('images');
     case 'merge': return mergeSheet();
     case 'blank': return newBlank();
@@ -293,9 +295,17 @@ async function imageSheet(kind) {
   if (kind === 'images') {
     const fs = await pickFiles('file-img'); if (!fs.length) return;
     busy(true, 'Bilder werden geladen …');
-    for (const f of fs) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: FULL.map(p => [...p]), rot: 0 }); } catch {} }
+    for (const f of fs) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); } catch {} }
     busy(false);
     if (!items.length) return toast('Bilder konnten nicht geladen werden', true);
+  } else if (kind === 'imgscan') {
+    // Foto aus der Mediathek wie einen Scan behandeln (Ränder, Entzerren, Filter „Verbessern“)
+    const fs = await pickFiles('file-img'); if (!fs.length) return;
+    busy(true, 'Ränder werden erkannt …');
+    for (const f of fs) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); } catch {} }
+    busy(false);
+    if (!items.length) return toast('Bilder konnten nicht geladen werden', true);
+    kind = 'scan';
   } else if (cameraSupported()) {
     const shots = await liveScanner();
     if (shots === null) liveFailed = true;
@@ -805,6 +815,7 @@ function fabSheet() {
       <div class="menu-grid">
         <button data-t="sign"><span class="qt-ic c-green">${icon('sign')}</span>Unterschrift</button>
         <button data-t="scan"><span class="qt-ic c-violet">${icon('scan')}</span>Scan</button>
+        <button data-t="imgscan"><span class="qt-ic c-teal">${icon('fit')}</span>Bild scannen</button>
         <button data-t="merge"><span class="qt-ic c-orange">${icon('merge')}</span>Zusammenfügen</button>
       </div>
       <div class="lbl">Importieren</div>
