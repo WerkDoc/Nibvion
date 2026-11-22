@@ -518,6 +518,7 @@ textarea.tv-area { min-height: 52vh; font-size: 15px; line-height: 1.5; resize: 
 .rv-empty b { color: var(--text); }
 .rv-panel { background: var(--bg2); border-top: 1px solid var(--line); padding: 10px 14px 4px; }
 .rv-tabs { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.rv-chips { display: flex; gap: 6px; }
 .rv-chip { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 16px; background: var(--card2); color: var(--text2); font-size: 13px; font-weight: 650; transition: background .2s, color .2s; }
 .rv-chip .ico { width: 16px; height: 16px; }
 .rv-chip.on { background: var(--accent-soft); color: var(--accent); }

@@ -5,6 +5,7 @@ import { icon } from './icons.js';
 import { sheet, toast, busy, haptic, pickFiles } from './ui.js';
 import { render as renderScan, enhance, FILTERS, cropEditor, detectCorners, loadFileImage, FULL } from './scanner.js';
 import { liveScanner, cameraSupported } from './camera.js';
+import { ensureAI, edgeCut, aiPref, setAiPref, aiLoaded } from './ai.js';
 
 const BIG = 1400;                       // Kantenlänge der großen Vorschau
 const tick = () => new Promise(r => setTimeout(r, 16));
@@ -49,7 +50,10 @@ export function scanReview(opts) {
     <div class="rv-panel">
       <div class="rv-tabs">
         <div class="seg" data-tabs><button data-p="filter" class="on">Filter</button><button data-p="adj">Anpassen</button></div>
-        ${kind === 'scan' ? `<button class="rv-chip" data-ocr>${icon('textScan')}<span>Text erkennen</span></button>` : ''}
+        <div class="rv-chips">
+          <button class="rv-chip" data-ai aria-label="KI-Glätten">${icon('sparkles')}<span>KI</span></button>
+          ${kind === 'scan' ? `<button class="rv-chip" data-ocr>${icon('textScan')}<span>Text erkennen</span></button>` : ''}
+        </div>
       </div>
       <div class="flt-row no-swipe" data-flt></div>
       <div class="rv-adj" data-adj hidden>
@@ -70,7 +74,8 @@ export function scanReview(opts) {
   const stage = wrap.querySelector('[data-stage]'), flt = wrap.querySelector('[data-flt]');
 
   // ---------- Vorschau ----------
-  const key = it => JSON.stringify([filter, adj, it.rot, it.corners]);
+  const aiReady = it => !!(it.ai && it._ai && it._ai.key === JSON.stringify(it.corners));
+  const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it)]);
   const preview = it => {
     const k = key(it);
     if (it._bigKey !== k) { it._big = renderScan(it, filter, BIG, adj).toDataURL('image/jpeg', 0.85); it._bigKey = k; }
@@ -91,7 +96,16 @@ export function scanReview(opts) {
         const it = items[i], el = stage.querySelector(`.rv-page[data-i="${i}"]`);
         if (!it || !el) continue;
         const img = el.querySelector('img');
-        if (img.dataset.k === key(it)) continue;
+        if (it.ai && !aiReady(it)) {
+          el.classList.add('busy');
+          const first = !aiLoaded();
+          if (first) busy(true, 'KI wird geladen … (einmalig ca. 23 MB)');
+          try { await ensureAI(it); } catch (e) { console.warn(e); it.ai = false; aiFail(); }
+          if (first) busy(false);
+          if (closed) return;
+          if (i === cur) renderFilters();
+        }
+        if (img.dataset.k === key(it)) { el.classList.remove('busy'); continue; }
         el.classList.add('busy'); await tick();
         img.src = preview(it); img.dataset.k = key(it);
         el.classList.remove('busy');
@@ -113,7 +127,7 @@ export function scanReview(opts) {
   let fltFor = null, fltPrev = {};
   const renderFilters = () => {
     const it = items[cur];
-    const fk = it && JSON.stringify([it._id, it.rot, it.corners]);
+    const fk = it && JSON.stringify([it._id, it.rot, it.corners, aiReady(it)]);
     if (it && fltFor !== fk) {
       fltFor = fk; fltPrev = {};
       const base = renderScan(it, '', 240);
@@ -130,7 +144,9 @@ export function scanReview(opts) {
     });
   };
   let idc = 0;
-  const tag = list => list.forEach(it => { it._id ??= ++idc; });
+  let aiOn = aiPref();
+  const aiFor = it => { it.ai = aiOn && !edgeCut(it.corners); };
+  const tag = list => list.forEach(it => { it._id ??= ++idc; aiFor(it); });
   tag(items);
 
   // ---------- Panel ----------
@@ -151,6 +167,28 @@ export function scanReview(opts) {
   const updOcr = () => ocrBtn && ocrBtn.classList.toggle('on', ocrOn);
   if (ocrBtn) ocrBtn.onclick = () => { ocrOn = !ocrOn; opts.onOcr && opts.onOcr(ocrOn); updOcr(); haptic(); toast(ocrOn ? 'Text wird beim Speichern erkannt' : 'Ohne Texterkennung'); };
   updOcr();
+  const aiBtn = wrap.querySelector('[data-ai]');
+  const updAi = () => aiBtn.classList.toggle('on', aiOn);
+  let failShown = false;
+  function aiFail() { if (!failShown) { failShown = true; toast('KI-Glätten hat nicht geklappt – klassische Ansicht', true); } }
+  aiBtn.onclick = () => {
+    aiOn = !aiOn; setAiPref(aiOn); haptic(); updAi();
+    items.forEach(aiFor);
+    const cut = aiOn && items.some(it => edgeCut(it.corners));
+    toast(!aiOn ? 'KI-Glätten aus' : cut ? 'KI-Glätten an – angeschnittene Seiten bleiben klassisch' : 'KI-Glätten an: gewölbte Seiten werden geglättet');
+    drawVisible(); renderFilters();
+  };
+  updAi();
+  // Vor Speichern/Export alle Seiten mit KI fertig berechnen
+  const prepAll = async () => {
+    const todo = items.filter(it => it.ai && !aiReady(it));
+    if (!todo.length) return;
+    for (let n = 0; n < todo.length; n++) {
+      busy(true, `KI glättet Seite ${n + 1} von ${todo.length} …`);
+      try { await ensureAI(todo[n]); } catch (e) { console.warn(e); todo[n].ai = false; aiFail(); }
+    }
+    busy(false);
+  };
 
   // ---------- Werkzeuge ----------
   const refreshAll = (goLast) => { buildStage(); updCount(); if (goLast) requestAnimationFrame(() => goTo(items.length - 1)); else { drawVisible(); renderFilters(); } };
@@ -158,7 +196,7 @@ export function scanReview(opts) {
   const openCrop = async i => {
     const it = items[i]; if (!it) return;
     const r = await cropEditor(it); if (!r) return;
-    it.corners = r.corners; it.rot = r.rot; drawVisible(); renderFilters();
+    it.corners = r.corners; it.rot = r.rot; aiFor(it); drawVisible(); renderFilters();
   };
   const addFiles = async (files, auto) => {
     if (!files.length) return;
@@ -188,7 +226,7 @@ export function scanReview(opts) {
       cur = Math.min(cur, items.length - 1); if (cur < 0) cur = 0;
       haptic(); refreshAll(false); requestAnimationFrame(() => goTo(cur));
     }
-    if (t === 'text') opts.onText(items, filter, adj);
+    if (t === 'text') { await prepAll(); opts.onText(items, filter, adj); }
   });
 
   // ---------- Schließen ----------
@@ -205,6 +243,7 @@ export function scanReview(opts) {
   wrap.querySelector('[data-x]').onclick = askClose;
   wrap.querySelector('[data-save]').onclick = async () => {
     if (!items.length) return;
+    await prepAll();
     const ok = await opts.onSave(items, filter, adj, ocrOn);
     if (ok !== false) close();
   };
