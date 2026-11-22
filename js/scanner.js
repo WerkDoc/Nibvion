@@ -694,7 +694,7 @@ function cleanBorders(d, w, h, fill) {
 }
 
 export function enhance(c, mode, adj = NO_ADJ) {
-  if (mode === 'ai') mode = 'color';                 // ohne KI-Ergebnis: wie „Verbessern“
+  if (mode === 'ai' || mode === 'online') mode = 'color';   // ohne KI-/Online-Ergebnis: wie „Verbessern“
   const { brightness = 0, contrast = 0, sharp = 0 } = adj || NO_ADJ;
   if (!mode && !brightness && !contrast && !sharp) return c;
   const w = c.width, h = c.height, ctx = c.getContext('2d');
@@ -764,6 +764,11 @@ export function enhance(c, mode, adj = NO_ADJ) {
 }
 
 export function render(item, filter, maxSide, adj) {
+  // Online-Scan (js/online.js): fertiges Ergebnis von TextIn, nur noch drehen + eigene Anpassungen
+  if (filter === 'online') {
+    if (item._onl && item._onl.ck === JSON.stringify(item.corners)) return enhance(rotateCanvas(toCanvas(item._onl.canvas, maxSide), item.rot || 0), '', adj);
+    filter = 'ai';
+  }
   // KI-Scan (js/aienhance.js): fertiges KI-Ergebnis verwenden, danach wie „Verbessern“ nachschärfen
   if (filter === 'ai' && item._enh && item._enh.key === JSON.stringify([item.corners, item.rot || 0, !!(item.ai && item._ai?.canvas)])) {
     return enhance(toCanvas(item._enh.canvas, maxSide), 'color', adj);
