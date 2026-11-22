@@ -590,7 +590,7 @@ export function rotateCanvas(c, deg) {
 
 // ---------- Aufbereiten (Schatten raus, Papier weiß) ----------
 export const FILTERS = [
-  ['', 'Original'], ['color', 'Verbessern'], ['gray', 'Graustufen'],
+  ['', 'Original'], ['ai', '✨ KI-Scan'], ['color', 'Verbessern'], ['gray', 'Graustufen'],
   ['doc', 'Dokument'], ['bw', 'Schwarz-Weiß'], ['invert', 'Umkehren'],
 ];
 export const NO_ADJ = { brightness: 0, contrast: 0, sharp: 0 };
@@ -694,6 +694,7 @@ function cleanBorders(d, w, h, fill) {
 }
 
 export function enhance(c, mode, adj = NO_ADJ) {
+  if (mode === 'ai') mode = 'color';                 // ohne KI-Ergebnis: wie „Verbessern“
   const { brightness = 0, contrast = 0, sharp = 0 } = adj || NO_ADJ;
   if (!mode && !brightness && !contrast && !sharp) return c;
   const w = c.width, h = c.height, ctx = c.getContext('2d');
@@ -763,6 +764,10 @@ export function enhance(c, mode, adj = NO_ADJ) {
 }
 
 export function render(item, filter, maxSide, adj) {
+  // KI-Scan (js/aienhance.js): fertiges KI-Ergebnis verwenden, danach wie „Verbessern“ nachschärfen
+  if (filter === 'ai' && item._enh && item._enh.key === JSON.stringify([item.corners, item.rot || 0, !!(item.ai && item._ai?.canvas)])) {
+    return enhance(toCanvas(item._enh.canvas, maxSide), 'color', adj);
+  }
   // KI-geglättete Seite (js/ai.js) verwenden, wenn vorhanden und zum Zuschnitt passend
   if (item.ai && item._ai?.canvas && item._ai.key === JSON.stringify(item.corners)) {
     return enhance(rotateCanvas(toCanvas(item._ai.canvas, maxSide), item.rot || 0), filter, adj);
