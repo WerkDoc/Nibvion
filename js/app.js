@@ -13,16 +13,17 @@ import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.j
 import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
+import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.19.0';
+export const VERSION = '1.20.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
 
 
 // ======================= Bibliothek =======================
-async function saveNewDoc(bytes, name) {
+async function saveNewDoc(bytes, name, opts = {}) {
   const data = bytes instanceof ArrayBuffer ? bytes : bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   const head = new TextDecoder().decode(new Uint8Array(data.slice(0, 1024)));
   if (!head.includes('%PDF')) throw new Error('Keine PDF-Datei');
@@ -33,6 +34,9 @@ async function saveNewDoc(bytes, name) {
   try { pages = await extractText(pdf); } catch {}
   const id = uid();
   const meta = { id, name: /\.pdf$/i.test(name) ? name : name + '.pdf', size: data.byteLength, pages: pdf.numPages, thumb, objects: [], created: Date.now(), updated: Date.now(), opened: Date.now(), textIdx: { size: data.byteLength, pages } };
+  // Ordner: ausdrücklich übergeben oder der gerade offene Ordner im Tab „Dateien“
+  const tgt = opts.folder ? opts : fileTarget();
+  if (tgt?.folder) { meta.folder = tgt.folder; if (tgt.idCat) meta.idCat = tgt.idCat; }
   closePdf(pdf);
   await db.put('files', { id, data });
   await db.put('docs', meta);
@@ -125,6 +129,7 @@ async function allDocs() {
 }
 
 async function renderRecents() {
+  renderFiles();
   const all = await allDocs();
   const favOnly = settings.get('favOnly');
   const docs = favOnly ? all.filter(d => d.fav) : all;
@@ -161,6 +166,7 @@ function docMenu(d) {
     html: `<div class="menu">
       ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
         ['fav', d.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen', d.fav ? 'heartFill' : 'heart', 'c-red'],
+        ['move', 'In Ordner verschieben', 'folderMove', 'c-green'],
         ['ocr', 'Text erkennen (OCR)', 'scan', 'c-teal'],
         ['text', 'Text extrahieren', 'textScan', 'c-blue'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
@@ -174,6 +180,7 @@ function docMenu(d) {
         if (a === 'word') return exportWord(d);
         if (a === 'excel') return exportExcel(d);
         if (a === 'fav') { d.fav = !d.fav; await db.put('docs', d); haptic(); renderRecents(); return toast(d.fav ? 'Zu Favoriten hinzugefügt' : 'Aus Favoriten entfernt'); }
+        if (a === 'move') return moveDocSheet(d, renderRecents);
         if (a === 'wm') return watermarkSheet(d);
         if (a === 'compress') return compressSheet(d);
         if (a === 'ocr') return ocrDoc(d);
@@ -290,9 +297,10 @@ function runTool(id) {
 
 // ----- Scan / Bilder → PDF -----
 // Scan: Live-Kamera mit Rahmenerkennung, danach Vollbild-Ansicht (scanreview.js).
-async function imageSheet(kind) {
+async function imageSheet(kind, camOpts = {}) {
   const items = [];
-  let liveFailed = false;
+  let liveFailed = false, camMode = null, idType = null, signAfter = false, saveOpts = {};
+  let prefix = kind === 'images' ? 'Bilder' : 'Scan', doneMsg = null;
   if (kind === 'images') {
     const fs = await pickFiles('file-img'); if (!fs.length) return;
     busy(true, 'Bilder werden geladen …');
@@ -308,11 +316,33 @@ async function imageSheet(kind) {
     if (!items.length) return toast('Bilder konnten nicht geladen werden', true);
     kind = 'scan';
   } else if (cameraSupported()) {
-    const shots = await liveScanner();
+    const shots = await liveScanner(camOpts);
     if (shots === null) liveFailed = true;
     else if (!shots.length) return;
-    else items.push(...shots);
+    else { items.push(...shots); camMode = shots.mode; idType = shots.idType; }
   } else liveFailed = true;
+
+  // Ausweis ohne Live-Kamera: Fotos aus der Mediathek nehmen
+  if (liveFailed && camOpts.mode === 'id') {
+    const fs = await pickFiles('file-img'); if (!fs.length) return;
+    busy(true, 'Ränder werden erkannt …');
+    for (const f of fs.slice(0, 2)) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); } catch {} }
+    busy(false);
+    if (!items.length) return;
+    camMode = 'id'; idType = camOpts.idType; liveFailed = false;
+  }
+  // Kamera-Modi (per Wischen gewählt)
+  if (camMode === 'text') return scanText(items, 'color');
+  if (camMode === 'word' || camMode === 'excel') return scanToOffice(camMode, items.map(it => () => renderScan(it, 'doc', 2400)), `Scan ${today()}`);
+  if (camMode === 'stamp') return saveStamped(items);
+  if (camMode === 'id') {
+    const cat = idCat(idType);
+    const folder = camOpts.folder || await ensureIdFolder();
+    if (!folder) return;
+    if (cat.sides > 0) return saveIdCard(items, cat, folder);
+    saveOpts = { folder: folder.id, idCat: cat.id }; prefix = cat.label; doneMsg = `${cat.label} gespeichert in „${folder.name}“`;
+  }
+  if (camMode === 'sign') signAfter = true;
 
   scanReview({
     kind, items, liveFailed,
@@ -335,13 +365,7 @@ async function imageSheet(kind) {
       if (!fmt) return;
       const clean = filter === 'invert' || !filter ? 'doc' : filter;
       if (fmt !== 'text') return scanToOffice(fmt, list.map(it => () => renderScan(it, clean, 2400, adj)), `Scan ${today()}`);
-      busy(true, 'Texterkennung wird geladen …');
-      try {
-        const { recognizeCanvases } = await import('./ocr.js');
-        const pages = await recognizeCanvases(list.map(it => () => renderScan(it, filter === 'invert' ? 'doc' : filter, 2400, adj)),
-          { onProgress: (t, x) => busy(true, x > 0 && x < 1 ? `${t} ${Math.round(x * 100)} %` : t) });
-        busy(false); textSheet(pages, `Scan ${today()}`);
-      } catch (e) { console.error(e); busy(false); toast(e?.message?.includes('geladen') ? e.message : 'Texterkennung fehlgeschlagen', true); }
+      return scanText(list, filter === 'invert' ? 'doc' : filter, adj);
     },
     onSave: async (list, filter, adj, ocrOn) => {
       busy(true, 'PDF wird erstellt …');
@@ -349,17 +373,74 @@ async function imageSheet(kind) {
         const urls = [];
         for (const it of list) { urls.push(renderScan(it, filter, 2200, adj).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
         const bytes = await imagesToPdf(urls, { margin: 0 });
-        const id = await saveNewDoc(bytes, `${kind === 'scan' ? 'Scan' : 'Bilder'} ${today()} ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }).replace(':', '-')}.pdf`);
+        const id = await saveNewDoc(bytes, `${prefix} ${today()} ${nowHM()}.pdf`, saveOpts);
         if (kind === 'scan' && ocrOn) await ocrDoc(await db.get('docs', id), { quiet: true });
         busy(false); await renderRecents();
-        toast(kind === 'scan' && ocrOn ? 'Scan gespeichert – Text ist durchsuchbar' : 'PDF erstellt');
+        toast(doneMsg || (kind === 'scan' && ocrOn ? 'Scan gespeichert – Text ist durchsuchbar' : 'PDF erstellt'));
         list.forEach(it => it.url && setTimeout(() => URL.revokeObjectURL(it.url), 3000));
-        openDoc(id);
+        openDoc(id, signAfter ? 'sign' : 'view');
         return true;
       } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); return false; }
     },
   });
 }
+
+const nowHM = () => new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }).replace(':', '-');
+
+// Text aus gescannten Seiten lesen und anzeigen
+async function scanText(list, filter = 'color', adj) {
+  busy(true, 'Texterkennung wird geladen …');
+  try {
+    const { recognizeCanvases } = await import('./ocr.js');
+    const pages = await recognizeCanvases(list.map(it => () => renderScan(it, filter, 2400, adj)),
+      { onProgress: (t, x) => busy(true, x > 0 && x < 1 ? `${t} ${Math.round(x * 100)} %` : t) });
+    busy(false); textSheet(pages, `Scan ${today()}`);
+  } catch (e) { console.error(e); busy(false); toast(e?.message?.includes('geladen') ? e.message : 'Texterkennung fehlgeschlagen', true); }
+}
+
+// Zeitstempel-Fotos als PDF speichern (ganzes Foto, nicht zugeschnitten)
+async function saveStamped(list) {
+  busy(true, 'PDF wird erstellt …');
+  try {
+    const urls = list.map(it => it.img.toDataURL('image/jpeg', 0.88));
+    const id = await saveNewDoc(await imagesToPdf(urls, { fit: 'a4' }), `Zeitstempel ${today()} ${nowHM()}.pdf`);
+    busy(false); await renderRecents(); toast('Foto mit Zeitstempel gespeichert'); openDoc(id);
+  } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); }
+}
+
+// Ausweis: Vorder- und Rückseite in Originalgröße auf eine A4-Seite (wie eine Kopie)
+async function saveIdCard(list, cat, folder) {
+  busy(true, `${cat.label} wird erstellt …`);
+  try {
+    const MM = 10, W = 210 * MM, H = 297 * MM;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
+    const [cw, ch] = cat.id === 'passport' ? [125, 88] : [85.6, 54];
+    const w = cw * MM, h = ch * MM, r = (cat.id === 'passport' ? 2 : 3.2) * MM, left = (W - w) / 2;
+    let top = 45 * MM;
+    for (const it of list.slice(0, 2)) {
+      let img = renderScan(it, 'color', 1800);
+      if (img.height > img.width) {                       // hochkant fotografiert → quer drehen
+        const t = document.createElement('canvas'); t.width = img.height; t.height = img.width;
+        const tx = t.getContext('2d'); tx.translate(t.width, 0); tx.rotate(Math.PI / 2); tx.drawImage(img, 0, 0); img = t;
+      }
+      x.save(); x.beginPath(); x.roundRect(left, top, w, h, r); x.clip();
+      x.imageSmoothingQuality = 'high'; x.drawImage(img, left, top, w, h); x.restore();
+      x.strokeStyle = 'rgba(0,0,0,.14)'; x.lineWidth = 2; x.beginPath(); x.roundRect(left, top, w, h, r); x.stroke();
+      top += h + 20 * MM;
+      await new Promise(res => setTimeout(res, 0));
+    }
+    const bytes = await imagesToPdf([c.toDataURL('image/jpeg', 0.9)], { margin: 0 });
+    const id = await saveNewDoc(bytes, `${cat.label} ${today()} ${nowHM()}.pdf`, { folder: folder.id, idCat: cat.id });
+    busy(false); await renderRecents();
+    toast(`${cat.label} gespeichert in „${folder.name}“`);
+    list.forEach(it => it.url && setTimeout(() => URL.revokeObjectURL(it.url), 3000));
+    openDoc(id);
+  } catch (e) { console.error(e); busy(false); toast('Ausweis konnte nicht gespeichert werden', true); }
+}
+
+// Ausweis aus dem ID-Ordner heraus aufnehmen
+function idCapture(folder, cat) { return imageSheet('scan', { mode: 'id', idType: cat.id, folder }); }
 
 // ----- Text extrahieren (aus einer PDF) -----
 async function textFromDoc(d) {
@@ -945,13 +1026,15 @@ function onlineSheet() {
 }
 
 // ======================= Tabs =======================
-const TABS = ['tools', 'home', 'settings'];
+const TABS = ['tools', 'home', 'files', 'settings'];
 function switchTab(tab) {
   resetDocScroll();
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === tab));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   document.querySelector('.tab-indicator').style.transform = `translateX(${TABS.indexOf(tab) * 100}%)`;
   document.body.classList.toggle('tab-home', tab === 'home');   // „+“ nur auf der Startseite
+  document.body.dataset.tab = tab;
+  if (tab === 'files') renderFiles();
   if (tab === 'settings') renderSettings();
   haptic();
 }
@@ -964,7 +1047,8 @@ async function init() {
   initEditor();
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';
-  document.body.classList.add('tab-home');
+  document.body.classList.add('tab-home'); document.body.dataset.tab = 'home';
+  initFiles({ openDoc, docMenu, importDocs: () => importPdfs(), importImages: () => runTool('imgscan'), scan: () => runTool('scan'), captureId: (f, c) => idCapture(f, c) });
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
   document.addEventListener('click', e => {
     const a = e.target.closest('[data-action]')?.dataset.action;
