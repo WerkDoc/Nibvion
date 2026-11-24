@@ -789,3 +789,13 @@ body.idv-open .backdrop { z-index: 100; }
 .idf-boxes { position: absolute; inset: 0; }
 .idf-boxes button { position: absolute; border: 1.5px solid rgba(22,163,74,.85); border-radius: 3px; background: rgba(22,163,74,.06); }
 .idf-boxes button.hit { background: rgba(22,163,74,.35); }
+.ide-texts { position: absolute; inset: 0; pointer-events: none; }
+.ide-txt { position: absolute; transform: translateY(-50%); font-weight: 600; line-height: 1.2; white-space: nowrap; pointer-events: auto; touch-action: none; padding: 2px 3px; margin: -2px -3px; border-radius: 4px; user-select: none; -webkit-user-select: none; font-family: -apple-system, Helvetica, Arial, sans-serif; }
+.ide-txt.sel { outline: 1.5px dashed var(--accent); background: rgba(255,255,255,.18); }
+.ide-tbar { position: absolute; transform: translate(-4px, calc(-100% - 22px)); display: flex; background: #2b2f38; border-radius: 10px; overflow: hidden; pointer-events: auto; box-shadow: 0 6px 18px rgba(0,0,0,.35); z-index: 2; }
+.ide-tbar button { color: #fff; font-size: 13px; font-weight: 700; padding: 8px 11px; display: grid; place-items: center; }
+.ide-tbar button + button { border-left: 1px solid rgba(255,255,255,.12); }
+.ide-tbar svg { width: 16px; height: 16px; }
+.ide-frame { overflow: visible !important; } .ide-frame canvas { border-radius: 10px; }
+.idf-row.ok span::after { content: ' ✓'; color: #16a34a; font-weight: 800; }
+.idf-boxes button.mrz { border-color: rgba(37,99,235,.7); background: rgba(37,99,235,.05); }
