@@ -23,7 +23,11 @@ export async function restoreFromTrash(ids) {
   }
 }
 export async function purge(ids) {
-  for (const id of [].concat(ids)) { await db.del('docs', id); await db.del('files', id); }
+  for (const id of [].concat(ids)) {
+    const d = await db.get('docs', id);
+    for (let i = 0; i < (d?.idSides?.length || 0); i++) { await db.del('files', `${id}#s${i}`); await db.del('files', `${id}#o${i}`); }   // Ausweis-Fotos
+    await db.del('docs', id); await db.del('files', id);
+  }
 }
 export async function trashDocs() {
   return (await db.all('docs')).filter(isDeleted).sort((a, b) => b.deletedAt - a.deletedAt);

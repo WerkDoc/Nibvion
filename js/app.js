@@ -6,6 +6,7 @@ import { loadPdf, closePdf, renderThumb, imagesToPdf, mergePdfs, blankPdf, norma
 import { detectCorners, cropEditor, loadFileImage, render as renderScan, enhance as enhanceScan, FULL, FILTERS } from './scanner.js';
 import { liveScanner, cameraSupported, cardCorners } from './camera.js';
 import { textSheet } from './textview.js';
+import { initIdView, saveIdCard, openIdView } from './idview.js';
 import { scanReview } from './scanreview.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
@@ -16,7 +17,7 @@ import { settings, applyTheme } from './settings.js';
 import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.22.1';
+export const VERSION = '1.23.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -104,7 +105,11 @@ async function importPdfs(mode) {
   if (first) openDoc(first, mode || 'view');
 }
 
-function openDoc(id, mode = 'view', page = 0) { openEditor(id, mode, renderRecents, page); }
+// Ausweise (mit gespeicherten Seiten) öffnen eine eigene Ansicht, alles andere den PDF-Editor
+async function openDoc(id, mode = 'view', page = 0) {
+  if (mode === 'view' && !page) { const d = await db.get('docs', id); if (d?.idSides?.length) return openIdView(id); }
+  openEditor(id, mode, renderRecents, page);
+}
 
 // ======================= Start =======================
 const QUICK = [
@@ -424,75 +429,6 @@ async function saveStamped(list) {
     const id = await saveNewDoc(await imagesToPdf(urls, { fit: 'a4' }), `Zeitstempel ${today()} ${nowHM()}.pdf`);
     busy(false); await renderRecents(); toast('Foto mit Zeitstempel gespeichert'); openDoc(id);
   } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); }
-}
-
-// Ausweis: erst prüfen (Kanten nachziehen, Größe wählen), dann Vorder- und Rückseite auf eine A4-Seite
-function idReview(list, cat) {
-  return new Promise(resolve => {
-    let size = settings.get('idSize') || 'large', result = null;
-    const sides = list.slice(0, 2);
-    const lbl = i => sides.length === 1 ? cat.label : i === 0 ? 'Vorderseite' : 'Rückseite';
-    sheet({
-      title: `${cat.label} prüfen`,
-      html: `<div class="idrev">
-        ${sides.map((_, i) => `<button class="idrev-card" data-i="${i}"><img alt=""><span class="idrev-lbl">${lbl(i)}</span><span class="idrev-edit">${icon('fit')} Kanten</span></button>`).join('')}
-        <div class="idrev-size"><span>Größe auf A4</span><div class="seg">
-          <button data-s="large">Groß</button><button data-s="orig">Originalgröße</button></div></div>
-        <button class="btn primary" data-save>Speichern</button></div>`,
-      onMount(el, api) {
-        const paint = i => { const im = el.querySelector(`[data-i="${i}"] img`); im.src = renderScan(sides[i], 'card', 900).toDataURL('image/jpeg', 0.85); };
-        sides.forEach((_, i) => paint(i));
-        const seg = () => el.querySelectorAll('[data-s]').forEach(b => b.classList.toggle('on', b.dataset.s === size));
-        seg();
-        el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { size = b.dataset.s; settings.set('idSize', size); haptic(); seg(); });
-        el.querySelectorAll('[data-i]').forEach(b => b.onclick = async () => {
-          const it = sides[+b.dataset.i], r = await cropEditor(it);
-          if (r) { it.corners = r.corners; it.rot = r.rot; paint(+b.dataset.i); }
-        });
-        el.querySelector('[data-save]').onclick = () => { result = { size }; api.close(); };
-      },
-      onClose: () => resolve(result),
-    });
-  });
-}
-
-async function saveIdCard(list, cat, folder) {
-  const ok = await idReview(list, cat);
-  if (!ok) { list.forEach(it => it.url && URL.revokeObjectURL(it.url)); return; }
-  busy(true, `${cat.label} wird erstellt …`);
-  try {
-    const MM = 10, W = 210 * MM, H = 297 * MM;
-    const c = document.createElement('canvas'); c.width = W; c.height = H;
-    const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
-    const pass = cat.id === 'passport';
-    const [cw0, ch0] = pass ? [125, 88] : [85.6, 54];
-    const n = Math.min(2, list.length);
-    // Groß: so breit wie möglich (beide Seiten passen untereinander), Original: echte Kartengröße wie eine Kopie
-    const gap = 14;
-    const sc = ok.size === 'orig' ? 1 : Math.min(170 / cw0, (H / MM - 40 - gap * (n - 1)) / n / ch0);
-    const w = cw0 * sc * MM, h = ch0 * sc * MM, r = (pass ? 2 : 3.2) * sc * MM, left = (W - w) / 2;
-    let top = ok.size === 'orig' ? 45 * MM : (H - (n * h + (n - 1) * gap * MM)) / 2;
-    for (const it of list.slice(0, 2)) {
-      let img = renderScan(it, 'card', 2000);
-      if (img.height > img.width && !pass) {                // hochkant fotografiert → quer drehen
-        const t = document.createElement('canvas'); t.width = img.height; t.height = img.width;
-        const tx = t.getContext('2d'); tx.translate(t.width, 0); tx.rotate(Math.PI / 2); tx.drawImage(img, 0, 0); img = t;
-      }
-      // 1,2 % Rand abschneiden: Reste von Tisch/Schatten an der Kartenkante verschwinden
-      const ix = img.width * 0.012, iy = img.height * 0.012;
-      x.save(); x.beginPath(); x.roundRect(left, top, w, h, r); x.clip();
-      x.imageSmoothingQuality = 'high'; x.drawImage(img, ix, iy, img.width - 2 * ix, img.height - 2 * iy, left, top, w, h); x.restore();
-      x.strokeStyle = 'rgba(0,0,0,.12)'; x.lineWidth = 2; x.beginPath(); x.roundRect(left, top, w, h, r); x.stroke();
-      top += h + gap * MM;
-      await new Promise(res => setTimeout(res, 0));
-    }
-    const bytes = await imagesToPdf([c.toDataURL('image/jpeg', 0.92)], { margin: 0 });
-    const id = await saveNewDoc(bytes, `${cat.label} ${today()} ${nowHM()}.pdf`, { folder: folder.id, idCat: cat.id });
-    busy(false); await renderRecents();
-    toast(`${cat.label} gespeichert in „${folder.name}“`);
-    list.forEach(it => it.url && setTimeout(() => URL.revokeObjectURL(it.url), 3000));
-    openDoc(id);
-  } catch (e) { console.error(e); busy(false); toast('Ausweis konnte nicht gespeichert werden', true); }
 }
 
 // Ausweis aus dem ID-Ordner heraus aufnehmen
@@ -1115,6 +1051,7 @@ async function init() {
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';
   document.body.classList.add('tab-home'); document.body.dataset.tab = 'home';
+  initIdView({ saveNewDoc, refresh: async () => { await renderRecents(); if (document.body.dataset.tab === 'files') renderFiles(); }, openPdf: id => openEditor(id, 'view', renderRecents) });
   initFiles({ openDoc, docMenu, importDocs: () => importPdfs(), importImages: () => runTool('imgscan'), scan: () => runTool('scan'), captureId: (f, c) => idCapture(f, c) });
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
   document.addEventListener('click', e => {
