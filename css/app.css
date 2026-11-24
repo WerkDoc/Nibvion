@@ -655,3 +655,50 @@ svg.layer .titem.rev { animation: titemIn .45s cubic-bezier(.2,.9,.3,1.2) both; 
 body.cam-open .backdrop { z-index: 140; }
 body.cam-open .sheet { z-index: 141; }
 body.cam-open .toast, body.cam-open #toast { z-index: 150; }
+
+/* ---------- Schwärzen / Formular (Seitenansicht mit Fingereingabe) ---------- */
+.rd-search { display: flex; gap: 8px; }
+.rd-search .btn { flex: none; width: 50px; padding: 0; display: grid; place-items: center; }
+.rd-stage { margin-top: 12px; background: var(--card2); border-radius: 16px; padding: 10px; display: grid; place-items: center; }
+.rd-canvas { display: block; max-width: 100%; max-height: 52vh; width: auto; height: auto; border-radius: 4px; background: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.2); touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.rd-canvas.pop { animation: rdPop .35s var(--ease); }
+@keyframes rdPop { from { opacity: .3; transform: scale(.97); } to { opacity: 1; transform: none; } }
+.rd-nav { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.rd-nav [data-info] { flex: 1; text-align: center; font-weight: 700; font-size: 14px; line-height: 1.25; }
+.rd-nav [data-info] small { display: block; font-weight: 500; font-size: 12px; color: var(--text2); }
+.rd-nb { width: 40px; height: 40px; border-radius: 12px; background: var(--card2); display: grid; place-items: center; color: var(--text); transition: opacity .2s, transform .2s var(--spring); }
+.rd-nb:active { transform: scale(.9); }
+.rd-nb:disabled { opacity: .35; }
+.rd-nb .ico { width: 20px; height: 20px; }
+.rd-note { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 11px 12px; border-radius: 12px; background: var(--accent-soft); font-size: 13px; line-height: 1.4; color: var(--text2); }
+.rd-note .ico { flex: none; width: 18px; height: 18px; color: var(--accent); margin-top: 1px; }
+.rd-note b { color: var(--text); }
+.fm-canvas { touch-action: manipulation; }
+.fm-panel { margin-top: 12px; padding: 12px; border-radius: 16px; background: var(--card); border: 1px solid var(--line2); animation: fadeUp .3s var(--ease) both; }
+.fm-lbl { font-size: 13px; font-weight: 700; color: var(--accent); margin: 0 2px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm-hint { color: var(--text2); font-size: 14px; margin: 0 2px; line-height: 1.4; }
+.fm-btns { display: flex; gap: 8px; margin-top: 10px; }
+.fm-btns .btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; }
+.fm-btns .btn .ico { width: 17px; height: 17px; }
+.fm-btns .btn:disabled { opacity: .4; }
+.fm-opts { flex-wrap: wrap; overflow: visible; padding-top: 0; }
+
+/* ---------- Aufteilen ---------- */
+.sp-step { display: flex; align-items: center; gap: 4px; background: var(--card2); border-radius: 12px; padding: 3px; }
+.sp-step button { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: var(--text); }
+.sp-step button:active { background: var(--card); }
+.sp-step .ico { width: 18px; height: 18px; }
+.sp-step b { min-width: 28px; text-align: center; font-size: 16px; }
+.sp-sum { margin: 14px 2px 0; font-size: 14px; color: var(--text2); line-height: 1.9; }
+.sp-sum b { color: var(--text); }
+.sp-err { color: var(--danger); font-weight: 600; }
+.sp-tag { display: inline-block; margin: 0 4px 0 0; padding: 1px 8px; border-radius: 20px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 12.5px; line-height: 1.6; }
+.sp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; max-height: 44vh; overflow-y: auto; padding: 4px 2px; }
+.sp-pg { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; transition: transform .25s var(--spring); }
+.sp-pg:active { transform: scale(.94); }
+.sp-pg .pg-img { border: 2.5px solid transparent; transition: border-color .2s, opacity .2s; }
+.sp-pg.on .pg-img { border-color: var(--accent); }
+.sp-n { font-size: 12px; font-weight: 600; color: var(--text2); }
+.sp-ck { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: var(--grad); color: #fff; display: grid; place-items: center; transform: scale(0); transition: transform .25s var(--spring); box-shadow: 0 2px 8px rgba(255,106,91,.45); }
+.sp-ck .ico { width: 14px; height: 14px; stroke-width: 3; }
+.sp-pg.on .sp-ck { transform: scale(1); }

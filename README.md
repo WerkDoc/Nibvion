@@ -9,7 +9,9 @@ Eigene PDF-App für RepairMobile – ohne Werbung, ohne Abo, alles lokal auf dem
 - **Kommentieren** – Markieren, Unterstreichen, Durchstreichen, Notizen
 - **Zeichnen** – Stift, Marker, Radierer
 - **Füllen & unterschreiben** – Unterschrift (gespeichert), Text, Datum, Haken/Kreuz, Stempel (Vorlagen, eigene Text-Stempel, Firmenstempel-Bild)
+- **Formular ausfüllen** – echte PDF-Formularfelder (Text, Kästchen, Optionsfelder, Auswahllisten) antippen und ausfüllen; bleibt ausfüllbar oder wird fixiert
 - **Seiten verwalten** – drehen, sortieren, löschen, leere Seite
+- **Aufteilen** – jede Seite einzeln, alle X Seiten, eigene Bereiche („1-3, 4-6“) oder ausgewählte Seiten herausziehen
 - **Erstellen** – Scannen mit Kamera, Bilder → PDF, PDFs zusammenfügen, leeres PDF
 - **Konvertieren** – PDF → Bilder, **Word → PDF** (.docx), **Excel → PDF** (.xlsx, .xlsm, .xls, .ods, .csv – Blätter wählbar, Ausrichtung, Gitternetz), **PDF → Word** (bearbeitbare .docx: Absätze, Schriften, Einzüge, Spalten per Tabstopp, Bilder, Kopf-/Fußzeilen mit Seitenzahl; Scans als Bild)
   - Umwandlung komplett auf dem Gerät; Seiten werden als Bild gesetzt, mit unsichtbarer Textebene (Text bleibt durchsuch- und markierbar)
@@ -18,6 +20,7 @@ Eigene PDF-App für RepairMobile – ohne Werbung, ohne Abo, alles lokal auf dem
 - **Favoriten** – Herz im ⋯-Menü, Filter „nur Favoriten“ in der Liste
 - **Wasserzeichen** – Text (VERTRAULICH, KOPIE …), Farbe, Deckkraft, Größe, diagonal/waagerecht, mit Vorschau
 - **Komprimieren** – Fotos/Scans in der PDF verkleinern (Standard/Stark/Leicht), Text bleibt scharf
+- **Schwärzen** – Bereiche aufziehen oder per Suche (Begriff, E-Mails, Telefon, IBAN, Datum) markieren; betroffene Seiten werden neu als Bild aufgebaut, der Inhalt darunter ist endgültig entfernt
 - **Passwortschutz** – AES-256 beim Teilen/Sichern; geschützte PDFs lassen sich mit Passwort importieren (entsperrt)
 
 ## Installation (iPhone)
