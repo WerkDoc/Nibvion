@@ -15,6 +15,9 @@ export async function createBackup(version) {
     const f = await db.get('files', d.id);
     if (!f) continue;
     zip.file(`pdf/${d.id}.pdf`, f.data);
+    for (const k of (d.idSides || []).flatMap((_, i) => [`${d.id}#s${i}`, `${d.id}#o${i}`])) {   // Ausweis-Fotos
+      const x = await db.get('files', k); if (x) zip.file(`id/${encodeURIComponent(k)}`, x.data);
+    }
     count++;
   }
   const meta = {
@@ -57,6 +60,9 @@ export async function restoreBackup({ zip, meta }) {
     if (!pf) continue;
     const data = await pf.async('arraybuffer');
     await db.put('files', { id: d.id, data });
+    for (const k of (d.idSides || []).flatMap((_, i) => [`${d.id}#s${i}`, `${d.id}#o${i}`])) {
+      const x = zip.file(`id/${encodeURIComponent(k)}`); if (x) await db.put('files', { id: k, data: await x.async('arraybuffer') });
+    }
     await db.put('docs', d);
     docs++;
   }

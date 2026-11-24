@@ -190,6 +190,31 @@ export async function recognizeCanvases(canvases, { onProgress } = {}) {
 }
 
 /**
+ * Wörter mit Position (für Ausweise: Text antippen, Felder ausfüllen).
+ * Je Bild: { words: [{ t, b: [x0, y0, x1, y1] normiert }], lines: [Text …] }
+ */
+export async function recognizeWords(canvases, { onProgress } = {}) {
+  const worker = await makeWorker(m => { if (m.status === 'recognizing text' && onProgress) onProgress(m.progress); });
+  try {
+    const out = [];
+    for (const c of canvases) {
+      await tick();
+      const { data } = await worker.recognize(c, {}, { blocks: true, text: true });
+      const words = [], lines = [];
+      for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
+        lines.push((l.text || '').trim());
+        for (const w of l.words || []) {
+          const t = (w.text || '').trim(); if (!t || w.confidence < 35) continue;
+          words.push({ t, b: [w.bbox.x0 / c.width, w.bbox.y0 / c.height, w.bbox.x1 / c.width, w.bbox.y1 / c.height] });
+        }
+      }
+      out.push({ words, lines });
+    }
+    return out;
+  } finally { try { await worker.terminate(); } catch {} }
+}
+
+/**
  * Text einer PDF: Seiten mit Textebene direkt, gescannte Seiten per Texterkennung.
  */
 export async function extractPdfText(bytes, { onProgress } = {}) {
