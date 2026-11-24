@@ -460,32 +460,78 @@ export function detectCard(img, g, ratio = 85.6 / 54) {
         offs.push(t); score.push(best); tans.push(bt);
       }
       const M = Math.max(...score);
-      if (M < 18) return null;                                  // keine klare Kante
-      // äußerste starke Linie (Spitze), nicht der innere Magnetstreifen
-      const idx = outward < 0 ? [...score.keys()] : [...score.keys()].reverse();
-      for (const i of idx) {
-        if (score[i] < M * 0.62) continue;
-        let j = i;                                              // auf die Spitze klettern
-        while (score[j + 1] !== undefined && score[j + 1] > score[j]) j++;
-        while (score[j - 1] !== undefined && score[j - 1] > score[j]) j--;
-        return { o: base + offs[j], tn: tans[j] };
+      if (M < 18) return [];                                    // keine klare Kante
+      // Kandidaten: die stärksten Spitzen (Kartenkante, Magnetstreifen, Tischkante …)
+      const peaks = [];
+      for (let i = 0; i < score.length; i++) {
+        if (score[i] < M * 0.35) continue;
+        let isMax = true;
+        for (let j = Math.max(0, i - 3); j <= Math.min(score.length - 1, i + 3); j++) if (score[j] > score[i]) { isMax = false; break; }
+        if (isMax && !peaks.some(p => Math.abs(p.i - i) < 4)) peaks.push({ i, v: score[i] / M });
       }
-      return null;
+      return peaks.sort((x, y) => y.v - x.v).slice(0, 4).map(p => ({ o: base + offs[p.i], tn: tans[p.i], v: p.v, out: offs[p.i] * outward }));
     };
-    const top = side(true, T, -1), bot = side(true, B, 1), lef = side(false, L, -1), rig = side(false, R, 1);
-    if (!top || !bot || !lef || !rig) return null;
+    const tops = side(true, T, -1), bots = side(true, B, 1), lefs = side(false, L, -1), rigs = side(false, R, 1);
+    if (!tops.length || !bots.length || !lefs.length || !rigs.length) return null;
     // Schnittpunkte: y = A + Bh·x, x = C + Dv·y
     const meet = (hl, vl) => {
       const A = hl.o - cxg * hl.tn, Bh = hl.tn, C = vl.o - cyg * vl.tn, Dv = vl.tn;
       const x = (C + Dv * A) / (1 - Dv * Bh); return [x, A + Bh * x];
     };
-    const Q = [meet(top, lef), meet(top, rig), meet(bot, rig), meet(bot, lef)];
     const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-    const qw = (dist(Q[0], Q[1]) + dist(Q[3], Q[2])) / 2, qh = (dist(Q[0], Q[3]) + dist(Q[1], Q[2])) / 2;
-    const r = qw / qh;
-    if (!(r > ratio * 0.8 && r < ratio * 1.25) || qw < gw * 0.55) return null;   // passt nicht zur Kartenform
-    return Q.map(([x, y]) => [Math.min(1, Math.max(0, (x / k + rx) / iw)), Math.min(1, Math.max(0, (y / k + ry) / ih))]);
+    // Beste Kombination: starke Kanten UND Kartenform (Seitenverhältnis) – ein Magnetstreifen
+    // oder eine Tischkante verschiebt das Verhältnis und verliert deshalb.
+    let best = null, bestS = 0;
+    for (const t of tops) for (const bo of bots) for (const l of lefs) for (const ri of rigs) {
+      const Q = [meet(t, l), meet(t, ri), meet(bo, ri), meet(bo, l)];
+      const qw = (dist(Q[0], Q[1]) + dist(Q[3], Q[2])) / 2, qh = (dist(Q[0], Q[3]) + dist(Q[1], Q[2])) / 2;
+      if (qw < gw * 0.45 || qh < 8) continue;
+      const dr = Math.log(qw / qh / ratio);
+      const sc = (t.v + bo.v + l.v + ri.v) * Math.exp(-((dr / 0.06) ** 2))
+        * (1 + 0.04 * Math.sign(t.out + bo.out + l.out + ri.out));   // bei Gleichstand leicht nach außen
+      if (sc > bestS) { bestS = sc; best = Q; }
+    }
+    if (!best || bestS < 1.6) return null;                      // passt nicht zur Kartenform
+    return best.map(([x, y]) => [Math.min(1, Math.max(0, (x / k + rx) / iw)), Math.min(1, Math.max(0, (y / k + ry) / ih))]);
   } catch (e) { console.warn(e); return null; }
+}
+
+// Zweiter Durchgang: die gefundene Karte als Schablone – Kanten werden dann über die volle
+// Kartenlänge gemessen und nicht von Tischkanten neben der Karte beeinflusst
+export function refineCard(img, Q, r) {
+  const xs = Q.map(p => p[0]), ys = Q.map(p => p[1]);
+  const g = [[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)], [Math.min(...xs), Math.max(...ys)]];
+  return detectCard(img, g, r) || Q;
+}
+
+// Karte im Live-Rahmen: suchen und verfeinern
+export function cardInGuide(img, g, r) { const c = detectCard(img, g, r); return c && refineCard(img, c, r); }
+
+// Karte auf einem Foto aus der Mediathek (Position unbekannt). Die Papier-Erkennung findet bei
+// Ausweisen oft nur den hellen, farblosen Teil (Foto-Seite oder Kopfzeile fehlt dann). Deshalb:
+// Kartenkanten um mehrere Startrahmen suchen und den plausibelsten Treffer nehmen.
+export function cardCorners(img, r = 85.6 / 54) {
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  const box = (cx, cy, w) => {                       // Rahmen mit Kartenform, w = Breite (normiert)
+    let h = w * iw / r / ih;
+    if (h > 0.96) { h = 0.96; w = h * ih * r / iw; }
+    return [[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx + w / 2, cy + h / 2], [cx - w / 2, cy + h / 2]];
+  };
+  const guides = [box(0.5, 0.5, 0.92), box(0.5, 0.5, 0.72), box(0.5, 0.5, 0.52)];
+  const q = detectQuad(img, 480);
+  if (q) {                                           // Papier-Treffer nur als Startpunkt (Mitte/Breite)
+    const xs = q.map(p => p[0]), ys = q.map(p => p[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    guides.unshift(box(cx, cy, Math.max(...xs) - Math.min(...xs)));
+  }
+  const area = Q => Math.abs(Q.reduce((s, p, i) => { const n = Q[(i + 1) % 4]; return s + p[0] * iw * n[1] * ih - n[0] * iw * p[1] * ih; }, 0)) / 2;
+  let best = null, bestA = 0;
+  for (const g of guides) {
+    const c = detectCard(img, g, r);
+    if (c && area(c) > bestA) { best = c; bestA = area(c); }   // größte plausible Karte gewinnt
+  }
+  if (best) return refineCard(img, best, r);
+  return q || FULL.map(p => [...p]);
 }
 
 // ---------- Echtes Seitenverhältnis ----------

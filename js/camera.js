@@ -5,7 +5,7 @@
 // list.mode (gewählter Modus, per Wischen umschaltbar) und list.idType (Art des Ausweises).
 import { icon } from './icons.js';
 import { haptic, toast, pickFiles, busy as showBusy, confirmDlg } from './ui.js';
-import { detectQuad, detectCorners, detectCard, loadFileImage, FULL, render, warp } from './scanner.js';
+import { detectQuad, detectCorners, cardInGuide, cardCorners, loadFileImage, FULL, render, warp } from './scanner.js';
 
 export const cameraSupported = () => !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
@@ -62,16 +62,7 @@ const two = n => String(n).padStart(2, '0');
 const WD = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
 const stampText = (d = new Date()) => ({ time: `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`, date: `${WD[d.getDay()]} | ${two(d.getDate())}.${two(d.getMonth() + 1)}.${String(d.getFullYear()).slice(2)}` });
 
-// Karte auf einem Foto aus der Mediathek: Papier-Erkennung, sonst Kartenkanten um die Bildmitte
-export function cardCorners(img, r = 85.6 / 54) {
-  const q = detectQuad(img, 480);
-  if (q) return q;
-  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
-  let w = 0.7, h = w * iw / r / ih;
-  if (h > 0.7) { h = 0.7; w = h * ih * r / iw; }
-  const g = [[0.5 - w / 2, 0.5 - h / 2], [0.5 + w / 2, 0.5 - h / 2], [0.5 + w / 2, 0.5 + h / 2], [0.5 - w / 2, 0.5 + h / 2]];
-  return detectCard(img, g, r) || FULL.map(p => [...p]);
-}
+export { cardCorners };
 
 export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: startId = 'idcard', lockMode = false } = {}) {
   return new Promise(async resolve => {
@@ -211,7 +202,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
     });
     // Wischen über das Kamerabild wechselt den Modus
     let sx = null, sy = 0;
-    stage.addEventListener('touchstart', e => { if (e.touches.length === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; } }, { passive: true });
+    stage.addEventListener('touchstart', e => { if (e.target.closest('.cam-idtypes, .cam-qrres, button')) { sx = null; return; } if (e.touches.length === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; } }, { passive: true });
     stage.addEventListener('touchend', e => {
       if (sx == null) return;
       const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; sx = null;
@@ -333,7 +324,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
         const g = guide.getBoundingClientRect(), st = stage.getBoundingClientRect();
         const gq = [[g.left, g.top], [g.right, g.top], [g.right, g.bottom], [g.left, g.bottom]].map(([x, y]) => toVideo([x - st.left, y - st.top]));
         // 1. Kartenkanten (farbunabhängig), 2. Papier-Erkennung, wenn nah an der Schablone, 3. Schablone
-        const cq = detectCard(c, gq, idt().r);
+        const cq = cardInGuide(c, gq, idt().r);
         if (cq) corners = cq;
         else if (!corners || moved(corners, gq) > 0.12) corners = gq;
       }
