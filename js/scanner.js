@@ -95,27 +95,42 @@ export function detectQuad(img, maxSide = 360) {
     const runs = [[b, t0], [b, t0 + 14], [b, t0 + 28], [nb, t1], [nb, t1 - 15], [rg, 128],
       [lumB, t2, 1], [lumB, t2 + 20, 1], [lumB, t2 + 40, 1],
       [ccB, t3, 2], [ccB, Math.max(t3, 175), 2]];
-    for (const [src, t, lum] of runs) {
+    // Erodieren trennt dünne Brücken: Blatt liegt auf Klemmbrett und berührt daneben liegendes
+    // Papier/Kalender nur über wenige Pixel → ohne Erodieren verschmilzt alles zu einer Fläche
+    const er = Math.max(2, Math.round(Math.max(w, h) * 0.011));
+    const mask = new Float32Array(N);
+    for (const [src, t, lum] of runs) for (const e of [0, er]) {
+      let pass = src, thr = t;
+      if (e) {
+        for (let i = 0; i < N; i++) mask[i] = src[i] > t ? 1 : 0;
+        pass = boxBlur(mask, w, h, e); thr = 0.995;
+      }
       lab.fill(0); const comps = [];
       let cur = 0;
       for (let i = 0; i < N; i++) {
-        if (lab[i] || src[i] <= t) continue;
+        if (lab[i] || pass[i] <= thr) continue;
         cur++; let sp = 0, n = 0; stack[sp++] = i; lab[i] = cur;
         while (sp) {
           const q = stack[--sp]; n++;
           const x = q % w;
-          if (x > 0 && !lab[q - 1] && src[q - 1] > t) { lab[q - 1] = cur; stack[sp++] = q - 1; }
-          if (x < w - 1 && !lab[q + 1] && src[q + 1] > t) { lab[q + 1] = cur; stack[sp++] = q + 1; }
-          if (q >= w && !lab[q - w] && src[q - w] > t) { lab[q - w] = cur; stack[sp++] = q - w; }
-          if (q < N - w && !lab[q + w] && src[q + w] > t) { lab[q + w] = cur; stack[sp++] = q + w; }
+          if (x > 0 && !lab[q - 1] && pass[q - 1] > thr) { lab[q - 1] = cur; stack[sp++] = q - 1; }
+          if (x < w - 1 && !lab[q + 1] && pass[q + 1] > thr) { lab[q + 1] = cur; stack[sp++] = q + 1; }
+          if (q >= w && !lab[q - w] && pass[q - w] > thr) { lab[q - w] = cur; stack[sp++] = q - w; }
+          if (q < N - w && !lab[q + w] && pass[q + w] > thr) { lab[q + w] = cur; stack[sp++] = q + w; }
         }
-        if (n > N * 0.06) comps.push([cur, n]);
+        if (n > N * 0.05) comps.push([cur, n]);
       }
       comps.sort((x, y) => y[1] - x[1]);
-      for (const [id, n] of comps.slice(0, 3)) {
-        if (n > N * 0.97) continue;
-        const quad = hullQuad(lab, id, w, h);
+      for (const [id, n0] of comps.slice(0, 3)) {
+        if (n0 > N * 0.97) continue;
+        let quad = hullQuad(lab, id, w, h);
         if (!quad) continue;
+        let n = n0;
+        if (e) {                                   // Erosion rückgängig: Kanten wieder nach außen schieben
+          const big = growQuad(quad, e + 0.5);
+          if (!big) continue;
+          n += (polyArea(big) - polyArea(quad)) * 0.98; quad = big;
+        }
         const qa = polyArea(quad);
         if (qa < N * 0.1) continue;
         const fill = Math.min(1, n / qa);
@@ -261,6 +276,24 @@ function hullQuad(lab, id, w, h) {
     if (j1 >= 0 && j2 >= 0 && m1 + m2 > best) { best = m1 + m2; bq = [H[i], H[j1], H[k], H[j2]]; }
   }
   return bq && orderQuad(bq);
+}
+
+// Viereck um d Pixel nach außen vergrößern (jede Kante parallel verschieben, Ecken neu schneiden)
+function growQuad(q, dd) {
+  const cx = q.reduce((s, p) => s + p[0], 0) / 4, cy = q.reduce((s, p) => s + p[1], 0) / 4;
+  const lines = q.map((p, i) => {
+    const [x1, y1] = p, [x2, y2] = q[(i + 1) % 4], L = Math.hypot(x2 - x1, y2 - y1) || 1;
+    let nx = -(y2 - y1) / L, ny = (x2 - x1) / L;
+    if ((cx - x1) * nx + (cy - y1) * ny > 0) { nx = -nx; ny = -ny; }   // nach außen
+    return { mx: x1 + nx * dd, my: y1 + ny * dd, dx: (x2 - x1) / L, dy: (y2 - y1) / L };
+  });
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    const p = intersect(lines[(i + 3) % 4], lines[i]);
+    if (!p || Math.hypot(p[0] - q[i][0], p[1] - q[i][1]) > dd * 6) return null;
+    out.push(p);
+  }
+  return out;
 }
 
 function orderQuad(q) {

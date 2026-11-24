@@ -1,11 +1,11 @@
 // Nibvion Service Worker – offline-fähig
-const VERSION = 'nibvion-v1.20.0';
+const VERSION = 'nibvion-v1.21.0';
 // Bei Änderungen an Dateien in BIG_PATHS den Namen hochzählen
 const BIG = 'nibvion-big-1';
 const BIG_PATHS = ['/lib/models/', '/lib/ort/', '/lib/tesseract/'];
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/editor.js', 'js/pdfcore.js', 'js/ui.js', 'js/db.js', 'js/icons.js', 'js/sign.js', 'js/assets.js', 'js/settings.js', 'js/convert.js', 'js/pdf2word.js', 'js/tools.js', 'js/scanner.js', 'js/search.js', 'js/backup.js', 'js/ocr.js', 'js/camera.js', 'js/textview.js', 'js/scanreview.js', 'js/scan2office.js', 'js/trash.js', 'js/ai.js', 'js/aienhance.js', 'js/online.js', 'js/files.js',
+  'js/app.js', 'js/editor.js', 'js/pdfcore.js', 'js/ui.js', 'js/db.js', 'js/icons.js', 'js/sign.js', 'js/assets.js', 'js/settings.js', 'js/convert.js', 'js/pdf2word.js', 'js/tools.js', 'js/scanner.js', 'js/search.js', 'js/backup.js', 'js/ocr.js', 'js/camera.js', 'js/textview.js', 'js/scanreview.js', 'js/scan2office.js', 'js/trash.js', 'js/ai.js', 'js/aienhance.js', 'js/online.js', 'js/files.js', 'js/redact.js', 'js/forms.js', 'js/split.js',
   'lib/pdf.min.js', 'lib/pdf.worker.min.js', 'lib/pdf-lib.min.js',
   'lib/jszip.min.js', 'lib/docx-preview.min.js', 'lib/html2canvas.min.js', 'lib/exceljs.min.js', 'lib/xlsx.core.min.js', 'lib/pdf-lib-crypt.esm.min.js',
   'icons/logo.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png',

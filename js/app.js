@@ -16,7 +16,7 @@ import { settings, applyTheme } from './settings.js';
 import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.20.0';
+export const VERSION = '1.21.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -167,6 +167,9 @@ function docMenu(d) {
       ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
         ['fav', d.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen', d.fav ? 'heartFill' : 'heart', 'c-red'],
         ['move', 'In Ordner verschieben', 'folderMove', 'c-green'],
+        ['form', 'Formular ausfüllen', 'form', 'c-blue'],
+        ['split', 'Aufteilen', 'split', 'c-teal'],
+        ['redact', 'Schwärzen', 'redact', 'c-gray'],
         ['ocr', 'Text erkennen (OCR)', 'scan', 'c-teal'],
         ['text', 'Text extrahieren', 'textScan', 'c-blue'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
@@ -186,6 +189,9 @@ function docMenu(d) {
         if (a === 'ocr') return ocrDoc(d);
         if (a === 'text') return textFromDoc(d);
         if (a === 'protect') return protectSheet(d);
+        if (a === 'form') return formDoc(d);
+        if (a === 'split') return splitDoc(d);
+        if (a === 'redact') return redactDoc(d);
         if (a === 'share') {
           if (d.objects?.length) { openDoc(d.id); return toast('Zum Teilen mit Änderungen: ⋯ → Teilen'); }
           const f = await db.get('files', d.id); return shareBytes(new Uint8Array(f.data), d.name);
@@ -226,6 +232,7 @@ const TOOL_GROUPS = [
     { id: 'comment', label: 'Kommentieren', sub: 'Markieren, unterstreichen, Notizen', icon: 'comment', c: 'c-amber' },
     { id: 'draw', label: 'Zeichnen', sub: 'Stift, Marker, Radierer', icon: 'draw', c: 'c-violet' },
     { id: 'sign', label: 'Füllen & unterschreiben', sub: 'Unterschrift, Datum, Haken, Stempel', icon: 'sign', c: 'c-green' },
+    { id: 'form', label: 'Formular ausfüllen', sub: 'Felder in PDF-Formularen ausfüllen', icon: 'form', c: 'c-blue' },
     { id: 'pages', label: 'Seiten verwalten', sub: 'Drehen, sortieren, löschen', icon: 'pages', c: 'c-teal' },
   ] },
   { title: 'Erstellen', items: [
@@ -233,6 +240,7 @@ const TOOL_GROUPS = [
     { id: 'imgscan', label: 'Bild scannen', sub: 'Foto aus der Mediathek: Ränder erkennen, gerade ziehen', icon: 'fit', c: 'c-teal' },
     { id: 'img2pdf', label: 'Bilder → PDF', sub: 'Fotos & Screenshots zusammenfassen', icon: 'images', c: 'c-blue' },
     { id: 'merge', label: 'PDFs zusammenfügen', sub: 'Mehrere PDFs zu einem', icon: 'merge', c: 'c-orange' },
+    { id: 'split', label: 'PDF aufteilen', sub: 'Seiten als eigene PDFs speichern', icon: 'split', c: 'c-teal' },
     { id: 'blank', label: 'Leeres PDF', sub: 'A4-Seite zum Ausfüllen', icon: 'filePlus', c: 'c-gray' },
   ] },
   { title: 'Konvertieren', items: [
@@ -248,6 +256,7 @@ const TOOL_GROUPS = [
     { id: 'text', label: 'Text extrahieren', sub: 'Text kopieren, teilen oder als .txt sichern', icon: 'textScan', c: 'c-blue' },
     { id: 'compress', label: 'Komprimieren', sub: 'PDF-Datei verkleinern', icon: 'compress', c: 'c-green' },
     { id: 'wm', label: 'Wasserzeichen', sub: 'z. B. VERTRAULICH, KOPIE, ENTWURF', icon: 'drop', c: 'c-violet' },
+    { id: 'redact', label: 'Schwärzen', sub: 'Inhalte endgültig entfernen – auch per Suche', icon: 'redact', c: 'c-gray' },
     { id: 'protect', label: 'Mit Passwort schützen', sub: 'Nur mit Passwort zu öffnen', icon: 'shieldLock', c: 'c-orange' },
   ] },
   { title: 'Vorlagen', items: [
@@ -289,6 +298,9 @@ function runTool(id) {
     case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
     case 'wm': return docPicker('Wasserzeichen', 'Text quer über alle Seiten, z. B. VERTRAULICH oder KOPIE.', watermarkSheet);
     case 'protect': return docPicker('Mit Passwort schützen', 'Die PDF lässt sich danach nur mit Passwort öffnen.', protectSheet);
+    case 'redact': return docPicker('Schwärzen', 'Namen, Adressen, Kontonummern … endgültig aus der PDF entfernen – nicht nur abdecken.', redactDoc);
+    case 'form': return docPicker('Formular ausfüllen', 'Für PDFs mit ausfüllbaren Feldern (Anträge, Verträge, Formulare).', formDoc);
+    case 'split': return docPicker('PDF aufteilen', 'Seiten oder Bereiche als eigene PDFs speichern.', splitDoc);
     case 'sigs': return signatureSheet(null);
     case 'stamps': return stampSheet(null);
     default: toast('Kommt in einem der nächsten Updates');
@@ -780,6 +792,17 @@ function compressSheet(d) {
     },
   });
 }
+
+// ----- Schwärzen / Formular / Aufteilen (eigene Module, erst bei Bedarf geladen) -----
+const toolCtx = () => ({ docBytes, storeResult, saveNewDoc, renderRecents, openDoc });
+async function lazyTool(mod, fn, d) {
+  if (!d) return;
+  try { const m = await import(mod); return m[fn](d, toolCtx()); }
+  catch (e) { console.error(e); busy(false); toast('Funktion konnte nicht geladen werden', true); }
+}
+const redactDoc = d => lazyTool('./redact.js', 'redactSheet', d);
+const formDoc = d => lazyTool('./forms.js', 'formSheet', d);
+const splitDoc = d => lazyTool('./split.js', 'splitSheet', d);
 
 // ----- Passwort -----
 function protectSheet(d) {

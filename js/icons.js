@@ -87,6 +87,9 @@ const P = {
   drop: '<path d="M12 3s6 6.4 6 11a6 6 0 0 1-12 0c0-4.6 6-11 6-11z"/><path d="M9 14.5a3 3 0 0 0 3 3"/>',
   shieldLock: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10.2 11V9.6a1.8 1.8 0 0 1 3.6 0V11"/>',
   unlock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.7-1.5"/>',
+  redact: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><rect x="7" y="11" width="10" height="3" rx=".6" fill="currentColor"/><path d="M7 17.5h5"/>',
+  split: '<rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/><path d="M12 2v20" stroke-dasharray="2 2.4"/>',
+  form: '<rect x="3" y="3" width="18" height="18" rx="3"/><rect x="6.5" y="7" width="11" height="3.2" rx=".8"/><rect x="6.5" y="13.5" width="3.5" height="3.5" rx=".8"/><path d="m7.3 15.2 1 1 1.6-2M12.5 15.3h5"/>',
 };
 
 export function icon(name, cls = '') {
