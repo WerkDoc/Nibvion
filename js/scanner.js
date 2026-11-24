@@ -408,6 +408,86 @@ function squareToQuad(p) {
   return [x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h];
 }
 
+// ---------- Karte (Ausweis, Bankkarte) im Rahmen finden ----------
+// Karten sind oft farbig (rot, blau) – die Papier-Erkennung oben sucht helle, farblose Flächen
+// und findet sie deshalb nicht. Hier zählen nur Kanten (Farbsprünge in allen Kanälen):
+// Für jede Seite der Schablone wird in einem Band um die Schablonenkante die gerade Linie
+// mit dem stärksten Sprung gesucht (leicht schräg erlaubt). Liegen innen weitere starke Linien
+// (Magnetstreifen, Unterschriftsfeld), gewinnt die äußerste. g = Schablone als normierte Ecken.
+export function detectCard(img, g, ratio = 85.6 / 54) {
+  try {
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    const gx0 = Math.min(g[0][0], g[3][0]) * iw, gx1 = Math.max(g[1][0], g[2][0]) * iw;
+    const gy0 = Math.min(g[0][1], g[1][1]) * ih, gy1 = Math.max(g[2][1], g[3][1]) * ih;
+    const GW = gx1 - gx0, GH = gy1 - gy0, PADX = GW * 0.24, PADY = GH * 0.3;
+    const rx = Math.max(0, gx0 - PADX), ry = Math.max(0, gy0 - PADY);
+    const rw = Math.min(iw, gx1 + PADX) - rx, rh = Math.min(ih, gy1 + PADY) - ry;
+    const k = Math.min(1, 640 / Math.max(rw, rh)), w = Math.max(16, Math.round(rw * k)), h = Math.max(16, Math.round(rh * k));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const cx = c.getContext('2d', { willReadFrequently: true }); cx.imageSmoothingQuality = 'high';
+    cx.drawImage(img, rx, ry, rw, rh, 0, 0, w, h);
+    const d = cx.getImageData(0, 0, w, h).data, N = w * h;
+    // leicht weichzeichnen (Rauschen, Kartenstruktur), dann Sprünge je Richtung
+    const ch = [0, 1, 2].map(o => { const a = new Float32Array(N); for (let i = 0; i < N; i++) a[i] = d[i * 4 + o]; return boxBlur(a, w, h, 1); });
+    const GX = new Float32Array(N), GY = new Float32Array(N);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x; let sx = 0, sy = 0;
+      for (const a of ch) { sx += Math.abs(a[i + 1] - a[i - 1]); sy += Math.abs(a[i + w] - a[i - w]); }
+      GX[i] = sx; GY[i] = sy;
+    }
+    const L = (gx0 - rx) * k, T = (gy0 - ry) * k, R = (gx1 - rx) * k, B = (gy1 - ry) * k;
+    const cxg = (L + R) / 2, cyg = (T + B) / 2, gw = R - L, gh = B - T;
+    const angles = []; for (let a = -5; a <= 5.001; a += 0.5) angles.push(Math.tan(a * Math.PI / 180));
+    // Eine Seite suchen. horiz: Linie y = base + t + (x - cxg)·tan; sonst x = base + t + (y - cyg)·tan
+    const side = (horiz, base, outward) => {
+      const span = horiz ? gw : gh, band = (horiz ? gh : gw) * 0.26, Gm = horiz ? GY : GX;
+      const s0 = (horiz ? L : T) + span * 0.12, s1 = (horiz ? R : B) - span * 0.12, step = Math.max(1, span / 160);
+      const mid = horiz ? cxg : cyg;
+      const offs = [], score = [], tans = [];
+      for (let t = -band; t <= band; t += 1) {
+        let best = -1, bt = 0;
+        for (const tn of angles) {
+          let sum = 0, n = 0;
+          for (let s = s0; s <= s1; s += step) {
+            const q = base + t + (s - mid) * tn;
+            const x = Math.round(horiz ? s : q), y = Math.round(horiz ? q : s);
+            if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) continue;
+            sum += Gm[y * w + x]; n++;
+          }
+          const v = n > span / step * 0.6 ? sum / n : 0;
+          if (v > best) { best = v; bt = tn; }
+        }
+        offs.push(t); score.push(best); tans.push(bt);
+      }
+      const M = Math.max(...score);
+      if (M < 18) return null;                                  // keine klare Kante
+      // äußerste starke Linie (Spitze), nicht der innere Magnetstreifen
+      const idx = outward < 0 ? [...score.keys()] : [...score.keys()].reverse();
+      for (const i of idx) {
+        if (score[i] < M * 0.62) continue;
+        let j = i;                                              // auf die Spitze klettern
+        while (score[j + 1] !== undefined && score[j + 1] > score[j]) j++;
+        while (score[j - 1] !== undefined && score[j - 1] > score[j]) j--;
+        return { o: base + offs[j], tn: tans[j] };
+      }
+      return null;
+    };
+    const top = side(true, T, -1), bot = side(true, B, 1), lef = side(false, L, -1), rig = side(false, R, 1);
+    if (!top || !bot || !lef || !rig) return null;
+    // Schnittpunkte: y = A + Bh·x, x = C + Dv·y
+    const meet = (hl, vl) => {
+      const A = hl.o - cxg * hl.tn, Bh = hl.tn, C = vl.o - cyg * vl.tn, Dv = vl.tn;
+      const x = (C + Dv * A) / (1 - Dv * Bh); return [x, A + Bh * x];
+    };
+    const Q = [meet(top, lef), meet(top, rig), meet(bot, rig), meet(bot, lef)];
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const qw = (dist(Q[0], Q[1]) + dist(Q[3], Q[2])) / 2, qh = (dist(Q[0], Q[3]) + dist(Q[1], Q[2])) / 2;
+    const r = qw / qh;
+    if (!(r > ratio * 0.8 && r < ratio * 1.25) || qw < gw * 0.55) return null;   // passt nicht zur Kartenform
+    return Q.map(([x, y]) => [Math.min(1, Math.max(0, (x / k + rx) / iw)), Math.min(1, Math.max(0, (y / k + ry) / ih))]);
+  } catch (e) { console.warn(e); return null; }
+}
+
 // ---------- Echtes Seitenverhältnis ----------
 // Aus den 4 Ecken im Foto und der Kamerageometrie (Zhang & He, „Whiteboard Scanning“)
 // wird das wahre Breite/Höhe-Verhältnis des Blatts berechnet. Ohne das wirken schräg
@@ -747,13 +827,42 @@ function cleanBorders(d, w, h, fill) {
   }
 }
 
+// Karten (Ausweis, Bankkarte): Foto-Look statt Papier-Weiß. Nur Tonwerte spreizen,
+// Farbstich leicht ausgleichen, sanfter Kontrast – keine Flächen ausbleichen, keine Ränder übermalen.
+function cardTone(d) {
+  const n = d.length / 4, hist = [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)];
+  const stepPx = Math.max(1, Math.floor(n / 200000));
+  let cnt = 0;
+  for (let i = 0; i < n; i += stepPx) { const q = i * 4; hist[0][d[q]]++; hist[1][d[q + 1]]++; hist[2][d[q + 2]]++; cnt++; }
+  const pct = (hh, p) => { let a = 0; const lim = cnt * p; for (let v = 0; v < 256; v++) { a += hh[v]; if (a >= lim) return v; } return 255; };
+  // gemeinsame Grenzen (hält Kartenfarbe) + halber Ausgleich je Kanal (nimmt Gelb-/Blaustich vom Licht)
+  const lo = hist.map(hh => pct(hh, 0.004)), hi = hist.map(hh => pct(hh, 0.996));
+  const LO = Math.min(...lo), HI = Math.max(...hi);
+  const luts = [0, 1, 2].map(ch => {
+    const l = (LO + lo[ch]) / 2, hgh = Math.max(l + 40, (HI + hi[ch]) / 2), lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) {
+      let t = Math.min(1, Math.max(0, (v - l) / (hgh - l)));
+      t = t + 0.18 * t * (1 - t) * (2 * t - 1) * 2;           // sanfte S-Kurve
+      lut[v] = Math.round(t * 255);
+    }
+    return lut;
+  });
+  for (let q = 0; q < d.length; q += 4) {
+    const r = luts[0][d[q]], g = luts[1][d[q + 1]], b = luts[2][d[q + 2]];
+    const Lm = r * 0.299 + g * 0.587 + b * 0.114, s = 1.06;   // Farben nur minimal kräftiger
+    d[q] = Lm + (r - Lm) * s; d[q + 1] = Lm + (g - Lm) * s; d[q + 2] = Lm + (b - Lm) * s;
+  }
+}
+
 export function enhance(c, mode, adj = NO_ADJ) {
   if (mode === 'ai' || mode === 'online') mode = 'color';   // ohne KI-/Online-Ergebnis: wie „Verbessern“
+  const card = mode === 'card'; if (card) mode = '';
   const { brightness = 0, contrast = 0, sharp = 0 } = adj || NO_ADJ;
-  if (!mode && !brightness && !contrast && !sharp) return c;
+  if (!mode && !card && !brightness && !contrast && !sharp) return c;
   const w = c.width, h = c.height, ctx = c.getContext('2d');
   const id = ctx.getImageData(0, 0, w, h), d = id.data;
   const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
+  if (card) cardTone(d);
   let paperFill = null;
   if (mode) {
     const bg = paperLevel(c);
@@ -796,7 +905,7 @@ export function enhance(c, mode, adj = NO_ADJ) {
   // Dunkle Ränder (Tisch, Schatten an der Blattkante) entfernen
   if (mode && mode !== 'invert') cleanBorders(d, w, h, mode === 'color' && paperFill ? paperFill : [255, 255, 255]);
   // Schärfe (Unscharf maskieren auf der Helligkeit) – Verbessern/Dokument immer etwas nachgeschärft
-  const autoSharp = mode === 'color' || mode === 'doc' || mode === 'invert' ? 22 : 0;
+  const autoSharp = mode === 'color' || mode === 'doc' || mode === 'invert' ? 22 : card ? 12 : 0;
   const sharpAll = sharp + autoSharp;
   if (sharpAll > 0) {
     const N = w * h, L = new Float32Array(N);
