@@ -191,24 +191,70 @@ export async function recognizeCanvases(canvases, { onProgress } = {}) {
 
 /**
  * Wörter mit Position (für Ausweise: Text antippen, Felder ausfüllen).
- * Je Bild: { words: [{ t, b: [x0, y0, x1, y1] normiert }], lines: [Text …] }
+ * Je Bild: { words: [{ t, b: [x0, y0, x1, y1] normiert }], lines: [Text …], mrz: [Zeilen] }
+ * 1. Durchgang: ganzes Bild (Graustufen, Kontrast gespreizt) – nur sichere Wörter, kein Guilloche-Rauschen
+ * 2. Durchgang: maschinenlesbare Zone (MRZ) unten, stark vergrößert, nur A–Z 0–9 < erlaubt
  */
+const prep = (src, x0 = 0, y0 = 0, w0 = src.width, h0 = src.height, minW = 0, bin = false) => {
+  const k = Math.max(1, minW / w0), c = document.createElement('canvas');
+  c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
+  const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high';
+  x.drawImage(src, x0, y0, w0, h0, 0, 0, c.width, c.height);
+  const id = x.getImageData(0, 0, c.width, c.height), d = id.data, n = d.length / 4;
+  const L = new Uint8Array(n), hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++) { const v = Math.min(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]) * 0.5 + (d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11) * 0.5; L[i] = v; hist[v | 0]++; }
+  let a = 0, lo = 0, hi = 255;
+  for (let v = 0; v < 256; v++) { a += hist[v]; if (a < n * 0.01) lo = v; if (a < n * 0.97) hi = v; }
+  let thr = 0;
+  if (bin) {                                          // Otsu
+    let sum = 0; for (let v = 0; v < 256; v++) sum += v * hist[v];
+    let sB = 0, wB = 0, best = 0;
+    for (let v = 0; v < 256; v++) { wB += hist[v]; if (!wB) continue; const wF = n - wB; if (!wF) break; sB += v * hist[v]; const mB = sB / wB, mF = (sum - sB) / wF, b = wB * wF * (mB - mF) ** 2; if (b > best) { best = b; thr = v; } }
+  }
+  for (let i = 0; i < n; i++) {
+    let v = Math.max(0, Math.min(255, (L[i] - lo) * 255 / Math.max(30, hi - lo)));
+    if (bin) v = L[i] < thr * 0.92 ? 0 : 255;
+    d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v;
+  }
+  x.putImageData(id, 0, 0);
+  return c;
+};
+
 export async function recognizeWords(canvases, { onProgress } = {}) {
-  const worker = await makeWorker(m => { if (m.status === 'recognizing text' && onProgress) onProgress(m.progress); });
+  const total = canvases.length * 2; let step = 0;
+  const worker = await makeWorker(m => { if (m.status === 'recognizing text' && onProgress) onProgress((step + m.progress) / total); });
   try {
     const out = [];
     for (const c of canvases) {
       await tick();
-      const { data } = await worker.recognize(c, {}, { blocks: true, text: true });
+      const pc = prep(c, 0, 0, c.width, c.height, 2000);
+      const { data } = await worker.recognize(pc, {}, { blocks: true, text: true });
+      step++;
       const words = [], lines = [];
       for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
-        lines.push((l.text || '').trim());
-        for (const w of l.words || []) {
-          const t = (w.text || '').trim(); if (!t || w.confidence < 35) continue;
-          words.push({ t, b: [w.bbox.x0 / c.width, w.bbox.y0 / c.height, w.bbox.x1 / c.width, w.bbox.y1 / c.height] });
-        }
+        const good = (l.words || []).filter(w => {
+          const t = (w.text || '').trim(), h = (w.bbox.y1 - w.bbox.y0) / pc.height;
+          return t && w.confidence >= 60 && /[\p{L}\d]/u.test(t) && (t.length >= 2 || /\d/.test(t)) && h > 0.012;
+        });
+        if (good.length) lines.push(good.map(w => w.text.trim()).join(' '));
+        for (const w of good) words.push({ t: w.text.trim(), b: [w.bbox.x0 / pc.width, w.bbox.y0 / pc.height, w.bbox.x1 / pc.width, w.bbox.y1 / pc.height] });
       }
-      out.push({ words, lines });
+      out.push({ words, lines, mrz: [] });
+    }
+    // MRZ: untere Hälfte, nur Zeichen der MRZ, Zeilen als Block
+    await worker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<', tessedit_pageseg_mode: '6' });
+    for (let i = 0; i < canvases.length; i++) {
+      const c = canvases[i], y0 = Math.round(c.height * 0.5), h0 = c.height - y0;
+      const pc = prep(c, 0, y0, c.width, h0, 2400, true);
+      const { data } = await worker.recognize(pc, {}, { blocks: true, text: true });
+      step++;
+      const k = pc.width / c.width;
+      for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
+        const t = (l.text || '').replace(/\s+/g, '');
+        if (t.length < 25 || (t.match(/</g) || []).length < 3) continue;
+        out[i].mrz.push(t);
+        out[i].words.push({ t, b: [l.bbox.x0 / k / c.width, (y0 + l.bbox.y0 / k) / c.height, l.bbox.x1 / k / c.width, (y0 + l.bbox.y1 / k) / c.height], mrz: true });
+      }
     }
     return out;
   } finally { try { await worker.terminate(); } catch {} }

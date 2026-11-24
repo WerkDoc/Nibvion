@@ -326,13 +326,13 @@ function imageEditor(k) {
     const base = baseCanvas(st.img, st.side, 1600);
     const ov = document.createElement('canvas'); ov.width = base.width; ov.height = base.height;
     if (st.ov) ov.getContext('2d').drawImage(st.ov, 0, 0, ov.width, ov.height);
-    return { st, side: { ...st.side, corners: st.side.corners.map(p => [...p]) }, base, ov, undo: [], dirty: false, hasOv: !!st.ov };
+    return { st, side: { ...st.side, corners: st.side.corners.map(p => [...p]) }, base, ov, undo: [], dirty: false, hasOv: !!st.ov, texts: [] };
   });
   let tab = 'img', tool = null, color = COLORS[1];
   const el = document.createElement('div'); el.className = 'ide';
   el.innerHTML = `
     <div class="ide-head"><button class="icon-btn" data-x aria-label="Abbrechen">${icon('x')}</button><div class="ide-title">Bearbeiten</div><button class="btn primary ide-done" data-ok>Fertig</button></div>
-    <div class="ide-stage no-swipe"><div class="ide-frame"><canvas class="ide-base"></canvas><canvas class="ide-ov"></canvas></div></div>
+    <div class="ide-stage no-swipe"><div class="ide-frame"><canvas class="ide-base"></canvas><canvas class="ide-ov"></canvas><div class="ide-texts"></div></div></div>
     <div class="ide-pager"><button data-prev>${icon('chevronLeft')}</button><span data-count></span><button data-next>${icon('chevronRight')}</button></div>
     <div class="ide-colors" hidden>${COLORS.map(c => `<button data-c="${c}" style="background:${c}"></button>`).join('')}</div>
     <div class="ide-panel">
@@ -348,10 +348,75 @@ function imageEditor(k) {
     const s = Math.min((r.width - 24) / w.base.width, (r.height - 24) / w.base.height);
     Object.assign(frame.style, { width: w.base.width * s + 'px', height: w.base.height * s + 'px' });
     cb.width = w.base.width; cb.height = w.base.height; cb.getContext('2d').drawImage(w.base, 0, 0);
-    co.width = w.ov.width; co.height = w.ov.height; drawOv();
+    co.width = w.ov.width; co.height = w.ov.height; drawOv(); requestAnimationFrame(paintTexts);
     el.querySelector('[data-count]').textContent = work.length > 1 ? `${k + 1}/${work.length}` : '';
     el.querySelector('.ide-pager').hidden = work.length < 2;
   };
+  // ---- Text als verschiebbare Objekte (erst beim Speichern ins Bild gebrannt) ----
+  let selT = null;
+  const tl = el.querySelector('.ide-texts');
+  const paintTexts = () => {
+    const w = W(), sc = frame.clientWidth;
+    tl.innerHTML = w.texts.map((t, j) => `<div class="ide-txt${t === selT ? ' sel' : ''}" data-j="${j}" style="left:${t.x * 100}%;top:${t.y * 100}%;color:${t.color};font-size:${t.fs * sc}px">${esc(t.t).replace(/\n/g, '<br>')}</div>`).join('')
+      + (selT && w.texts.includes(selT) ? `<div class="ide-tbar" style="left:${selT.x * 100}%;top:${selT.y * 100}%">
+          <button data-ta="edit">${icon('edit')}</button><button data-ta="minus">A−</button><button data-ta="plus">A+</button><button data-ta="del">${icon('trash')}</button></div>` : '');
+    tl.querySelectorAll('[data-j]').forEach(d => d.onpointerdown = e => textDrag(e, w.texts[+d.dataset.j], d));
+    tl.querySelectorAll('[data-ta]').forEach(b => b.onpointerdown = e => { e.stopPropagation(); e.preventDefault(); textAct(b.dataset.ta); });
+  };
+  const textDrag = (e, t, d) => {
+    e.stopPropagation(); e.preventDefault();
+    const wasSel = selT === t; selT = t; haptic();
+    if (!wasSel) paintTexts();
+    const r = frame.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY, tx = t.x, ty = t.y;
+    let moved = false;
+    const mv = ev => {
+      const dx = ev.clientX - x0, dy = ev.clientY - y0;
+      if (Math.hypot(dx, dy) > 4) moved = true;
+      if (!moved) return;
+      t.x = Math.min(0.98, Math.max(-0.2, tx + dx / r.width)); t.y = Math.min(1, Math.max(0, ty + dy / r.height));
+      const el2 = tl.querySelector(`[data-j="${W().texts.indexOf(t)}"]`), bar = tl.querySelector('.ide-tbar');
+      for (const n of [el2, bar]) if (n) { n.style.left = t.x * 100 + '%'; n.style.top = t.y * 100 + '%'; }
+    };
+    const upH = () => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', upH); removeEventListener('pointercancel', upH);
+      W().dirty = true;
+      if (!moved && wasSel) textAct('edit'); else paintTexts();
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', upH); addEventListener('pointercancel', upH);
+  };
+  const textAct = async a => {
+    const w = W(), t = selT; if (!t) return;
+    haptic(); w.dirty = true;
+    if (a === 'del') { w.texts.splice(w.texts.indexOf(t), 1); selT = null; }
+    if (a === 'plus') t.fs = Math.min(0.2, t.fs * 1.2);
+    if (a === 'minus') t.fs = Math.max(0.015, t.fs / 1.2);
+    if (a === 'edit') { const v = await promptDlg('Text ändern', t.t, 'Fertig'); if (v != null && v.trim()) t.t = v.trim(); }
+    paintTexts();
+  };
+  const addText = async p => {
+    const txt = await promptDlg('Text hinzufügen', '', 'Hinzufügen', 'Text');
+    if (!txt || !txt.trim()) return;
+    const w = W(), t = { t: txt.trim(), x: p[0] / w.ov.width, y: p[1] / w.ov.height, color, fs: 1 / 24 };
+    w.texts.push(t); selT = t; w.dirty = true; paintTexts();
+    toast('Text ziehen zum Verschieben · nochmal antippen zum Ändern');
+  };
+  const burnTexts = w => {
+    if (!w.texts.length) return;
+    const x = w.ov.getContext('2d');
+    for (const t of w.texts) {
+      const fs = t.fs * w.ov.width;
+      x.font = `600 ${fs}px -apple-system, Helvetica, Arial, sans-serif`; x.fillStyle = t.color; x.textBaseline = 'middle';
+      const ls = t.t.split('\n'), y0 = t.y * w.ov.height - (ls.length - 1) * fs * 0.6;
+      ls.forEach((ln, i) => x.fillText(ln, t.x * w.ov.width, y0 + i * fs * 1.2));
+    }
+    w.texts = []; w.hasOv = true;
+  };
+  // Tippen ins Leere: Auswahl aufheben bzw. (Text-Werkzeug) neuen Text setzen
+  frame.addEventListener('pointerdown', e => {
+    if (e.target.closest('.ide-txt, .ide-tbar')) return;
+    if (selT) { selT = null; paintTexts(); e.stopPropagation(); }
+  }, true);
+
   const drawOv = () => { const x = co.getContext('2d'); x.clearRect(0, 0, co.width, co.height); x.drawImage(W().ov, 0, 0); };
   const snap = () => { const w = W(); w.undo.push(copyCanvas(w.ov)); if (w.undo.length > 15) w.undo.shift(); w.dirty = true; w.hasOv = true; };
 
@@ -362,13 +427,13 @@ function imageEditor(k) {
   const paintTools = () => {
     el.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     el.querySelector('.ide-tools').innerHTML = TOOLS[tab].map(([id, ic, l]) => `<button data-t="${id}" class="${tool === id ? 'on' : ''}">${icon(ic)}<span>${l}</span></button>`).join('');
-    el.querySelector('.ide-colors').hidden = !(tool === 'pen' || tool === 'text');
+    el.querySelector('.ide-colors').hidden = !(tool === 'pen' || tool === 'text' || selT);
     el.querySelectorAll('[data-c]').forEach(b => b.classList.toggle('on', b.dataset.c === color));
     el.querySelectorAll('[data-t]').forEach(b => b.onclick = () => action(b.dataset.t));
     co.style.pointerEvents = tool ? 'auto' : 'none';
   };
   el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; tool = null; haptic(); paintTools(); });
-  el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { color = b.dataset.c; haptic(); paintTools(); });
+  el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { color = b.dataset.c; if (selT) { selT.color = color; W().dirty = true; paintTexts(); } haptic(); paintTools(); });
 
   const rebuildBase = (keepOv = true, rotDeg = 0) => {
     const w = W(), old = w.ov;
@@ -383,17 +448,18 @@ function imageEditor(k) {
     haptic();
     const w = W();
     if (t === 'crop') {
-      if (w.hasOv && !await confirmDlg('Markierungen entfernen?', 'Beim Zuschneiden werden Pinsel, Text und Mosaik dieser Seite entfernt.', 'Weiter')) return;
+      if ((w.hasOv || w.texts.length) && !await confirmDlg('Markierungen entfernen?', 'Beim Zuschneiden werden Pinsel, Text und Mosaik dieser Seite entfernt.', 'Weiter')) return;
       const r = await cropEditor({ img: w.st.img, corners: w.side.corners, rot: w.side.rot || 0 });
-      if (r) { w.side.corners = r.corners; w.side.rot = r.rot; rebuildBase(false); }
+      if (r) { w.side.corners = r.corners; w.side.rot = r.rot; w.texts = []; selT = null; rebuildBase(false); }
       return;
     }
-    if (t === 'rot') { w.side.rot = ((w.side.rot || 0) + 90) % 360; return rebuildBase(true, 90); }
+    if (t === 'rot') { w.side.rot = ((w.side.rot || 0) + 90) % 360; w.texts.forEach(o => { [o.x, o.y] = [1 - o.y, o.x]; }); return rebuildBase(true, 90); }
     if (t === 'filter') return filterSheet();
     if (t === 'undo') { if (!w.undo.length) return toast('Nichts rückgängig zu machen'); w.ov = w.undo.pop(); w.dirty = true; return drawOv(); }
     if (t === 'wm') return watermark();
     tool = tool === t ? null : t; paintTools();
     if (tool === 'text') toast('Auf das Bild tippen, wo der Text hin soll');
+    if (tool !== 'text' && selT) { selT = null; paintTexts(); }
     if (tool === 'mosaic') toast('Über Bereiche wischen, die unkenntlich werden sollen');
   };
 
@@ -451,15 +517,7 @@ function imageEditor(k) {
     if (!tool) return;
     e.preventDefault(); co.setPointerCapture(e.pointerId);
     const p = pt(e), w = W();
-    if (tool === 'text') {
-      const txt = await promptDlg('Text hinzufügen', '', 'Hinzufügen', 'Text');
-      if (!txt || !txt.trim()) return;
-      snap();
-      const x = w.ov.getContext('2d'), fs = Math.round(w.ov.width / 24);
-      x.font = `600 ${fs}px -apple-system, Helvetica, Arial, sans-serif`; x.fillStyle = color; x.textBaseline = 'middle';
-      txt.trim().split('\n').forEach((ln, i) => x.fillText(ln, p[0], p[1] + i * fs * 1.2));
-      return drawOv();
-    }
+    if (tool === 'text') return addText(p);
     snap(); last = p; mosaicDone = new Set(); baseData = null;
     if (tool === 'mosaic') { mosaicAt(p); drawOv(); }
   });
@@ -481,8 +539,8 @@ function imageEditor(k) {
   const up = () => { last = null; };
   co.addEventListener('pointerup', up); co.addEventListener('pointercancel', up);
 
-  el.querySelector('[data-prev]').onclick = () => { if (k > 0) { k--; haptic(); layout(); } };
-  el.querySelector('[data-next]').onclick = () => { if (k < work.length - 1) { k++; haptic(); layout(); } };
+  el.querySelector('[data-prev]').onclick = () => { if (k > 0) { selT = null; k--; haptic(); layout(); } };
+  el.querySelector('[data-next]').onclick = () => { if (k < work.length - 1) { selT = null; k++; haptic(); layout(); } };
   const close = () => { removeEventListener('resize', layout); el.classList.add('out'); setTimeout(() => el.remove(), 220); };
   el.querySelector('[data-x]').onclick = async () => {
     if (work.some(w => w.dirty) && !await confirmDlg('Änderungen verwerfen?', 'Deine Bearbeitung geht verloren.', 'Verwerfen')) return;
@@ -494,6 +552,7 @@ function imageEditor(k) {
     try {
       for (const w of work) {
         if (!w.dirty) continue;
+        burnTexts(w);
         const i = w.st.i, empty = !w.hasOv;
         w.st.side = { ...w.side, ov: !empty };
         if (empty) { w.st.ov = null; await db.del('files', ovKey(d.id, i)); }
@@ -511,7 +570,6 @@ function imageEditor(k) {
 }
 
 // ---------- ID-Angaben (Formular + Text antippen) ----------
-const fixDigits = s => s.replace(/O/g, '0').replace(/[IL]/g, '1').replace(/S/g, '5').replace(/B/g, '8').replace(/Z/g, '2');
 const yymmdd = (s, future) => {
   if (!/^\d{6}$/.test(s)) return '';
   const yy = +s.slice(0, 2), now = new Date().getFullYear() % 100;
@@ -521,25 +579,69 @@ const yymmdd = (s, future) => {
 const titleCase = s => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (_, a, b) => a + b.toUpperCase());
 const BANKS = ['ING', 'Sparkasse', 'Volksbank', 'Raiffeisenbank', 'Commerzbank', 'Deutsche Bank', 'Postbank', 'DKB', 'N26', 'Comdirect', 'Consorsbank', 'HypoVereinsbank', 'Santander', 'Targobank', 'PSD Bank', 'Sparda-Bank', 'BW-Bank', 'Revolut', 'Wise', 'C24', 'Norisbank', '1822direkt', 'Barclays', 'Hanseatic Bank', 'Advanzia', 'American Express', 'Trade Republic', 'Openbank', 'Tomorrow', 'Vivid'];
 
+// ---- MRZ: Prüfziffern (7-3-1) machen das Ergebnis sicher ----
+const mrzVal = c => c === '<' ? 0 : /\d/.test(c) ? +c : c.charCodeAt(0) - 55;
+const mrzCheck = s => [...s].reduce((a, c, i) => a + mrzVal(c) * [7, 3, 1][i % 3], 0) % 10;
+const NUM = { O: '0', Q: '0', D: '0', U: '0', I: '1', L: '1', T: '1', Z: '2', S: '5', B: '8', G: '6' };
+const toNum = s => s.replace(/[A-Z]/g, c => NUM[c] || c);
+// Feld + Prüfziffer prüfen; bei Fehler mehrdeutige Zeichen (O/0, I/1 …) einzeln durchprobieren
+function fixField(f, ck, digitsOnly) {
+  ck = toNum(ck);
+  if (digitsOnly) f = toNum(f);
+  for (const g of [f, f.replace(/[OQ]/g, '0'), f.replace(/[OQ]/g, '0').replace(/I/g, '1')]) if (mrzCheck(g) === +ck) return { v: g, ok: true };
+  const amb = { O: '0', '0': 'O', I: '1', '1': 'I', S: '5', '5': 'S', B: '8', '8': 'B', Z: '2', '2': 'Z', G: '6', '6': 'G', D: '0', Q: '0', U: 'V', V: 'U', K: '<' };
+  for (let i = 0; i < f.length; i++) if (amb[f[i]]) {
+    const g = f.slice(0, i) + amb[f[i]] + f.slice(i + 1);
+    if (mrzCheck(g) === +ck) return { v: g, ok: true };
+  }
+  return { v: f, ok: false };
+}
+const normMrz = l => l.toUpperCase().replace(/\s+/g, '').replace(/«/g, '<<').replace(/[^A-Z0-9<]/g, '<');
+const ibanOk = s => { const x = s.replace(/\s+/g, ''); if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(x)) return false;
+  const r = (x.slice(4) + x.slice(0, 4)).replace(/[A-Z]/g, c => c.charCodeAt(0) - 55); let m = 0; for (const ch of r) m = (m * 10 + +ch) % 97; return m === 1; };
+
 // Aus erkanntem Text Felder vorschlagen (MRZ bei Ausweis/Pass, IBAN/Bank bei Bankkarten)
 function guessInfo(catId, ocr) {
-  const lines = ocr.flatMap(o => o.lines), words = ocr.flatMap(o => o.words.map(w => w.t));
-  const all = lines.join('\n'), out = {};
-  const mrz = lines.map(l => l.toUpperCase().replace(/\s+/g, '').replace(/[«]/g, '<<')).filter(l => l.length >= 25 && (l.match(/</g) || []).length >= 2);
+  const lines = ocr.flatMap(o => o.lines), words = ocr.flatMap(o => o.words.filter(w => !w.mrz).map(w => w.t));
+  const all = lines.join('\n'), out = {}, ok = new Set();
+  const mrzOf = o => (o.mrz?.length ? o.mrz : o.lines).map(normMrz).filter(l => l.length >= 25 && (l.match(/</g) || []).length >= 2);
+  const mrz = ocr.flatMap(mrzOf);
+  const nm = l => { const [sn, gn] = l.split('<<').filter(Boolean); return sn ? titleCase(((gn || '').replace(/</g, ' ') + ' ' + sn.replace(/</g, ' ')).replace(/\s+/g, ' ').trim()) : ''; };
+  const dates = (l2, b, e) => {
+    const bd = fixField(l2.slice(b, b + 6), l2[b + 6] || '', true), ed = fixField(l2.slice(e, e + 6), l2[e + 6] || '', true);
+    out.birth = yymmdd(bd.v); out.expiry = yymmdd(ed.v, true);
+    if (bd.ok) ok.add('birth'); if (ed.ok) ok.add('expiry');
+  };
   // Ausweis (TD1, 3 × 30 Zeichen)
-  const l1 = mrz.find(l => /^I[D<]/.test(l)), i1 = mrz.indexOf(l1);
-  if (l1) {
-    if (l1.slice(5, 14).replace(/</g, '').length >= 8) out.number = l1.slice(5, 14).replace(/</g, '').replace(/O/g, '0');
-    const l2 = mrz[i1 + 1], l3 = mrz[i1 + 2];
-    if (l2) { const f = fixDigits(l2.slice(0, 15)); out.birth = yymmdd(f.slice(0, 6)); out.expiry = yymmdd(f.slice(8, 14), true); }
-    if (l3 && l3.includes('<<')) { const [sn, gn] = l3.split('<<').filter(Boolean); if (sn) out.name = titleCase(((gn || '').replace(/</g, ' ') + ' ' + sn.replace(/</g, ' ')).trim()); }
+  const i1 = mrz.findIndex(l => /^[IAC][A-Z<]/.test(l));
+  if (i1 >= 0) {
+    // doppelt gelesenes oder fehlendes Zeichen in der Nummer: Varianten über die Prüfziffer testen
+    const raw = mrz[i1], de = /^I.D/.test(raw), same = (a, b) => a === b || /^[O0Q]{2}$/.test(a + b) || /^[I1]{2}$/.test(a + b);
+    const vars = [{ s: raw, sc: 3 }];
+    for (let j = 5; j < 16; j++) {
+      vars.push({ s: raw.slice(0, j) + raw.slice(j + 1), sc: same(raw[j], raw[j - 1]) || same(raw[j], raw[j + 1]) ? 2 : 0 });   // doppelt gelesen
+      vars.push({ s: raw.slice(0, j) + '<' + raw.slice(j), sc: 0 });
+    }
+    let l1 = raw.padEnd(30, '<'), num = fixField(l1.slice(5, 14), l1[14], false), best = -1;
+    for (const { s: vv, sc } of vars) {
+      const L = vv.padEnd(30, '<'), r = fixField(de ? L.slice(5, 14).replace(/[OQ]/g, '0') : L.slice(5, 14), L[14], false);
+      if (!r.ok || /</.test(r.v.slice(0, 8))) continue;
+      const score = sc + (de && /^[CFGHJKLMNPRTVWXYZ0-9]{9}$/.test(r.v) ? 1 : 0);   // deutsche Ausweisnummern: nur diese Zeichen
+      if (score > best) { best = score; l1 = L; num = r; }
+    }
+    let v = num.v;
+    if (/^I.D/.test(l1) && !num.ok) v = v.replace(/O/g, '0');   // deutsche Nummern haben kein O
+    out.number = v.replace(/</g, ''); if (num.ok) ok.add('number');
+    const l2 = mrz.slice(i1 + 1).find(l => /^\d|^[OQDISBZG]/.test(l)), l3 = mrz.slice(i1 + 1).find(l => /^[A-Z]+<</.test(l) && l !== l2);
+    if (l2) dates(l2.padEnd(30, '<'), 0, 8);
+    if (l3) { out.name = nm(l3); if (out.name) ok.add('name'); }
   }
   // Reisepass (TD3, 2 × 44)
-  const p1 = mrz.find(l => /^P[A-Z<]/.test(l));
+  const p1 = mrz.find(l => /^P[A-Z<]/.test(l) && l.length > 34);
   if (p1) {
-    const p2 = mrz[mrz.indexOf(p1) + 1], [sn, gn] = p1.slice(5).split('<<').filter(Boolean);
-    if (sn) out.name = titleCase(((gn || '').replace(/</g, ' ') + ' ' + sn.replace(/</g, ' ')).trim());
-    if (p2) { out.number = p2.slice(0, 9).replace(/</g, '').replace(/O/g, '0'); const f = fixDigits(p2); out.birth = yymmdd(f.slice(13, 19)); out.expiry = yymmdd(f.slice(21, 27), true); }
+    out.name = nm(p1.slice(5)); if (out.name) ok.add('name');
+    const p2 = mrz[mrz.indexOf(p1) + 1];
+    if (p2) { const l = p2.padEnd(44, '<'), num = fixField(l.slice(0, 9), l[9], false); out.number = num.v.replace(/</g, ''); if (num.ok) ok.add('number'); dates(l, 13, 21); }
   }
   // MRZ hat keine Umlaute: SCHAEFER → Schäfer, wenn die Vorderseite es so schreibt
   if (out.name) {
@@ -547,8 +649,13 @@ function guessInfo(catId, ocr) {
     out.name = out.name.split(' ').map(p => { const w = words.find(x => /[ÄÖÜß]/.test(x) && um(x.toUpperCase()) === p.toUpperCase()); return w ? titleCase(w) : p; }).join(' ');
   }
   if (catId === 'bank' || !out.number) {
-    const iban = all.replace(/[Oo]/g, '0').match(/\b([A-Z]{2}\d{2}(?:\s?[0-9A-Z]{4}){3,7}(?:\s?[0-9A-Z]{1,3})?)\b/);
-    if (iban && catId === 'bank') out.number = iban[1].replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim();
+    // IBAN: alle Kandidaten (auch mit O/0-Verwechslung) über die Prüfsumme testen
+    const cands = [...all.toUpperCase().matchAll(/\b([A-Z]{2}[0-9OIL]{2}(?:\s?[0-9A-Z]{2,4}){3,8})/g)].map(m => m[1]);
+    for (const c of cands) {
+      const x = c.replace(/\s+/g, ''), fixed = x.slice(0, 2) + toNum(x.slice(2));
+      const cand = [fixed, x, fixed.slice(0, 22), fixed.slice(0, 22 - 1)].find(ibanOk) || (fixed.startsWith('DE') ? fixed.slice(0, 22) : null);
+      if (cand && catId === 'bank') { out.number = cand.replace(/(.{4})/g, '$1 ').trim(); if (ibanOk(cand)) ok.add('number'); break; }
+    }
     const bk = BANKS.find(b => new RegExp(`(^|\\W)${b.replace(/[-]/g, '\\-')}(\\W|$)`, 'i').test(all));
     if (bk && catId === 'bank') out.bank = bk === 'ING' && /DiBa/i.test(all) ? 'ING-DiBa' : bk;
     const ex = all.match(/\b(0[1-9]|1[0-2])\s?\/\s?(\d{2})\b/);
@@ -570,6 +677,7 @@ function guessInfo(catId, ocr) {
     const ds = [...all.matchAll(/\b(\d{2}\.\d{2}\.\d{4})\b/g)].map(m => m[1]);
     if (ds.length) out.expiry = ds.sort((a, b) => b.split('.').reverse().join('').localeCompare(a.split('.').reverse().join('')))[0];
   }
+  out._ok = ok;
   return out;
 }
 
@@ -577,7 +685,7 @@ async function infoForm(autoFill) {
   const d = view.d;
   let cat = d.idCat || 'other';
   const vals = { ...(d.idInfo || {}) };
-  let focus = 'name', ocr = d.idOcr || null;
+  let focus = 'name', ocr = d.idOcrV === 2 ? d.idOcr : null;
   const el = document.createElement('div'); el.className = 'idf';
   el.innerHTML = `
     <div class="idf-head"><button class="icon-btn" data-x aria-label="Zurück">${icon('chevronLeft')}</button><div class="idf-title">ID-Info bearbeiten</div><button class="link-btn" data-ok>Speichern</button></div>
@@ -591,7 +699,7 @@ async function infoForm(autoFill) {
     el.querySelector('.idf-fields').innerHTML = `
       <button class="idf-row" data-type><span>ID-Typ</span><b>${esc(idCat(cat).label)}</b>${icon('chevronRight')}</button>
       ${fieldsFor(cat).map(([k, l, ph]) => `<label class="idf-row"><span>${l}</span><input data-f="${k}" value="${esc(vals[k] || '')}" placeholder="${esc(ph)}" autocomplete="off" autocapitalize="${k === 'name' || k === 'bank' ? 'words' : 'characters'}"></label>`).join('')}`;
-    el.querySelectorAll('[data-f]').forEach(i => { i.oninput = () => { vals[i.dataset.f] = i.value; }; i.onfocus = () => { focus = i.dataset.f; }; });
+    el.querySelectorAll('[data-f]').forEach(i => { i.oninput = () => { vals[i.dataset.f] = i.value; i.closest('.idf-row').classList.remove('ok'); }; i.onfocus = () => { focus = i.dataset.f; }; });
     el.querySelector('[data-type]').onclick = () => sheet({
       title: 'ID-Typ',
       html: `<div class="menu">${ID_CATS.filter(c => c.sides > 0).map(c => `<button class="row" data-c="${c.id}"><span class="row-ic ${c.c}">${icon(c.icon)}</span><span class="row-main"><span class="row-title">${c.label}</span></span>${c.id === cat ? icon('check') : ''}</button>`).join('')}</div>`,
@@ -606,7 +714,7 @@ async function infoForm(autoFill) {
     if (!ocr) return;
     ocr.forEach((o, k) => {
       const host = el.querySelector(`[data-k="${k}"] .idf-boxes`); if (!host) return;
-      host.innerHTML = o.words.map((w, j) => `<button data-w="${j}" style="left:${w.b[0] * 100}%;top:${w.b[1] * 100}%;width:${(w.b[2] - w.b[0]) * 100}%;height:${(w.b[3] - w.b[1]) * 100}%"></button>`).join('');
+      host.innerHTML = o.words.map((w, j) => `<button data-w="${j}" class="${w.mrz ? 'mrz' : ''}" style="left:${w.b[0] * 100}%;top:${w.b[1] * 100}%;width:${(w.b[2] - w.b[0]) * 100}%;height:${(w.b[3] - w.b[1]) * 100}%"></button>`).join('');
       host.querySelectorAll('[data-w]').forEach(b => b.onclick = () => {
         const t = o.words[+b.dataset.w].t, inp = el.querySelector(`[data-f="${focus}"]`) || el.querySelector('[data-f]');
         const k2 = inp.dataset.f;
@@ -617,10 +725,13 @@ async function infoForm(autoFill) {
   };
   const applyGuess = (onlyEmpty) => {
     if (!ocr) return toast('Kein Text erkannt', true);
-    const g = guessInfo(cat, ocr); let n = 0;
-    for (const [k] of fieldsFor(cat)) if (g[k] && (!onlyEmpty || !vals[k])) { vals[k] = g[k]; n++; }
+    const g = guessInfo(cat, ocr); let n = 0, v = 0;
+    for (const [k] of fieldsFor(cat)) if (g[k] && (!onlyEmpty || !vals[k])) { vals[k] = g[k]; n++; if (g._ok.has(k)) v++; }
     paintFields();
-    toast(n ? `${n} ${n === 1 ? 'Feld' : 'Felder'} ausgefüllt – bitte prüfen` : 'Nichts Passendes gefunden – Text auf dem Bild antippen', !n);
+    el.querySelectorAll('[data-f]').forEach(i => i.closest('.idf-row').classList.toggle('ok', g._ok.has(i.dataset.f) && vals[i.dataset.f] === g[i.dataset.f]));
+    toast(!n ? 'Nichts Passendes gefunden – Text auf dem Bild antippen'
+      : v === n ? `${n} ${n === 1 ? 'Feld' : 'Felder'} ausgefüllt – per Prüfziffer bestätigt ✓`
+      : `${n} ${n === 1 ? 'Feld' : 'Felder'} ausgefüllt${v ? `, ${v} bestätigt ✓` : ''} – bitte prüfen`, !n);
   };
   el.querySelector('[data-auto]').onclick = () => { haptic(); applyGuess(false); };
   const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 220); };
@@ -637,7 +748,7 @@ async function infoForm(autoFill) {
     const { recognizeWords } = await import('./ocr.js');
     const cs = view.states.map(st => baseCanvas(st.img, st.side, 1800));
     ocr = await recognizeWords(cs, { onProgress: p => { const h = el.querySelector('[data-hint]'); if (h) h.textContent = `Text wird erkannt … ${Math.round(p * 100)} %`; } });
-    d.idOcr = ocr; await db.put('docs', d);
+    d.idOcr = ocr; d.idOcrV = 2; await db.put('docs', d);
     if (!el.isConnected) return;
     paintBoxes(); if (autoFill) applyGuess(true);
   } catch (e) { console.warn(e); if (el.isConnected) { ocr = null; paintBoxes(); } }
