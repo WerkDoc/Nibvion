@@ -12,16 +12,17 @@ import { scanReview } from './scanreview.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
 import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
-import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
+import { initEditor, openEditor, shareBytes, downloadBytes, closeEditorIfOpen } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 import { initMerge, mergeFlow } from './merge.js';
 import { initTranslate, translateFlow } from './translate.js';
 import { initPageTools, headerFooterSheet, cropSheet } from './pagetools.js';
+import { initIncoming } from './incoming.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.34.0';
+export const VERSION = '1.35.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -334,14 +335,14 @@ async function imageSheet(kind, camOpts = {}) {
   let liveFailed = false, camMode = null, idType = null, signAfter = false, saveOpts = {};
   let prefix = kind === 'images' ? 'Bilder' : 'Scan', doneMsg = null;
   if (kind === 'images') {
-    const fs = await pickFiles('file-img'); if (!fs.length) return;
+    const fs = camOpts.files || await pickFiles('file-img'); if (!fs.length) return;
     busy(true, 'Bilder werden geladen …');
     for (const f of fs) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); } catch {} }
     busy(false);
     if (!items.length) return toast('Bilder konnten nicht geladen werden', true);
   } else if (kind === 'imgscan') {
     // Foto aus der Mediathek wie einen Scan behandeln (Ränder, Entzerren, Filter „Verbessern“)
-    const fs = await pickFiles('file-img'); if (!fs.length) return;
+    const fs = camOpts.files || await pickFiles('file-img'); if (!fs.length) return;
     busy(true, 'Ränder werden erkannt …');
     for (const f of fs) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); } catch {} }
     busy(false);
@@ -550,8 +551,8 @@ async function pdfToImages() {
 }
 
 // ----- Word / Excel → PDF -----
-async function officeToPdf(kind) {
-  const files = await pickFiles(kind === 'word' ? 'file-word' : 'file-excel');
+async function officeToPdf(kind, given) {
+  const files = given?.length ? given : await pickFiles(kind === 'word' ? 'file-word' : 'file-excel');
   if (!files.length) return;
   const f = files[0];
   const base = f.name.replace(/\.[^.]+$/, '') || (kind === 'word' ? 'Dokument' : 'Tabelle');
@@ -1191,6 +1192,8 @@ async function init() {
   });
   await renderRecents();
   try { navigator.storage?.persist?.(); } catch {}
+  // Geteilte / mit „Öffnen mit“ übergebene Dateien direkt öffnen
+  setTimeout(() => initIncoming({ importFile, renderRecents, openDoc, closeEditor: closeEditorIfOpen, officeToPdf, imageFiles: (kind, files) => imageSheet(kind, { files }) }), 700);
   setTimeout(() => { $('splash').classList.add('hide'); document.documentElement.classList.remove('splashing'); applyTheme(); }, 650);
   setTimeout(() => $('splash').remove(), 1300);
 
