@@ -18,7 +18,7 @@ import { settings, applyTheme } from './settings.js';
 import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.27.1';
+export const VERSION = '1.28.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();

@@ -1095,7 +1095,11 @@ export function cropEditor(item) {
     wrap.querySelector('[data-ok]').onclick = () => close({ corners, rot });
     wrap.querySelector('[data-auto]').onclick = () => { corners = detectCorners(item.img); draw(); haptic(); };
     wrap.querySelector('[data-full]').onclick = () => { corners = FULL.map(p => [...p]); draw(); haptic(); };
-    wrap.querySelector('[data-rot]').onclick = () => { rot = (rot + 90) % 360; wrap.querySelector('[data-rv]').textContent = rot + '°'; haptic(); };
+    let rotV = 0;
+    wrap.querySelector('[data-rot]').onclick = () => {
+      rot = (rot + 90) % 360; wrap.querySelector('[data-rv]').textContent = rot + '°'; haptic();
+      const ic = wrap.querySelector('[data-rot] svg'); if (ic) ic.style.transform = `rotate(${rotV += 90}deg)`;
+    };
     addEventListener('resize', layout);
     requestAnimationFrame(layout);
   });

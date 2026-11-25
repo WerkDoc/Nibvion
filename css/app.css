@@ -279,7 +279,7 @@ textarea.field { min-height: 90px; resize: none; line-height: 1.4; }
 /* Seiten-Manager */
 .page-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
 .pg { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.pg-img { width: 100%; aspect-ratio: .72; background: #fff center/contain no-repeat; border-radius: 6px; box-shadow: 0 3px 12px rgba(0,0,0,.25); transition: transform .3s var(--ease); }
+.pg-img { width: 100%; aspect-ratio: .72; background: #fff center/contain no-repeat; border-radius: 6px; box-shadow: 0 3px 12px rgba(0,0,0,.25); transition: transform .48s cubic-bezier(.45,0,.2,1); }
 .pg-acts { display: flex; gap: 4px; }
 .pg-acts button { width: 32px; height: 32px; border-radius: 10px; background: var(--card2); display: grid; place-items: center; }
 .pg-acts .ico { width: 17px; height: 17px; }
@@ -417,6 +417,8 @@ html.splashing, html.splashing body { background: var(--bg); }
 .crop-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 4px; border-radius: 16px; background: rgba(255,255,255,.08); color: #fff; font-size: 13px; font-weight: 600; transition: transform .2s var(--spring); }
 .crop-btn:active { transform: scale(.94); }
 .crop-btn b { color: #ff9b52; font-weight: 700; }
+.crop-btn svg { transition: transform .48s cubic-bezier(.45,0,.2,1); }
+@media (prefers-reduced-motion: reduce) { .pg-img, .crop-btn svg { transition: none !important; } }
 
 /* ---------- Suche ---------- */
 .search-box { display: flex; align-items: center; gap: 10px; padding: 0 12px; height: 48px; border-radius: 14px; background: var(--card2); border: 1px solid var(--line2); }

@@ -5,7 +5,7 @@
 // • Seitentitel: Namen je Seite (Anzeige, Dateinamen beim Teilen)
 // Layout liegt in meta.idLayout = { tpl, size, wm }, Anpassungen je Seite in side.col = { z, dx, dy, r }.
 import { icon } from './icons.js';
-import { toast, sheet, confirmDlg, promptDlg, esc, haptic } from './ui.js';
+import { toast, sheet, confirmDlg, promptDlg, esc, haptic, ROT_MS, easeInOut, reducedMotion } from './ui.js';
 import { rotateCanvas } from './scanner.js';
 import { settings } from './settings.js';
 
@@ -62,11 +62,16 @@ function rotated(img, r) {
 }
 function drawCell(x, img, a, cx, cy, cw, ch, rad, border) {
   const im = rotated(img, a.r || 0);
-  const s = Math.min(cw / im.width, ch / im.height) * (a.z || 1);
+  let s = Math.min(cw / im.width, ch / im.height) * (a.z || 1);
   const w = im.width * s, h = im.height * s;
   x.save(); x.beginPath(); x.roundRect ? x.roundRect(cx, cy, cw, ch, rad) : x.rect(cx, cy, cw, ch); x.clip();
   x.imageSmoothingQuality = 'high';
-  x.drawImage(im, cx + (cw - w) / 2 + (a.dx || 0) * cw, cy + (ch - h) / 2 + (a.dy || 0) * ch, w, h);
+  if (a.ra) {
+    // Dreh-Animation: a.ra läuft von −90° auf 0°, Größe gleitet von alter zu neuer Einpassung
+    const t = 1 + a.ra / 90, s0 = Math.min(cw / im.height, ch / im.width) * (a.z || 1), k = (s0 + (s - s0) * t) / s;
+    x.translate(cx + cw / 2 + (a.dx || 0) * cw, cy + ch / 2 + (a.dy || 0) * ch); x.rotate(a.ra * Math.PI / 180); x.scale(k, k);
+    x.drawImage(im, -w / 2, -h / 2, w, h);
+  } else x.drawImage(im, cx + (cw - w) / 2 + (a.dx || 0) * cw, cy + (ch - h) / 2 + (a.dy || 0) * ch, w, h);
   x.restore();
   if (border) { x.strokeStyle = 'rgba(0,0,0,.12)'; x.lineWidth = Math.max(1, cw / 400); x.beginPath(); x.roundRect ? x.roundRect(cx, cy, cw, ch, rad) : x.rect(cx, cy, cw, ch); x.stroke(); }
 }
@@ -319,7 +324,19 @@ export function collage(itemsIn, { layout: lay0, addPage }) {
     el.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
       if (selIdx < 0) return;
       const a = items[selIdx].adj; haptic();
-      if (b.dataset.s === 'rot') { a.r = ((a.r || 0) + 90) % 360; dirty = true; }
+      if (b.dataset.s === 'rot') {
+        if (a.ra) return;
+        a.r = ((a.r || 0) + 90) % 360; dirty = true;
+        if (!reducedMotion()) {
+          const t0 = performance.now();
+          const step = now => {
+            const t = Math.min(1, (now - t0) / ROT_MS);
+            if (t < 1) { a.ra = -90 * (1 - easeInOut(t)); requestAnimationFrame(step); } else delete a.ra;
+            redraw();
+          };
+          a.ra = -90; requestAnimationFrame(step);
+        }
+      }
       if (b.dataset.s === 'reset') { Object.assign(a, NOADJ); dirty = true; }
       if (b.dataset.s === 'swap') { if (items.length < 2) return toast('Nur ein Bild vorhanden', true); swap = !swap; if (swap) toast('Jetzt das andere Bild antippen'); }
       if (b.dataset.s === 'del') {
@@ -348,7 +365,7 @@ export function collage(itemsIn, { layout: lay0, addPage }) {
     };
     const close = v => { removeEventListener('resize', onResize); el.classList.add('out'); setTimeout(() => el.remove(), 220); resolve(v); };
     el.querySelector('[data-x]').onclick = async () => { if (dirty && !await confirmDlg('Collage verwerfen?', 'Deine Änderungen an der Collage gehen verloren.', 'Verwerfen')) return; close(null); };
-    el.querySelector('[data-ok]').onclick = () => { haptic(); close({ layout, items }); };
+    el.querySelector('[data-ok]').onclick = () => { haptic(); items.forEach(it => delete it.adj.ra); close({ layout, items }); };
     addEventListener('resize', onResize);
     build();
     // Tipps wie bei CamScanner (je einmal)

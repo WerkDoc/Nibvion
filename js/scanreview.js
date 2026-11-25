@@ -2,7 +2,7 @@
 // Große Seitenvorschau zum Durchwischen, Filter mit Vorschau, Regler, Werkzeugleiste.
 // Schließen/Herunterwischen fragt „Verwerfen / Weiter bearbeiten“.
 import { icon } from './icons.js';
-import { sheet, toast, busy, haptic, pickFiles } from './ui.js';
+import { sheet, toast, busy, haptic, pickFiles, spinRotate, imgLoaded } from './ui.js';
 import { render as renderScan, enhance, FILTERS, cropEditor, detectCorners, loadFileImage, FULL } from './scanner.js';
 import { liveScanner, cameraSupported } from './camera.js';
 import { ensureAI, edgeCut, aiPref, setAiPref, aiLoaded } from './ai.js';
@@ -267,7 +267,14 @@ export function scanReview(opts) {
     }
     if (t === 'lib') addFiles(await pickFiles('file-img'), true);
     if (!it) return;
-    if (t === 'rot') { it.rot = ((it.rot || 0) + 90) % 360; haptic(); drawVisible(); renderFilters(); }
+    if (t === 'rot') {
+      if (it._spin) return; it._spin = true; haptic();
+      const pg = stage.querySelector(`.rv-page[data-i="${cur}"]`), img = pg && pg.querySelector('img[src]');
+      const apply = () => { it.rot = ((it.rot || 0) + 90) % 360; drawVisible(); renderFilters(); return img && imgLoaded(img); };
+      if (img) { const cs = getComputedStyle(pg); await spinRotate(img, pg.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), pg.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom), apply); }
+      else apply();
+      it._spin = false;
+    }
     if (t === 'crop') openCrop(cur);
     if (t === 'del') {
       const [gone] = items.splice(cur, 1); if (gone?.url) setTimeout(() => URL.revokeObjectURL(gone.url), 1000);

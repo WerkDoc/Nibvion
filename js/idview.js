@@ -6,7 +6,7 @@
 //   meta.idInfo = { name, number, … }  ·  meta.idSize = 'large' | 'orig'  ·  meta.idOcr = erkannte Wörter
 import { db } from './db.js';
 import { icon } from './icons.js';
-import { toast, busy, sheet, confirmDlg, promptDlg, esc, haptic, pickFiles } from './ui.js';
+import { toast, busy, sheet, confirmDlg, promptDlg, esc, haptic, pickFiles, spinRotate } from './ui.js';
 import { loadPdf, closePdf, renderThumb, imagesToPdf } from './pdfcore.js';
 import { cropEditor, render, toCanvas, rotateCanvas, loadFileImage } from './scanner.js';
 import { settings } from './settings.js';
@@ -629,6 +629,7 @@ function imageEditor(k) {
     if (tool === 'textedit') startTextEdit();
   };
 
+  let spinning = false;
   const action = async t => {
     haptic();
     const w = W();
@@ -638,7 +639,14 @@ function imageEditor(k) {
       if (r) { w.side.corners = r.corners; w.side.rot = r.rot; w.texts = []; selT = null; rebuildBase(false); }
       return;
     }
-    if (t === 'rot') { w.side.rot = ((w.side.rot || 0) + 90) % 360; w.texts.forEach(o => { [o.x, o.y] = [1 - o.y, o.x]; }); return rebuildBase(true, 90); }
+    if (t === 'rot') {
+      if (spinning) return; spinning = true;
+      const r = stage.getBoundingClientRect();
+      await spinRotate(frame, r.width - 24, r.height - 24, () => {
+        w.side.rot = ((w.side.rot || 0) + 90) % 360; w.texts.forEach(o => { [o.x, o.y] = [1 - o.y, o.x]; }); rebuildBase(true, 90);
+      });
+      spinning = false; return;
+    }
     if (t === 'filter') return filterSheet();
     if (t === 'undo') { if (!w.undo.length) return toast('Nichts rückgängig zu machen'); w.ov = w.undo.pop(); w.dirty = true; return drawOv(); }
     if (t === 'wm') return watermark();
