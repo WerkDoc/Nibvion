@@ -15,10 +15,11 @@ import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.j
 import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
-import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
+import { initMerge, mergeFlow } from './merge.js';
+import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.28.0';
+export const VERSION = '1.29.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -469,16 +470,9 @@ async function mergeSheet() {
         for (const f of files) { try { const id = await importFile(f); if (id) order.push(id); } catch {} busy(true, 'Import …'); }
         docs.splice(0, docs.length, ...(await allDocs())); busy(false); render(); renderRecents();
       };
-      el.querySelector('[data-ok]').onclick = async () => {
+      el.querySelector('[data-ok]').onclick = () => {
         if (order.length < 2) return toast('Bitte mindestens 2 PDFs wählen', true);
-        api.close(); busy(true, 'PDFs werden zusammengefügt …');
-        try {
-          const list = [];
-          for (const id of order) list.push((await db.get('files', id)).data);
-          const out = await mergePdfs(list);
-          const id = await saveNewDoc(out, `Zusammengefügt ${today()}.pdf`);
-          busy(false); await renderRecents(); toast('Zusammengefügt'); openDoc(id);
-        } catch (e) { console.error(e); busy(false); toast('Zusammenfügen fehlgeschlagen', true); }
+        api.close(); mergeFlow(order, { onDone: renderRecents });
       };
       render();
     },
@@ -1112,6 +1106,7 @@ function onlineSheet() {
 // ======================= Tabs =======================
 const TABS = ['tools', 'home', 'files', 'settings'];
 function switchTab(tab) {
+  if (selecting()) endSel();
   resetDocScroll();
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === tab));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
@@ -1137,7 +1132,16 @@ async function init() {
   onCloudStatus(() => { if (document.body.dataset.tab === 'settings') renderSettings(); });
   try { navigator.storage?.persist?.(); } catch {}
   initIdView({ saveNewDoc, refresh: async () => { await renderRecents(); if (document.body.dataset.tab === 'files') renderFiles(); }, openPdf: id => openEditor(id, 'view', renderRecents) });
-  initFiles({ openDoc, docMenu, importDocs: () => importPdfs(), importImages: () => runTool('imgscan'), scan: () => runTool('scan'), captureId: (f, c) => idCapture(f, c) });
+  initMerge({
+    docBytes, saveNewDoc, openDoc,
+    async importPdfs() {
+      const files = await pickFiles('file-pdf'); if (!files.length) return [];
+      busy(true, 'Import …'); const ids = [];
+      for (const f of files) { try { const id = await importFile(f); if (id) ids.push(id); } catch (e) { console.warn(e); } busy(true, 'Import …'); }
+      busy(false); renderRecents(); return ids;
+    },
+  });
+  initFiles({ openDoc, docMenu, docBytes, renderRecents, merge: ids => mergeFlow(ids, { onDone: () => { endSel(); renderRecents(); } }), importDocs: () => importPdfs(), importImages: () => runTool('imgscan'), scan: () => runTool('scan'), captureId: (f, c) => idCapture(f, c) });
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
   document.addEventListener('click', e => {
     const a = e.target.closest('[data-action]')?.dataset.action;

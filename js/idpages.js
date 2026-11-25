@@ -107,7 +107,7 @@ export function showTip(key, title, text, anchor) {
 
 // ---------- Seiten neu anordnen ----------
 /** items: [{ src (dataURL), title }] → { order: [alte Indizes in neuer Reihenfolge] } oder null */
-export function reorderPages(items) {
+export function reorderPages(items, { delText = 'Die Seite wird beim Speichern aus dem Ausweis entfernt.' } = {}) {
   return new Promise(resolve => {
     let order = items.map((_, i) => i), sel = new Set();
     const el = document.createElement('div'); el.className = 'idp';
@@ -164,7 +164,7 @@ export function reorderPages(items) {
     el.querySelector('[data-all]').onclick = () => { sel = sel.size === order.length ? new Set() : new Set(order); haptic(); paint(); };
     el.querySelector('[data-del]').onclick = async () => {
       if (sel.size >= order.length) return toast('Mindestens eine Seite muss bleiben', true);
-      if (!await confirmDlg(`${sel.size} Seite${sel.size === 1 ? '' : 'n'} löschen?`, 'Die Seite wird beim Speichern aus dem Ausweis entfernt.', 'Löschen')) return;
+      if (!await confirmDlg(`${sel.size} Seite${sel.size === 1 ? '' : 'n'} löschen?`, delText, 'Löschen')) return;
       order = order.filter(o => !sel.has(o)); sel.clear(); paint();
     };
     el.querySelector('[data-x]').onclick = () => close(null);
