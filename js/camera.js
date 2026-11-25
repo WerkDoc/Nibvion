@@ -64,7 +64,7 @@ const stampText = (d = new Date()) => ({ time: `${two(d.getHours())}:${two(d.get
 
 export { cardCorners };
 
-export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: startId = 'idcard', lockMode = false } = {}) {
+export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: startId = 'idcard', lockMode = false, maxShots = 0 } = {}) {
   return new Promise(async resolve => {
     let stream;
     try {
@@ -305,6 +305,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
     const finishAfter = () => {
       // Modi mit genau einer Aufnahme schließen danach von selbst
       if (mode === 'text' || mode === 'stamp') return close(items);
+      if (maxShots && items.length >= maxShots) return close(items);     // z. B. „Erneut aufnehmen“: genau ein Foto
       if (mode === 'id' && idt().sides > 0 && items.length >= idt().sides) return close(items);
     };
 
