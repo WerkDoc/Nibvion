@@ -799,3 +799,11 @@ body.idv-open .backdrop { z-index: 100; }
 .ide-frame { overflow: visible !important; } .ide-frame canvas { border-radius: 10px; }
 .idf-row.ok span::after { content: ' ✓'; color: #16a34a; font-weight: 800; }
 .idf-boxes button.mrz { border-color: rgba(37,99,235,.7); background: rgba(37,99,235,.05); }
+
+/* Cloud (v1.24) */
+.cloud-note { color: var(--text2); font-size: 14px; line-height: 1.5; margin: 12px 2px 4px; }
+.cloud-warn { color: var(--danger, #e5484d); font-size: 13.5px; line-height: 1.45; margin: 2px 2px 0; }
+.cloud-hint { color: var(--text2); font-size: 12.5px; margin: 6px 2px 0; }
+.cloud-proj { margin: 4px 0 14px; padding: 10px 12px; border-radius: 14px; background: var(--card2, rgba(127,127,127,.08)); }
+.cloud-proj summary { font-weight: 650; font-size: 15px; cursor: pointer; }
+.cloud-seg { display: flex; margin-bottom: 12px; } .cloud-seg button { flex: 1; }

@@ -27,12 +27,21 @@ function run(store, mode, fn) {
   }));
 }
 
+// Cloud-Sync hängt sich hier ein: jede Änderung an docs/files/assets wird gemeldet.
+// db.raw* schreibt ohne Meldung (für Daten, die gerade aus der Cloud kommen).
+const watchers = [];
+export const onDbChange = fn => watchers.push(fn);
+const tell = (s, id, del) => { for (const w of watchers) try { w(s, id, del); } catch (e) { console.warn(e); } };
+
 export const db = {
   get: (s, id) => run(s, 'readonly', st => st.get(id)),
   all: (s) => run(s, 'readonly', st => st.getAll()),
-  put: (s, v) => run(s, 'readwrite', st => st.put(v)),
-  del: (s, id) => run(s, 'readwrite', st => st.delete(id)),
-  clear: (s) => run(s, 'readwrite', st => st.clear()),
+  keys: (s) => run(s, 'readonly', st => st.getAllKeys()),
+  put: (s, v) => run(s, 'readwrite', st => st.put(v)).then(r => { tell(s, v.id, false); return r; }),
+  del: (s, id) => run(s, 'readwrite', st => st.delete(id)).then(r => { tell(s, id, true); return r; }),
+  clear: async (s) => { const ks = await db.keys(s); await run(s, 'readwrite', st => st.clear()); for (const k of ks) tell(s, k, true); },
+  rawPut: (s, v) => run(s, 'readwrite', st => st.put(v)),
+  rawDel: (s, id) => run(s, 'readwrite', st => st.delete(id)),
 };
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

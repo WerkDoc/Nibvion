@@ -7,6 +7,7 @@ import { detectCorners, cropEditor, loadFileImage, render as renderScan, enhance
 import { liveScanner, cameraSupported, cardCorners } from './camera.js';
 import { textSheet } from './textview.js';
 import { initIdView, saveIdCard, openIdView } from './idview.js';
+import { initCloud, cloudOn, cloudEmail, cloudLogin, cloudLogout, cloudSync, onCloudStatus, cloudStatus, pendingCount } from './cloud.js';
 import { scanReview } from './scanreview.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
@@ -17,7 +18,7 @@ import { settings, applyTheme } from './settings.js';
 import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.23.1';
+export const VERSION = '1.24.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -928,7 +929,17 @@ async function renderSettings() {
   const all = await db.all('docs');
   const docs = all.filter(d => !isDeleted(d)), trashed = all.length - docs.length;
   const th = settings.get('theme');
+  const cs = cloudStatus(), on = cloudOn(), pend = pendingCount();
+  const cloudSub = !on ? 'Geräteübergreifend, Ende-zu-Ende verschlüsselt'
+    : cs.state === 'sync' ? 'Wird abgeglichen …'
+    : cs.state === 'error' ? `⚠︎ ${esc(cs.error || 'Fehler')}`
+    : `${esc(cloudEmail())} · ${settings.get('cloudLast') ? 'abgeglichen ' + fmtDate(settings.get('cloudLast')) : 'noch nicht abgeglichen'}${pend ? ` · ${pend} offen` : ''}`;
   $('settings-list').innerHTML = `
+    <div class="group-title">Nibvion-Cloud</div>
+    <div class="group">
+      <button class="row" data-s="cloud"><span class="row-ic ${on ? (cs.state === 'error' ? 'c-orange' : 'c-green') : 'c-blue'}">${icon('cloud')}</span><span class="row-main"><span class="row-title">${on ? 'Cloud aktiv' : 'Cloud einrichten'}</span><span class="row-sub" style="display:block">${cloudSub}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
+    </div>
+
     <div class="group-title">Darstellung</div>
     <div class="group"><div class="row"><span class="row-ic c-violet">${icon('moon')}</span><span class="row-main"><span class="row-title">Design</span></span>
       <div class="seg" data-theme>${[['dark', 'Dunkel'], ['light', 'Hell'], ['system', 'Auto']].map(([v, l]) => `<button data-v="${v}" class="${th === v ? 'on' : ''}">${l}</button>`).join('')}</div></div></div>
@@ -960,7 +971,7 @@ async function renderSettings() {
 
     <div class="group-title">Info</div>
     <div class="group">
-      <div class="row"><span class="row-ic c-green">${icon('shield')}</span><span class="row-main"><span class="row-title">100 % lokal & privat</span><span class="row-sub" style="display:block">Keine Werbung, kein Abo, keine Cloud – alles bleibt auf deinem Gerät${onlineReady() ? ' (außer beim Filter „☁️ Online“)' : ''}.</span></span></div>
+      <div class="row"><span class="row-ic c-green">${icon('shield')}</span><span class="row-main"><span class="row-title">Privat</span><span class="row-sub" style="display:block">Keine Werbung, kein Abo. ${cloudOn() ? 'Die Cloud sieht nur verschlüsselte Daten – lesbar nur mit deinem Passwort' : 'Ohne Cloud bleibt alles auf diesem Gerät'}${onlineReady() ? ' (Filter „☁️ Online“ sendet das Foto an TextIn)' : ''}.</span></span></div>
       <button class="row" data-s="install"><span class="row-ic c-blue">${icon('info')}</span><span class="row-main"><span class="row-title">Zum Home-Bildschirm</span><span class="row-sub" style="display:block">So installierst du Nibvion als App</span></span><span class="row-end">${icon('chevronRight')}</span></button>
     </div>
     <div class="about"><img src="icons/logo.png" alt="">Nibvion ${VERSION}<br>PDF Tools · Stamp &amp; Edit</div>
@@ -973,6 +984,7 @@ async function renderSettings() {
     const s = b.dataset.s;
     if (s === 'sigs') signatureSheet(null);
     if (s === 'online') onlineSheet();
+    if (s === 'cloud') cloudSheet();
     if (s === 'stamps') stampSheet(null);
     if (s === 'name') { const n = await promptDlg('Zusatzzeile in Stempeln', settings.get('stampName'), 'Speichern', 'z. B. Firmenname'); if (n !== null) { settings.set('stampName', n); renderSettings(); } }
     if (s === 'backup') {
@@ -1006,6 +1018,73 @@ async function renderSettings() {
     if (s === 'install') sheet({ title: 'Als App installieren', html: `<ol style="color:var(--text2);line-height:1.8;padding-left:20px;margin:0 0 8px">
       <li>Seite in <b style="color:var(--text)">Safari</b> öffnen</li><li>Auf <b style="color:var(--text)">Teilen</b> ${icon('share', 'inline')} tippen</li><li><b style="color:var(--text)">„Zum Home-Bildschirm“</b> wählen</li></ol>` });
   });
+}
+
+// ======================= Cloud =======================
+function cloudSheet() {
+  if (cloudOn()) {
+    const cs = cloudStatus();
+    const sh = sheet({ title: 'Nibvion-Cloud', html: `
+      <div class="menu">
+        <div class="row"><span class="row-ic c-green">${icon('cloud')}</span><span class="row-main"><span class="row-title">${esc(cloudEmail())}</span><span class="row-sub" style="display:block">${settings.get('cloudLast') ? 'Zuletzt abgeglichen ' + fmtDate(settings.get('cloudLast')) : 'Noch nicht abgeglichen'}${pendingCount() ? ` · ${pendingCount()} Änderung(en) offen` : ''}${cs.state === 'error' ? `<br>⚠︎ ${esc(cs.error || '')}` : ''}</span></span></div>
+        <button class="row" data-a="sync"><span class="row-ic c-blue">${icon('restore')}</span><span class="row-main"><span class="row-title">Jetzt abgleichen</span></span></button>
+        <button class="row" data-a="out"><span class="row-ic c-red">${icon('x')}</span><span class="row-main"><span class="row-title">Abmelden</span><span class="row-sub" style="display:block">Dokumente auf diesem Gerät bleiben erhalten</span></span></button>
+      </div>
+      <p class="cloud-note">🔒 Ende-zu-Ende verschlüsselt. Alles wird auf dem Gerät verschlüsselt, bevor es hochgeladen wird. Ohne dein Passwort kann niemand die Daten lesen, auch Supabase nicht.</p>` });
+    sh.el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
+      if (b.dataset.a === 'sync') {
+        sh.close(); busy(true, 'Wird abgeglichen …');
+        try { const r = await cloudSync({ onProgress: t => busy(true, t) }); busy(false); toast(r && (r.got || r.sent) ? `Abgeglichen · ${r.got} geladen, ${r.sent} gesichert` : 'Alles aktuell ✓'); }
+        catch (e) { busy(false); toast(cloudStatus().error || 'Abgleich fehlgeschlagen', true); }
+        renderSettings();
+      }
+      if (b.dataset.a === 'out') {
+        if (pendingCount() && !await confirmDlg('Noch nicht alles gesichert', `${pendingCount()} Änderung(en) sind noch nicht in der Cloud. Trotzdem abmelden?`, 'Abmelden')) return;
+        await cloudLogout(); sh.close(); renderSettings(); toast('Abgemeldet');
+      }
+    });
+    return;
+  }
+  const guessUrl = (settings.get('cloudUrl') || (settings.get('onlineUrl') || '').replace(/\/functions\/v1\/.*$/, '')).trim();
+  let mode = 'login';
+  const sh = sheet({ title: 'Cloud einrichten', html: `
+    <p class="cloud-note" style="margin-top:0">Deine Dokumente, Ausweise, Ordner, Unterschriften und Stempel werden über dein Supabase-Projekt auf allen Geräten abgeglichen. Sie sind <b>Ende-zu-Ende verschlüsselt</b>.</p>
+    <details class="cloud-proj" ${guessUrl && settings.get('cloudAnon') ? '' : 'open'}><summary>Supabase-Projekt</summary>
+      <input class="field" data-url placeholder="https://xxxx.supabase.co" value="${esc(guessUrl)}" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin:8px 0 10px">
+      <input class="field" data-anon placeholder="anon public key (eyJ…)" value="${esc(settings.get('cloudAnon') || '')}" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="cloud-hint">Supabase → Project Settings → API: „Project URL“ und „anon public“</div></details>
+    <div class="seg cloud-seg"><button data-m="login" class="on">Anmelden</button><button data-m="new">Neues Konto</button></div>
+    <input class="field" data-mail type="email" placeholder="E-Mail" autocomplete="username" autocapitalize="off" style="margin-bottom:10px">
+    <input class="field" data-pw type="password" placeholder="Passwort" autocomplete="current-password" style="margin-bottom:10px">
+    <input class="field" data-pw2 type="password" placeholder="Passwort wiederholen" autocomplete="new-password" hidden>
+    <p class="cloud-warn" data-warn hidden>⚠︎ Merk dir das Passwort gut – es ist der Schlüssel zu deinen Daten. Ohne Passwort kann niemand die Cloud-Daten wiederherstellen, auch du nicht.</p>
+    <button class="btn primary" data-ok style="margin-top:12px">${icon('cloud')} <span data-lbl>Anmelden</span></button>` });
+  const q = x => sh.el.querySelector(x);
+  sh.el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+    mode = b.dataset.m; sh.el.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x === b));
+    q('[data-pw2]').hidden = q('[data-warn]').hidden = mode !== 'new';
+    q('[data-pw]').autocomplete = mode === 'new' ? 'new-password' : 'current-password';
+    q('[data-lbl]').textContent = mode === 'new' ? 'Konto erstellen' : 'Anmelden';
+  });
+  q('[data-ok]').onclick = async () => {
+    const url = q('[data-url]').value.trim().replace(/\/+$/, ''), an = q('[data-anon]').value.trim(), mail = q('[data-mail]').value.trim(), pw = q('[data-pw]').value;
+    if (!/^https:\/\/.+/.test(url) || an.length < 20) { q('.cloud-proj').open = true; return toast('Bitte Projekt-URL und anon key eintragen', true); }
+    if (!/.+@.+\..+/.test(mail)) return toast('Bitte E-Mail eintragen', true);
+    if (pw.length < 8) return toast('Passwort: mindestens 8 Zeichen', true);
+    if (mode === 'new' && pw !== q('[data-pw2]').value) return toast('Passwörter sind nicht gleich', true);
+    settings.set('cloudUrl', url); settings.set('cloudAnon', an);
+    busy(true, mode === 'new' ? 'Konto wird erstellt …' : 'Anmelden …');
+    try {
+      await cloudLogin(mail, pw, mode === 'new');
+      busy(true, 'Wird abgeglichen …');
+      const r = await cloudSync({ onProgress: t => busy(true, t) });
+      busy(false); sh.close(); renderSettings(); renderRecents();
+      toast(r?.got ? `Cloud aktiv · ${r.got} Element(e) geladen` : 'Cloud aktiv ✓');
+    } catch (e) {
+      busy(false); console.warn(e);
+      toast(/Failed to fetch|NetworkError/i.test(e.message) ? 'Keine Verbindung zum Supabase-Projekt' : /nib_keys|nib_items|relation|404/.test(e.message) ? 'Cloud-Tabellen fehlen – supabase/cloud.sql ausführen' : e.message, true);
+    }
+  };
 }
 
 // Online-Scan einrichten: Adresse der eigenen Supabase-Funktion + eigener Schlüssel
@@ -1051,6 +1130,10 @@ async function init() {
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';
   document.body.classList.add('tab-home'); document.body.dataset.tab = 'home';
+  initCloud();
+  addEventListener('nib-cloud-pulled', () => { renderRecents(); const t = document.body.dataset.tab; if (t === 'files') renderFiles(); if (t === 'settings') renderSettings(); });
+  onCloudStatus(() => { if (document.body.dataset.tab === 'settings') renderSettings(); });
+  try { navigator.storage?.persist?.(); } catch {}
   initIdView({ saveNewDoc, refresh: async () => { await renderRecents(); if (document.body.dataset.tab === 'files') renderFiles(); }, openPdf: id => openEditor(id, 'view', renderRecents) });
   initFiles({ openDoc, docMenu, importDocs: () => importPdfs(), importImages: () => runTool('imgscan'), scan: () => runTool('scan'), captureId: (f, c) => idCapture(f, c) });
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));

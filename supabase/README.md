@@ -1,3 +1,12 @@
+# Nibvion-Cloud (Abgleich zwischen Geräten) – Einrichtung
+
+1. **Supabase** → Projekt „Nivion“ → *SQL Editor* → *New query* → Inhalt von `supabase/cloud.sql` einfügen → **Run**.
+2. *Authentication → Sign In / Providers → Email*: **„Confirm email“ ausschalten** (sonst muss erst der Link in der Mail bestätigt werden).
+3. *Project Settings → API*: **Project URL** und **anon public** Key kopieren.
+4. **In Nibvion**: Einstellungen → Nibvion-Cloud → Supabase-Projekt eintragen → *Neues Konto* (erstes Gerät) bzw. *Anmelden* (weitere Geräte).
+
+Alles wird auf dem Gerät verschlüsselt (AES-256-GCM). Supabase speichert nur verschlüsselte Dateien, Schlüsselnamen und Zeitstempel. Passwort vergessen = Cloud-Daten nicht mehr lesbar.
+
 # Online-Scan (TextIn) – Einrichtung
 
 Optional. Ohne Einrichtung bleibt Nibvion komplett lokal.
