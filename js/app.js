@@ -7,7 +7,7 @@ import { detectCorners, cropEditor, loadFileImage, render as renderScan, enhance
 import { liveScanner, cameraSupported, cardCorners } from './camera.js';
 import { textSheet } from './textview.js';
 import { initIdView, saveIdCard, openIdView } from './idview.js';
-import { initCloud, cloudOn, cloudEmail, cloudLogin, cloudLogout, cloudSync, onCloudStatus, cloudStatus, pendingCount } from './cloud.js';
+import { initCloud, cloudOn, cloudEmail, cloudLogin, cloudLogout, cloudSync, onCloudStatus, cloudStatus, pendingCount, cloudProject, savePrefs, NIB_URL, NIB_KEY } from './cloud.js';
 import { scanReview } from './scanreview.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
@@ -18,7 +18,7 @@ import { settings, applyTheme } from './settings.js';
 import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.24.1';
+export const VERSION = '1.25.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -979,7 +979,7 @@ async function renderSettings() {
   const root = $('settings-list');
   root.querySelectorAll('[data-theme] button').forEach(b => b.onclick = () => { settings.set('theme', b.dataset.v); applyTheme(); renderSettings(); });
   root.querySelectorAll('[data-sd] button').forEach(b => b.onclick = () => { settings.set('stampDate', b.dataset.v === '1'); renderSettings(); });
-  root.querySelector('[data-om]')?.addEventListener('change', e => { settings.set('onlineMode', e.target.value); toast('Modus gespeichert'); });
+  root.querySelector('[data-om]')?.addEventListener('change', e => { settings.set('onlineMode', e.target.value); savePrefs().catch(() => {}); toast('Modus gespeichert'); });
   root.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
     const s = b.dataset.s;
     if (s === 'sigs') signatureSheet(null);
@@ -1045,14 +1045,14 @@ function cloudSheet() {
     });
     return;
   }
-  const guessUrl = (settings.get('cloudUrl') || (settings.get('onlineUrl') || '').replace(/\/functions\/v1\/.*$/, '')).trim();
+  const proj = cloudProject(), builtIn = proj.url === NIB_URL && !!NIB_KEY && !settings.get('cloudAnon');
   let mode = 'login';
   const sh = sheet({ title: 'Cloud einrichten', html: `
-    <p class="cloud-note" style="margin-top:0">Deine Dokumente, Ausweise, Ordner, Unterschriften und Stempel werden über dein Supabase-Projekt auf allen Geräten abgeglichen. Sie sind <b>Ende-zu-Ende verschlüsselt</b>.</p>
-    <details class="cloud-proj" ${guessUrl && settings.get('cloudAnon') ? '' : 'open'}><summary>Supabase-Projekt</summary>
-      <input class="field" data-url placeholder="https://xxxx.supabase.co" value="${esc(guessUrl)}" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin:8px 0 10px">
-      <input class="field" data-anon placeholder="Publishable key (sb_publishable_…)" value="${esc(settings.get('cloudAnon') || '')}" autocapitalize="off" autocorrect="off" spellcheck="false">
-      <div class="cloud-hint">Supabase → Project Settings → API Keys: „Publishable key“ (nie den Secret key!)</div></details>
+    <p class="cloud-note" style="margin-top:0">Deine Dokumente, Ausweise, Ordner, Unterschriften, Stempel und der Online-Scan-Zugang werden auf allen Geräten abgeglichen. Sie sind <b>Ende-zu-Ende verschlüsselt</b>.</p>
+    <details class="cloud-proj" ${proj.url && proj.key ? '' : 'open'}><summary>${builtIn ? 'Supabase-Projekt (Nibvion, eingebaut)' : 'Supabase-Projekt'}</summary>
+      <input class="field" data-url placeholder="https://xxxx.supabase.co" value="${esc(proj.url)}" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin:8px 0 10px">
+      <input class="field" data-anon placeholder="Publishable key (sb_publishable_…)" value="${esc(proj.key)}" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="cloud-hint">Nur ändern, wenn du ein anderes Supabase-Projekt nutzen willst. Supabase → Project Settings → API Keys: „Publishable key“ (nie den Secret key!)</div></details>
     <div class="seg cloud-seg"><button data-m="login" class="on">Anmelden</button><button data-m="new">Neues Konto</button></div>
     <input class="field" data-mail type="email" placeholder="E-Mail" autocomplete="username" autocapitalize="off" style="margin-bottom:10px">
     <input class="field" data-pw type="password" placeholder="Passwort" autocomplete="current-password" style="margin-bottom:10px">
@@ -1072,7 +1072,9 @@ function cloudSheet() {
     if (!/.+@.+\..+/.test(mail)) return toast('Bitte E-Mail eintragen', true);
     if (pw.length < 8) return toast('Passwort: mindestens 8 Zeichen', true);
     if (mode === 'new' && pw !== q('[data-pw2]').value) return toast('Passwörter sind nicht gleich', true);
-    settings.set('cloudUrl', url); settings.set('cloudAnon', an);
+    // Eingebautes Projekt nicht festschreiben → spätere Änderungen im Code greifen automatisch
+    const isBuilt = url === NIB_URL && an === NIB_KEY;
+    settings.set('cloudUrl', isBuilt ? '' : url); settings.set('cloudAnon', isBuilt ? '' : an);
     busy(true, mode === 'new' ? 'Konto wird erstellt …' : 'Anmelden …');
     try {
       await cloudLogin(mail, pw, mode === 'new');
@@ -1091,11 +1093,11 @@ function cloudSheet() {
 function onlineSheet() {
   const sh = sheet({ title: 'Online-Scan einrichten', html: `
     <p style="color:var(--text2);margin:0 0 12px;line-height:1.5">Für den Filter „☁️ Online“ wird das Foto über deine Supabase-Funktion <b style="color:var(--text)">textin-scan</b> an TextIn (CamScanner-Technik) gesendet. Ohne Einrichtung bleibt alles lokal.</p>
-    <input class="field" data-u placeholder="https://….supabase.co/functions/v1/textin-scan" value="${esc(settings.get('onlineUrl') || '')}" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin-bottom:10px">
+    <input class="field" data-u placeholder="https://….supabase.co/functions/v1/textin-scan" value="${esc(settings.get('onlineUrl') || cloudProject().url + '/functions/v1/textin-scan')}" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin-bottom:10px">
     <input class="field" type="password" data-k placeholder="Zugangsschlüssel (NIBVION_KEY)" value="${esc(settings.get('onlineKey') || '')}" autocomplete="off">
     <div class="btn-row" style="margin-top:14px">${onlineReady() ? '<button class="btn" data-del>Entfernen</button>' : ''}<button class="btn" data-test>Testen</button><button class="btn primary" data-ok>${icon('check')} Speichern</button></div>` });
   const get = () => [sh.el.querySelector('[data-u]').value.trim(), sh.el.querySelector('[data-k]').value.trim()];
-  const save = () => { const [u, k] = get(); settings.set('onlineUrl', u); settings.set('onlineKey', k); };
+  const save = () => { const [u, k] = get(); settings.set('onlineUrl', u); settings.set('onlineKey', k); savePrefs().catch(() => {}); };
   sh.el.querySelector('[data-ok]').onclick = () => { save(); sh.close(); renderSettings(); toast(onlineReady() ? 'Online-Scan eingerichtet' : 'Gespeichert'); };
   sh.el.querySelector('[data-test]').onclick = async () => {
     const [u, k] = get(); if (!u || !k) return toast('Bitte Adresse und Schlüssel eintragen', true);
@@ -1104,7 +1106,7 @@ function onlineSheet() {
     catch (e) { busy(false); toast(e.message || 'Verbindung fehlgeschlagen', true); }
   };
   const del = sh.el.querySelector('[data-del]');
-  if (del) del.onclick = () => { settings.set('onlineUrl', ''); settings.set('onlineKey', ''); sh.close(); renderSettings(); toast('Online-Scan entfernt'); };
+  if (del) del.onclick = () => { settings.set('onlineUrl', ''); settings.set('onlineKey', ''); savePrefs().catch(() => {}); sh.close(); renderSettings(); toast('Online-Scan entfernt'); };
 }
 
 // ======================= Tabs =======================

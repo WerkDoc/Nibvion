@@ -315,6 +315,106 @@ function sideViewer(k) {
   el.querySelector('[data-edit]').onclick = () => { close(); imageEditor(k); };
 }
 
+// ---------- Intelligentes Löschen (Inpainting) ----------
+// Füllt die markierte Fläche von außen nach innen mit den umliegenden Farben auf (Zwiebelschalen-
+// Verfahren), glättet und legt die Körnung der Umgebung darüber, damit es nicht „verschmiert“ aussieht.
+// Ergebnis landet deckend auf der Markierungs-Ebene → Radierer / Zurück funktionieren wie gewohnt.
+function smartErase(w, maskC) {
+  const Wd = w.ov.width, Hd = w.ov.height;
+  const md = maskC.getContext('2d').getImageData(0, 0, Wd, Hd).data;
+  let x0 = Wd, y0 = Hd, x1 = -1, y1 = -1;
+  for (let y = 0; y < Hd; y++) for (let x = 0; x < Wd; x++) if (md[(y * Wd + x) * 4 + 3] > 20) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return;
+  const PAD = 14;
+  x0 = Math.max(0, x0 - PAD); y0 = Math.max(0, y0 - PAD); x1 = Math.min(Wd - 1, x1 + PAD); y1 = Math.min(Hd - 1, y1 + PAD);
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1, N = bw * bh;
+  // Aktuelles Bild = Basis + Markierungen
+  const comp = document.createElement('canvas'); comp.width = bw; comp.height = bh;
+  const cx = comp.getContext('2d'); cx.drawImage(w.base, -x0, -y0); cx.drawImage(w.ov, -x0, -y0);
+  const px = cx.getImageData(0, 0, bw, bh).data;
+  const R = new Float32Array(N), G = new Float32Array(N), B = new Float32Array(N);
+  for (let i = 0; i < N; i++) { R[i] = px[i * 4]; G[i] = px[i * 4 + 1]; B[i] = px[i * 4 + 2]; }
+  // Maske (um 2 px erweitert, damit Ränder von Schrift nicht stehen bleiben)
+  let hole = new Uint8Array(N);
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) hole[y * bw + x] = md[((y + y0) * Wd + x + x0) * 4 + 3] > 20 ? 1 : 0;
+  for (let k = 0; k < 2; k++) {
+    const h2 = hole.slice();
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) if (!hole[y * bw + x]) {
+      if ((x > 0 && hole[y * bw + x - 1]) || (x < bw - 1 && hole[y * bw + x + 1]) || (y > 0 && hole[(y - 1) * bw + x]) || (y < bh - 1 && hole[(y + 1) * bw + x])) h2[y * bw + x] = 1;
+    }
+    hole = h2;
+  }
+  const fill = hole.slice(), known = new Uint8Array(N);
+  let left = 0; for (let i = 0; i < N; i++) { known[i] = hole[i] ? 0 : 1; left += hole[i]; }
+  if (left === N) return;
+  // Körnung der Umgebung messen (Abweichung vom 3×3-Mittel, nur bekannte Pixel nahe der Maske)
+  const sd = [0, 0, 0]; let sn = 0;
+  for (let y = 1; y < bh - 1; y++) for (let x = 1; x < bw - 1; x++) {
+    const i = y * bw + x; if (!known[i]) continue;
+    let near = false; for (let d = -6; d <= 6 && !near; d += 3) { const xx = x + d; if (xx >= 0 && xx < bw && hole[i + d]) near = true; const yy = y + d; if (yy >= 0 && yy < bh && hole[yy * bw + x]) near = true; }
+    if (!near) continue;
+    let mr = 0, mg = 0, mb = 0, c = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const j = i + dy * bw + dx; if (known[j]) { mr += R[j]; mg += G[j]; mb += B[j]; c++; } }
+    if (c < 5) continue;
+    sd[0] += (R[i] - mr / c) ** 2; sd[1] += (G[i] - mg / c) ** 2; sd[2] += (B[i] - mb / c) ** 2; sn++;
+  }
+  const sdev = sd.map(v => sn ? Math.min(28, Math.sqrt(v / sn) * 1.3) : 0);
+  // Echte Körnung der Umgebung merken (Pixel minus 5×5-Mittel), um sie später blockweise hineinzukopieren
+  const res = new Float32Array(N * 3), resOk = new Uint8Array(N), srcs = [];
+  for (let y = 2; y < bh - 2; y++) for (let x = 2; x < bw - 2; x++) {
+    const i = y * bw + x; let ok = true, mr = 0, mg = 0, mb = 0;
+    for (let dy = -2; dy <= 2 && ok; dy++) for (let dx = -2; dx <= 2; dx++) { const j = i + dy * bw + dx; if (!known[j]) { ok = false; break; } mr += R[j]; mg += G[j]; mb += B[j]; }
+    if (!ok) continue;
+    res[i * 3] = R[i] - mr / 25; res[i * 3 + 1] = G[i] - mg / 25; res[i * 3 + 2] = B[i] - mb / 25; resOk[i] = 1;
+    if (!(x & 3) && !(y & 3)) srcs.push(i);
+  }
+  // Zwiebelschalen: Ring für Ring von außen nach innen auffüllen
+  const RAD = 3;
+  for (let guard = 0; left > 0 && guard < 2000; guard++) {
+    const ring = [];
+    for (let i = 0; i < N; i++) if (!known[i]) {
+      const x = i % bw, y = (i / bw) | 0;
+      if ((x > 0 && known[i - 1]) || (x < bw - 1 && known[i + 1]) || (y > 0 && known[i - bw]) || (y < bh - 1 && known[i + bw])) ring.push(i);
+    }
+    if (!ring.length) break;
+    const vals = ring.map(i => {
+      const x = i % bw, y = (i / bw) | 0; let r = 0, g = 0, b = 0, ws = 0;
+      for (let dy = -RAD; dy <= RAD; dy++) { const yy = y + dy; if (yy < 0 || yy >= bh) continue;
+        for (let dx = -RAD; dx <= RAD; dx++) { const xx = x + dx; if (xx < 0 || xx >= bw) continue;
+          const j = yy * bw + xx; if (!known[j]) continue;
+          const wt = 1 / (dx * dx + dy * dy); r += R[j] * wt; g += G[j] * wt; b += B[j] * wt; ws += wt; } }
+      return [r / ws, g / ws, b / ws];
+    });
+    ring.forEach((i, n) => { [R[i], G[i], B[i]] = vals[n]; known[i] = 1; left--; });
+  }
+  // Glätten: Fläche wie eine gespannte Haut zwischen den Rändern ausgleichen (Laplace), gegen Streifen
+  const idx = []; for (let i = 0; i < N; i++) if (fill[i]) idx.push(i);
+  const iters = Math.min(400, 60 + Math.round(Math.sqrt(idx.length)));
+  for (let it = 0; it < iters; it++) for (const i of idx) {
+    const x = i % bw, y = (i / bw) | 0;
+    const l = x > 0 ? i - 1 : i, r = x < bw - 1 ? i + 1 : i, u = y > 0 ? i - bw : i, d = y < bh - 1 ? i + bw : i;
+    R[i] = (R[l] + R[r] + R[u] + R[d]) / 4; G[i] = (G[l] + G[r] + G[u] + G[d]) / 4; B[i] = (B[l] + B[r] + B[u] + B[d]) / 4;
+  }
+  // Körnung + weicher Rand, auf die Markierungs-Ebene schreiben
+  const oc = w.ov.getContext('2d'), od = oc.getImageData(x0, y0, bw, bh), o = od.data;
+  const blk = new Map(), BS = 8;
+  const srcFor = (x, y) => { const key = (y >> 3) * 4096 + (x >> 3); if (!blk.has(key)) blk.set(key, srcs.length ? srcs[(Math.random() * srcs.length) | 0] : -1); return blk.get(key); };
+  const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  for (let i = 0; i < N; i++) {
+    if (!fill[i]) continue;
+    const x = i % bw, y = (i / bw) | 0, j = i * 4, c = srcFor(x, y);
+    let nr, ng, nb;
+    const sI = c < 0 ? -1 : c + (y % BS) * bw + (x % BS);
+    if (sI >= 0 && sI < N && resOk[sI] && (c % bw) + (x % BS) < bw) { nr = res[sI * 3]; ng = res[sI * 3 + 1]; nb = res[sI * 3 + 2]; }
+    else { const n = gauss(); nr = n * sdev[0]; ng = n * sdev[1]; nb = n * sdev[2]; }
+    o[j] = Math.max(0, Math.min(255, R[i] + nr));
+    o[j + 1] = Math.max(0, Math.min(255, G[i] + ng));
+    o[j + 2] = Math.max(0, Math.min(255, B[i] + nb));
+    o[j + 3] = 255;
+  }
+  oc.putImageData(od, x0, y0);
+}
+
 // ---------- Bild-Editor (Ausschneiden, Filtern, Drehen, Pinsel, Text, Mosaik, Wasserzeichen) ----------
 const CARD_FILTERS = [['card', 'Foto'], ['', 'Original'], ['gray', 'Graustufen'], ['bw', 'Schwarz-Weiß']];
 const COLORS = ['#111111', '#e11d48', '#2563eb', '#16a34a', '#ffffff'];
@@ -422,7 +522,7 @@ function imageEditor(k) {
 
   const TOOLS = {
     img: [['crop', 'fit', 'Ausschneiden'], ['filter', 'sliders', 'Filtern'], ['rot', 'rotate', 'Drehen']],
-    mark: [['pen', 'pen', 'Pinsel'], ['text', 'textPlus', 'Text'], ['mosaic', 'grid', 'Mosaik'], ['wm', 'drop', 'Wasserzeichen'], ['eraser', 'eraser', 'Radierer'], ['undo', 'undo', 'Zurück']],
+    mark: [['pen', 'pen', 'Pinsel'], ['text', 'textPlus', 'Text'], ['smart', 'sparkles', 'Intelligent löschen'], ['mosaic', 'grid', 'Mosaik'], ['wm', 'drop', 'Wasserzeichen'], ['eraser', 'eraser', 'Radierer'], ['undo', 'undo', 'Zurück']],
   };
   const paintTools = () => {
     el.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -461,6 +561,7 @@ function imageEditor(k) {
     if (tool === 'text') toast('Auf das Bild tippen, wo der Text hin soll');
     if (tool !== 'text' && selT) { selT = null; paintTexts(); }
     if (tool === 'mosaic') toast('Über Bereiche wischen, die unkenntlich werden sollen');
+    if (tool === 'smart') toast('Über Text oder Flecken wischen – wird mit dem Hintergrund aufgefüllt');
   };
 
   const filterSheet = () => {
@@ -518,12 +619,22 @@ function imageEditor(k) {
     e.preventDefault(); co.setPointerCapture(e.pointerId);
     const p = pt(e), w = W();
     if (tool === 'text') return addText(p);
+    if (tool === 'smart') { last = p; smartMask = document.createElement('canvas'); smartMask.width = w.ov.width; smartMask.height = w.ov.height; smartStroke(p, p); return; }
     snap(); last = p; mosaicDone = new Set(); baseData = null;
     if (tool === 'mosaic') { mosaicAt(p); drawOv(); }
   });
+  // Intelligentes Löschen: Pinselspur als Maske sammeln (halbtransparent anzeigen), beim Loslassen füllen
+  let smartMask = null;
+  const smartStroke = (a, b) => {
+    const m = smartMask.getContext('2d');
+    m.strokeStyle = '#ff6a4d'; m.lineCap = m.lineJoin = 'round'; m.lineWidth = smartMask.width / 32;
+    m.beginPath(); m.moveTo(a[0], a[1]); m.lineTo(b[0], b[1]); m.stroke();
+    drawOv(); const x = co.getContext('2d'); x.save(); x.globalAlpha = 0.5; x.drawImage(smartMask, 0, 0); x.restore();
+  };
   co.addEventListener('pointermove', e => {
     if (!last) return;
     const p = pt(e), w = W(), x = w.ov.getContext('2d');
+    if (tool === 'smart') { smartStroke(last, p); last = p; return; }
     if (tool === 'mosaic') {
       const n = Math.ceil(Math.hypot(p[0] - last[0], p[1] - last[1]) / (w.ov.width / 80)) || 1;
       for (let i = 1; i <= n; i++) mosaicAt([last[0] + (p[0] - last[0]) * i / n, last[1] + (p[1] - last[1]) * i / n]);
@@ -536,7 +647,15 @@ function imageEditor(k) {
     }
     last = p; drawOv();
   });
-  const up = () => { last = null; };
+  const up = () => {
+    if (tool === 'smart' && smartMask && last) {
+      const m = smartMask; smartMask = null; last = null;
+      snap(); busy(true, 'Wird entfernt …');
+      setTimeout(() => { try { smartErase(W(), m); } catch (e) { console.warn(e); toast('Konnte nicht entfernt werden', true); } busy(false); drawOv(); }, 30);
+      return;
+    }
+    last = null;
+  };
   co.addEventListener('pointerup', up); co.addEventListener('pointercancel', up);
 
   el.querySelector('[data-prev]').onclick = () => { if (k > 0) { selT = null; k--; haptic(); layout(); } };
