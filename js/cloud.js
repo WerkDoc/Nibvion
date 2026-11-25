@@ -56,7 +56,16 @@ async function token() {
 }
 async function api(path, opt = {}) {
   const r = await fetch(`${base()}${path}`, { ...opt, headers: { apikey: anon(), Authorization: `Bearer ${await token()}`, ...(opt.headers || {}) } });
-  if (!r.ok) { const t = await r.text().catch(() => ''); const e = new Error(`${r.status} ${t.slice(0, 160)}`); e.status = r.status; throw e; }
+  if (!r.ok) {
+    const t = await r.text().catch(() => ''); let j = {}; try { j = JSON.parse(t); } catch {}
+    const code = j.code || '', msg = j.message || j.error || t.slice(0, 160);
+    const e = new Error(
+      code === '42501' || /permission denied/i.test(msg) ? 'Supabase verweigert den Zugriff – die GRANT-Zeilen aus cloud.sql ausführen'
+      : code === 'PGRST205' || code === '42P01' ? 'Cloud-Tabellen fehlen – supabase/cloud.sql ausführen'
+      : /bucket not found/i.test(msg) ? 'Speicher-Bucket „nibvion“ fehlt – supabase/cloud.sql ausführen'
+      : `Supabase ${r.status}: ${msg}`);
+    e.status = r.status; e.code = code; throw e;
+  }
   return r;
 }
 
@@ -76,6 +85,14 @@ export async function cloudLogin(email, pw, create = false) {
     catch (e) { throw new Error(/invalid/i.test(e.message) ? 'E-Mail oder Passwort falsch' : /confirm/i.test(e.message) ? 'E-Mail noch nicht bestätigt – Link in der Mail antippen' : e.message); }
   }
   lsSet(LS.auth, null); keepSession(j);
+  try { await setupKey(pw, email); }
+  catch (e) { lsSet(LS.auth, null); throw e; }          // halb angemeldet bleibt nichts hängen
+  // Alles Lokale vormerken; beim Abgleich gewinnt jeweils der neuere Stand
+  lsSet(LS.known, {}); lsSet(LS.last, '1970-01-01T00:00:00Z');
+  await markAll();
+}
+
+async function setupKey(pw, email) {
   // Datenschlüssel holen oder (erstes Gerät) anlegen
   const kek = await aesKey(await derive(pw, email, 'enc'));
   const rows = await (await api('/rest/v1/nib_keys?select=wrapped')).json();
@@ -88,9 +105,6 @@ export async function cloudLogin(email, pw, create = false) {
   }
   DEK = await aesKey(raw);
   await keyOp('readwrite', s => s.put(DEK, 'dek'));
-  // Alles Lokale vormerken; beim Abgleich gewinnt jeweils der neuere Stand
-  lsSet(LS.known, {}); lsSet(LS.last, '1970-01-01T00:00:00Z');
-  await markAll();
 }
 
 export async function cloudLogout() {
@@ -156,7 +170,7 @@ export function cloudSync({ onProgress } = {}) {
   running = (async () => {
     status({ state: 'sync' });
     try {
-      if (!await loadDek()) throw new Error('Schlüssel fehlt – bitte neu anmelden');
+      if (!await loadDek()) { await cloudLogout(); status({ state: 'off', error: null }); return null; }
       const got = await pull(onProgress), sent = await push(onProgress);
       settings.set('cloudLast', Date.now());
       status({ state: 'ok', at: Date.now(), error: null });
