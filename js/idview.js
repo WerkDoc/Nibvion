@@ -1055,7 +1055,8 @@ async function infoForm(autoFill) {
   const d = view.d;
   let cat = d.idCat || 'other';
   const vals = { ...(d.idInfo || {}) };
-  let focus = 'name', ocr = d.idOcrV === 2 ? d.idOcr : null;
+  // Ergebnis merken: v3 = TextIn-KI, v2 = Gerät (mit eingerichteter KI nur v3 übernehmen)
+  let focus = 'name', ocr = d.idOcrV === 3 || (d.idOcrV === 2 && !onlineReady()) ? d.idOcr : null;
   const el = document.createElement('div'); el.className = 'idf';
   el.innerHTML = `
     <div class="idf-head"><button class="icon-btn" data-x aria-label="Zurück">${icon('chevronLeft')}</button><div class="idf-title">ID-Info bearbeiten</div><button class="link-btn" data-ok>Speichern</button></div>
@@ -1113,12 +1114,29 @@ async function infoForm(autoFill) {
   };
 
   if (ocr) { paintBoxes(); if (autoFill) applyGuess(true); return; }
-  // Texterkennung im Hintergrund (lokal, Tesseract)
+  // Texterkennung: TextIn-KI (wenn eingerichtet), sonst lokal mit Tesseract
+  const hint = t => { const h = el.querySelector('[data-hint]'); if (h) h.textContent = t; };
   try {
-    const { recognizeWords } = await import('./ocr.js');
     const cs = view.states.map(st => baseCanvas(st.img, st.side, 1800));
-    ocr = await recognizeWords(cs, { onProgress: p => { const h = el.querySelector('[data-hint]'); if (h) h.textContent = `Text wird erkannt … ${Math.round(p * 100)} %`; } });
-    d.idOcr = ocr; d.idOcrV = 2; await db.put('docs', d);
+    let v = 2;
+    ocr = null;
+    if (onlineReady()) {
+      try {
+        hint('KI liest den Text …');
+        const isMrz = t => { const x = t.replace(/\s+/g, ''); return x.length >= 25 && (x.match(/</g) || []).length >= 3; };
+        const res = [];
+        for (const c of cs) {
+          const ls = await onlineOcr(c);
+          res.push({ words: ls.map(l => ({ t: l.t, b: l.b, mrz: isMrz(l.t) })), lines: ls.map(l => l.t), mrz: ls.filter(l => isMrz(l.t)).map(l => l.t.replace(/\s+/g, '')) });
+        }
+        ocr = res; v = 3;
+      } catch (e) { console.warn(e); toast(`Online-KI nicht erreichbar (${e.message}) – lese auf dem Gerät`, true); }
+    }
+    if (!ocr) {
+      const { recognizeWords } = await import('./ocr.js');
+      ocr = await recognizeWords(cs, { onProgress: p => hint(`Text wird erkannt … ${Math.round(p * 100)} %`) });
+    }
+    d.idOcr = ocr; d.idOcrV = v; await db.put('docs', d);
     if (!el.isConnected) return;
     paintBoxes(); if (autoFill) applyGuess(true);
   } catch (e) { console.warn(e); if (el.isConnected) { ocr = null; paintBoxes(); } }
