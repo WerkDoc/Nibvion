@@ -195,7 +195,7 @@ export async function recognizeCanvases(canvases, { onProgress } = {}) {
  * 1. Durchgang: ganzes Bild (Graustufen, Kontrast gespreizt) – nur sichere Wörter, kein Guilloche-Rauschen
  * 2. Durchgang: maschinenlesbare Zone (MRZ) unten, stark vergrößert, nur A–Z 0–9 < erlaubt
  */
-const prep = (src, x0 = 0, y0 = 0, w0 = src.width, h0 = src.height, minW = 0, bin = false, chan = -1) => {
+const prep = (src, x0 = 0, y0 = 0, w0 = src.width, h0 = src.height, minW = 0, bin = false, chan = -1, smooth = 0) => {
   const k = Math.max(1, minW / w0), c = document.createElement('canvas');
   c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
   const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high';
@@ -209,6 +209,18 @@ const prep = (src, x0 = 0, y0 = 0, w0 = src.width, h0 = src.height, minW = 0, bi
     chan = sd.indexOf(Math.max(...sd));
   }
   for (let i = 0; i < n; i++) { const v = chan >= 0 ? d[i * 4 + chan] : Math.min(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]) * 0.5 + (d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11) * 0.5; L[i] = v; hist[v | 0]++; }
+  if (smooth) {                                       // Körnung (z. B. Kartenstruktur) glätten, damit sie nicht als Text gilt
+    const W = c.width, H = c.height, T = new Uint8Array(n);
+    for (let pass = 0; pass < smooth; pass++) {
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        let s2 = 0, k = 0;
+        for (let dy = -1; dy <= 1; dy++) { const yy = y + dy; if (yy < 0 || yy >= H) continue; for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx < 0 || xx >= W) continue; s2 += L[yy * W + xx]; k++; } }
+        T[y * W + x] = s2 / k;
+      }
+      L.set(T);
+    }
+    hist.fill(0); for (let i = 0; i < n; i++) hist[L[i]]++;
+  }
   let a = 0, lo = 0, hi = 255;
   for (let v = 0; v < 256; v++) { a += hist[v]; if (a < n * 0.01) lo = v; if (a < n * 0.97) hi = v; }
   let thr = 0;
@@ -239,6 +251,57 @@ function brightChan(c) {
   for (let i = 0; i < d.length; i += 4) { m[0] += d[i]; m[1] += d[i + 1]; m[2] += d[i + 2]; }
   const hi = Math.max(...m), lo = Math.min(...m);
   return (hi - lo) / (d.length / 4) > 25 ? [m.indexOf(hi)] : [];
+}
+
+/**
+ * Für „Text bearbeiten“ (Ausweis-Editor): nur sicher erkannte Textstücke, je Zeile an großen Lücken getrennt.
+ * Zwei Durchgänge (normal + hellster Farbkanal, geglättet) – Zeichensalat aus Fotos/Mustern wird verworfen.
+ * → [{ t, b: [x0,y0,x1,y1] (0..1), h (Schrifthöhe 0..1) }]
+ */
+export async function recognizeEditLines(c, { onProgress, crop = false } = {}) {
+  // Ausschnitt (vom Nutzer markiert): großzügiger, es ist ja sicher Text darin
+  const passes = [[-1, 0, crop ? 35 : 58], ...brightChan(c).map(ch => [ch, 1, crop ? 40 : 65])];
+  let step = 0;
+  const worker = await makeWorker(m => { if (m.status === 'recognizing text' && onProgress) onProgress((step + m.progress) / passes.length); });
+  const out = [];
+  try {
+    for (const [ch, smooth, minConf] of passes) {
+      await tick();
+      const pc = prep(c, 0, 0, c.width, c.height, 2000, false, ch, smooth), PW = pc.width, PH = pc.height;
+      const { data } = await worker.recognize(pc, {}, { blocks: true, text: true });
+      step++;
+      for (const bl of data.blocks || []) for (const p of bl.paragraphs || []) for (const l of p.lines || []) {
+        const ok = (l.words || []).filter(w => {
+          const t = (w.text || '').trim(), an = (t.match(/[\p{L}\d]/gu) || []).length;
+          const wpx = w.bbox.x1 - w.bbox.x0, hpx = w.bbox.y1 - w.bbox.y0, per = wpx / Math.max(1, t.length) / Math.max(1, hpx);
+          return t && w.confidence >= minConf && an >= Math.max(1, t.length * 0.7) && (an >= 2 || /\d/.test(t))
+            && hpx / PH > (crop ? 0.05 : 0.014) && hpx / PH < (crop ? 1 : 0.2) && per > 0.18 && per < 1.6;
+        });
+        // an großen Lücken trennen (z. B. „Name“ links, Wert rechts)
+        let seg = null;
+        const flush = () => {
+          if (!seg) return;
+          const an = (seg.t.match(/[\p{L}\d]/gu) || []).length;
+          if (an >= 2) {
+            const b = [seg.x0 / PW, seg.y0 / PH, seg.x1 / PW, seg.y1 / PH], hs = seg.hs.sort((x, y) => x - y), h = hs[(hs.length - 1) >> 1] / PH;
+            const sc = seg.conf / seg.n * Math.sqrt(an), dup = out.find(o => overlap(o.b, b) > 0.3);
+            if (!dup) out.push({ t: seg.t, b, h, sc });
+            else if (sc > dup.sc) Object.assign(dup, { t: seg.t, b, h, sc });
+          }
+          seg = null;
+        };
+        for (const w of ok) {
+          const hpx = w.bbox.y1 - w.bbox.y0;
+          if (seg && w.bbox.x0 - seg.x1 > 1.6 * Math.max(hpx, seg.hs[0])) flush();
+          if (!seg) seg = { t: w.text.trim(), x0: w.bbox.x0, y0: w.bbox.y0, x1: w.bbox.x1, y1: w.bbox.y1, hs: [hpx], conf: w.confidence, n: 1 };
+          else { seg.t += ' ' + w.text.trim(); seg.x1 = Math.max(seg.x1, w.bbox.x1); seg.y0 = Math.min(seg.y0, w.bbox.y0); seg.y1 = Math.max(seg.y1, w.bbox.y1); seg.hs.push(hpx); seg.conf += w.confidence; seg.n++; }
+        }
+        flush();
+      }
+      pc.width = pc.height = 0;
+    }
+  } finally { try { await worker.terminate(); } catch {} }
+  return out.map(({ t, b, h }) => ({ t, b, h }));
 }
 
 export async function recognizeWords(canvases, { onProgress, minConf = 60, mrz = true, chan = -1 } = {}) {

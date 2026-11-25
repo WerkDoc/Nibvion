@@ -428,22 +428,36 @@ function smartErase(w, maskC) {
 }
 
 // ---------- Hilfen für „Text bearbeiten“ / „Erneut aufnehmen“ ----------
-// Wörter einer Zeile zu einem antippbaren Block zusammenfassen
-function groupLines(words, ar) {
-  const ws = words.map(w => ({ t: w.t, b: [...w.b] })).sort((a, b) => (a.b[1] + a.b[3]) - (b.b[1] + b.b[3]) || a.b[0] - b.b[0]);
-  const lines = [];
-  for (const w of ws.sort((a, b) => a.b[0] - b.b[0])) {
-    const h = w.b[3] - w.b[1];
-    const ln = lines.find(l => {
-      const ov = Math.min(l.b[3], w.b[3]) - Math.max(l.b[1], w.b[1]);
-      return ov > 0.5 * Math.min(h, l.b[3] - l.b[1]) && (w.b[0] - l.b[2]) * ar < 1.6 * Math.max(h, l.b[3] - l.b[1]) && w.b[0] >= l.b[2] - 0.01;
-    });
-    if (ln) { ln.t += ' ' + w.t; ln.hs.push(h); ln.b = [Math.min(ln.b[0], w.b[0]), Math.min(ln.b[1], w.b[1]), Math.max(ln.b[2], w.b[2]), Math.max(ln.b[3], w.b[3])]; }
-    else lines.push({ t: w.t, b: [...w.b], hs: [h] });
+// Bereich mit „Tinte“ (stark vom Hintergrund abweichende Pixel) in einem Ausschnitt → [x0,y0,x1,y1] in px
+function inkBox(c) {
+  const W = c.width, H = c.height, px = c.getContext('2d').getImageData(0, 0, W, H).data, n = W * H, L = new Float32Array(n);
+  for (let i = 0; i < n; i++) L[i] = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2];
+  // Abweichung vom örtlichen Mittel (Integralbild) – Schatten/Verläufe zählen so nicht als Schrift
+  const R = Math.max(4, Math.round(Math.min(W, H) / 5)), I = new Float64Array((W + 1) * (H + 1));
+  for (let y = 0; y < H; y++) { let rs = 0; for (let x = 0; x < W; x++) { rs += L[y * W + x]; I[(y + 1) * (W + 1) + x + 1] = I[y * (W + 1) + x + 1] + rs; } }
+  const dev = new Float32Array(n);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const ax = Math.max(0, x - R), ay = Math.max(0, y - R), bx = Math.min(W, x + R + 1), by = Math.min(H, y + R + 1);
+    const m = (I[by * (W + 1) + bx] - I[ay * (W + 1) + bx] - I[by * (W + 1) + ax] + I[ay * (W + 1) + ax]) / ((bx - ax) * (by - ay));
+    dev[y * W + x] = Math.abs(L[y * W + x] - m);
   }
-  // Schriftgröße: mittlere Wordhöhe (nicht die ganze Box – Logos o. Ä. machen sie sonst zu groß)
-  for (const l of lines) l.h = l.hs.sort((a, b) => a - b)[(l.hs.length - 1) >> 1];
-  return lines;
+  const srt = Float32Array.from(dev).sort();
+  const thr = Math.max(18, srt[Math.floor(n * 0.96)] * 0.7);
+  const ink = i => dev[i] > thr;
+  // Zeilen: dichteste Textzeile finden (Körnung ist viel dünner als Schrift), Lücken bis 2 px überbrücken
+  const rows = new Uint32Array(H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (ink(y * W + x)) rows[y]++;
+  const rmax = Math.max(...rows); if (!rmax) return null;
+  const ry = rows.indexOf(rmax), rok = y => rows[y] > rmax * 0.15;
+  let y0 = ry, y1 = ry;
+  while (y0 > 0 && (rok(y0 - 1) || (y0 > 2 && rok(y0 - 2)) || (y0 > 3 && rok(y0 - 3)))) y0--;
+  while (y1 < H - 1 && (rok(y1 + 1) || (y1 < H - 3 && rok(y1 + 2)) || (y1 < H - 4 && rok(y1 + 3)))) y1++;
+  // Spalten nur in diesen Zeilen
+  const cols = new Uint32Array(W);
+  for (let y = y0; y <= y1; y++) for (let x = 0; x < W; x++) if (ink(y * W + x)) cols[x]++;
+  const cmax = Math.max(...cols), cc = [...cols.keys()].filter(x => cols[x] > Math.max(1, cmax * 0.15));
+  if (!cc.length) return null;
+  return [cc[0], y0, cc[cc.length - 1] + 1, y1 + 1];
 }
 // Schriftfarbe in einem Kasten: Pixel, die am stärksten vom Hintergrund abweichen
 function inkColor(c, x0, y0, x1, y1) {
@@ -598,7 +612,7 @@ function imageEditor(k) {
     el.querySelector('.ide-colors').hidden = !(tool === 'pen' || tool === 'text' || selT);
     el.querySelectorAll('[data-c]').forEach(b => b.classList.toggle('on', b.dataset.c === color));
     el.querySelectorAll('[data-t]').forEach(b => b.onclick = () => action(b.dataset.t));
-    co.style.pointerEvents = tool && tool !== 'textedit' ? 'auto' : 'none';
+    co.style.pointerEvents = tool ? 'auto' : 'none';
     paintBoxes();
   };
   el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; tool = null; haptic(); paintTools(); });
@@ -686,23 +700,23 @@ function imageEditor(k) {
     if (!w.boxes) {
       busy(true, 'Text wird erkannt …');
       try {
-        const { recognizeWords } = await import('./ocr.js');
-        const c = withOverlay(w.base, w.ov);
-        const [o] = await recognizeWords([c], { minConf: 30, mrz: false, chan: 'multi', onProgress: p => busy(true, `Text wird erkannt … ${Math.round(p * 100)} %`) });
-        // Zeichensalat (z. B. aus Logos/Chip) weglassen
-        const real = x => !x.mrz && (x.t.match(/[\p{L}\d]/gu) || []).length >= Math.max(2, x.t.length * 0.6);
-        w.boxes = groupLines(o.words.filter(real), c.width / c.height);
+        const { recognizeEditLines } = await import('./ocr.js');
+        w.boxes = await recognizeEditLines(withOverlay(w.base, w.ov), { onProgress: p => busy(true, `Text wird erkannt … ${Math.round(p * 100)} %`) });
       } catch (e) { console.warn(e); busy(false); tool = null; paintTools(); return toast('Texterkennung fehlgeschlagen', true); }
       busy(false);
     }
     if (tool !== 'textedit' || W() !== w) return;
     paintBoxes();
-    toast(w.boxes.length ? 'Markierten Text antippen, um ihn zu ändern' : 'Kein Text gefunden', !w.boxes.length);
+    toast(w.boxes.length ? 'Text antippen zum Ändern – fehlt etwas? Rahmen darum ziehen' : 'Rahmen um den Text ziehen, den du ändern willst');
   }
   async function editBox(j) {
     const w = W(), b = w.boxes[j]; if (!b) return;
-    const v = await promptDlg('Text bearbeiten', b.t, 'Fertig', 'Leer lassen = Text entfernen');
-    if (v == null || v === b.t) return;
+    if (await replaceText(w, b, b.t)) { w.boxes.splice(j, 1); paintBoxes(); }
+  }
+  // Text in einem Kasten ersetzen: alt intelligent entfernen, neu in gemessener Farbe/Größe einsetzen
+  async function replaceText(w, b, old) {
+    const v = await promptDlg('Text bearbeiten', old, 'Fertig', 'Leer lassen = Text entfernen');
+    if (v == null || (old && v === old)) return false;
     const Wd = w.ov.width, Hd = w.ov.height;
     const x0 = b.b[0] * Wd, y0 = b.b[1] * Hd, x1 = b.b[2] * Wd, y1 = b.b[3] * Hd, h = y1 - y0;
     const col = inkColor(withOverlay(w.base, w.ov), x0, y0, x1, y1);
@@ -712,14 +726,38 @@ function imageEditor(k) {
     busy(true, 'Text wird ersetzt …'); await tick();
     try { smartErase(w, m); } catch (e) { console.warn(e); }
     busy(false); drawOv();
-    w.boxes.splice(j, 1);
     if (v.trim()) {
-      const th = (b.h || b.b[3] - b.b[1]) * Hd;
-      const t = { t: v.trim(), x: x0 / Wd, y: (y0 + h / 2) / Hd, color: col, fs: th * 1.15 / Wd, wt: 500 };
-      w.texts.push(t); paintTexts();
+      const th = (b.h || (b.b[3] - b.b[1])) * Hd;
+      w.texts.push({ t: v.trim(), x: x0 / Wd, y: (y0 + h / 2) / Hd, color: col, fs: th * 1.15 / Wd, wt: 500 }); paintTexts();
     }
-    w.dirty = true; haptic(); paintBoxes();
+    w.dirty = true; haptic();
     toast(v.trim() ? 'Text ersetzt – antippen zum Verschieben oder Anpassen' : 'Text entfernt');
+    return true;
+  }
+  // Nicht erkannt? Rahmen um den Text ziehen → dieser Ausschnitt wird gezielt gelesen
+  async function editRect(r) {
+    const w = W(), Wd = w.ov.width, Hd = w.ov.height;
+    const x0 = Math.max(0, Math.min(r[0], r[2])), y0 = Math.max(0, Math.min(r[1], r[3])), x1 = Math.min(Wd, Math.max(r[0], r[2])), y1 = Math.min(Hd, Math.max(r[1], r[3]));
+    if (x1 - x0 < 12 || y1 - y0 < 8) return;
+    const comp = withOverlay(w.base, w.ov), cw = Math.round(x1 - x0), ch = Math.round(y1 - y0);
+    const crop = document.createElement('canvas'); crop.width = cw; crop.height = ch;
+    crop.getContext('2d').drawImage(comp, x0, y0, cw, ch, 0, 0, cw, ch);
+    let box = { b: [x0 / Wd, y0 / Hd, x1 / Wd, y1 / Hd], h: 0 }, txt = '';
+    busy(true, 'Text wird gelesen …');
+    try {
+      const { recognizeEditLines } = await import('./ocr.js');
+      const ls = (await recognizeEditLines(crop, { crop: true })).sort((a, b) => a.b[1] - b.b[1] || a.b[0] - b.b[0]);
+      if (ls.length) {
+        txt = ls.map(l => l.t).join(' ');
+        const u = [Math.min(...ls.map(l => l.b[0])), Math.min(...ls.map(l => l.b[1])), Math.max(...ls.map(l => l.b[2])), Math.max(...ls.map(l => l.b[3]))];
+        box = { b: [(x0 + u[0] * cw) / Wd, (y0 + u[1] * ch) / Hd, (x0 + u[2] * cw) / Wd, (y0 + u[3] * ch) / Hd], h: ls[0].h * ch / Hd };
+      } else {                                  // nichts gelesen: Kasten auf die Schrift im Rahmen verkleinern
+        const k = inkBox(crop);
+        if (k) box = { b: [(x0 + k[0]) / Wd, (y0 + k[1]) / Hd, (x0 + k[2]) / Wd, (y0 + k[3]) / Hd], h: (k[3] - k[1]) / Hd };
+      }
+    } catch (e) { console.warn(e); }
+    busy(false);
+    await replaceText(w, box, txt);
   }
 
   // ---- Erneut aufnehmen: Foto dieser Seite ersetzen ----
@@ -796,6 +834,7 @@ function imageEditor(k) {
     e.preventDefault(); co.setPointerCapture(e.pointerId);
     const p = pt(e), w = W();
     if (tool === 'text') return addText(p);
+    if (tool === 'textedit') { last = p; rectStart = p; return; }
     if (tool === 'smart') { last = p; smartMask = document.createElement('canvas'); smartMask.width = w.ov.width; smartMask.height = w.ov.height; smartStroke(p, p); return; }
     snap(); last = p; mosaicDone = new Set(); baseData = null;
     if (tool === 'mosaic') { mosaicAt(p); drawOv(); }
@@ -812,6 +851,13 @@ function imageEditor(k) {
     if (!last) return;
     const p = pt(e), w = W(), x = w.ov.getContext('2d');
     if (tool === 'smart') { smartStroke(last, p); last = p; return; }
+    if (tool === 'textedit') {
+      last = p; drawOv();
+      const x = co.getContext('2d'); x.save(); x.strokeStyle = '#ff6a5b'; x.lineWidth = co.width / 300; x.setLineDash([co.width / 90, co.width / 150]);
+      x.fillStyle = 'rgba(255,106,91,.12)'; x.fillRect(rectStart[0], rectStart[1], p[0] - rectStart[0], p[1] - rectStart[1]);
+      x.strokeRect(rectStart[0], rectStart[1], p[0] - rectStart[0], p[1] - rectStart[1]); x.restore();
+      return;
+    }
     if (tool === 'mosaic') {
       const n = Math.ceil(Math.hypot(p[0] - last[0], p[1] - last[1]) / (w.ov.width / 80)) || 1;
       for (let i = 1; i <= n; i++) mosaicAt([last[0] + (p[0] - last[0]) * i / n, last[1] + (p[1] - last[1]) * i / n]);
@@ -824,7 +870,12 @@ function imageEditor(k) {
     }
     last = p; drawOv();
   });
+  let rectStart = null;
   const up = () => {
+    if (tool === 'textedit' && rectStart && last) {
+      const r = [...rectStart, ...last]; rectStart = null; last = null; drawOv();
+      editRect(r); return;
+    }
     if (tool === 'smart' && smartMask && last) {
       const m = smartMask; smartMask = null; last = null;
       snap(); busy(true, 'Wird entfernt …');
