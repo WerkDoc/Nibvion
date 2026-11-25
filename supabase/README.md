@@ -30,3 +30,13 @@ Optional. Ohne Einrichtung bleibt Nibvion komplett lokal.
 Danach gibt es in der Scan-Ansicht den Filter **„☁️ Online“**. Nur dann wird das Foto an TextIn gesendet.
 
 **Text bearbeiten (Ausweis-Editor):** Ist der Online-Scan eingerichtet, liest die TextIn-KI („pdf_to_markdown“, nur Textzeilen mit Positionen) den Text – deutlich genauer als die Erkennung auf dem Gerät. Dafür muss die Funktion `textin-scan` den Stand ab v1.27.0 haben (Code neu einfügen → *Deploy*). Ohne Verbindung liest die App wie bisher auf dem Gerät.
+
+# Übersetzen (DeepL) – Einrichtung
+
+Für **Werkzeuge → Übersetzen** und den Kamera-Modus **„Übersetzen“**. Der Text wird von TextIn gelesen (Online-Scan muss eingerichtet sein) und von DeepL übersetzt.
+
+1. **DeepL-Konto** anlegen: deepl.com → *API* → **DeepL API Free** (bis 500.000 Zeichen im Monat kostenlos). Unter *Konto → API-Schlüssel* den Schlüssel kopieren (endet auf `:fx`).
+2. **Supabase** → *Edge Functions* → `textin-scan` → Code aus `supabase/functions/textin-scan/index.ts` (Stand v1.30.0) neu einfügen → **Deploy**.
+3. *Edge Functions → Secrets* → neues Secret `DEEPL_KEY` = der DeepL-Schlüssel.
+
+Fertig – in der App muss nichts eingestellt werden.

@@ -73,6 +73,28 @@ export async function onlineOcr(canvas) {
   });
 }
 
+/**
+ * Übersetzen über DeepL (läuft über dieselbe Supabase-Funktion, Secret DEEPL_KEY).
+ * → [{ text, lang }] in derselben Reihenfolge
+ */
+export async function onlineTranslate(texts, target = 'DE', source = '') {
+  const out = [];
+  for (let i = 0; i < texts.length; i += 50) {
+    const url = new URL(settings.get('onlineUrl')); url.searchParams.set('op', 'translate');
+    const r = await fetch(url, {
+      method: 'POST', headers: { 'x-nibvion-key': settings.get('onlineKey'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: texts.slice(i, i + 50), target_lang: target, ...(source ? { source_lang: source } : {}) }),
+    });
+    let j; try { j = await r.json(); } catch { throw new Error(`Übersetzung: keine gültige Antwort (${r.status})`); }
+    if (j.code !== 200) {
+      const msg = { 401: 'Zugangsschlüssel falsch', 40104: 'DeepL ist noch nicht eingerichtet (Secret DEEPL_KEY fehlt)', 40105: 'DeepL-Schlüssel falsch', 40106: 'DeepL-Kontingent aufgebraucht' }[j.code];
+      throw new Error(msg || `${j.message || 'Fehler ' + j.code} – ist die Supabase-Funktion schon aktualisiert?`);
+    }
+    out.push(...(j.result?.translations || []).map(t => ({ text: t.text, lang: t.detected_source_language })));
+  }
+  return out;
+}
+
 /** Verbindung prüfen: kleines Testbild senden. */
 export async function testOnline() {
   const c = document.createElement('canvas'); c.width = 300; c.height = 400;

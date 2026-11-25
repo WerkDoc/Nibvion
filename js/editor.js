@@ -1,4 +1,5 @@
 // ================= Nibvion Editor =================
+import { aiScan } from './aifx.js';
 import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
 import { sheet, toast, busy, confirmDlg, promptDlg, esc, pickFiles, today, haptic } from './ui.js';
@@ -454,8 +455,8 @@ function drawObj(o, parent) {
   return g;
 }
 
-// ---------- Scan-Animation beim „Text ändern“ (wie ein Scanner, von unten nach oben) ----------
-const SWEEP = 1300;
+// ---------- Scan-Animation beim „Text ändern“ („Nibvion AI analysiert“, Linie von oben nach unten) ----------
+const SWEEP = 1100;
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 function scanState(i) {
   const p = E.pages[i];
@@ -463,22 +464,16 @@ function scanState(i) {
   let st = E.scanFx[i];
   if (st === 'done' || st === 'reveal') return st;
   if (reduceMotion()) return (E.scanFx[i] = ready ? 'done' : 'loop');
-  let fx = p.el.querySelector('.scan-fx');
-  if (!st) {
-    fx?.remove();
-    fx = document.createElement('div'); fx.className = 'scan-fx';
-    fx.innerHTML = '<div class="scan-band"></div><div class="scan-msg-wrap"><span class="scan-spark"></span><span class="scan-msg">Text wird analysiert …</span></div>';
-    p.el.appendChild(fx);
+  E.scanObj ||= {};
+  if (!st || !E.scanObj[i]?.el.isConnected) {
+    p.el.querySelector('.scan-fx')?.remove();
+    E.scanObj[i] = aiScan(p.el, { src: () => p.canvas });
     st = E.scanFx[i] = 'loop';
   }
-  if (ready && fx) {
+  if (ready) {
     // letzter Durchlauf: Textfelder erscheinen genau dann, wenn die Linie sie überstreicht
-    fx.classList.add('final');
     E.scanFx[i] = 'reveal'; E.scanT0 = E.scanT0 || {}; E.scanT0[i] = performance.now();
-    setTimeout(() => {
-      if (E.scanFx[i] !== 'reveal') return;
-      E.scanFx[i] = 'done'; fx.classList.add('out'); setTimeout(() => fx.remove(), 400);
-    }, SWEEP);
+    E.scanObj[i].finish(SWEEP).then(() => { if (E.scanFx[i] === 'reveal') E.scanFx[i] = 'done'; });
     return 'reveal';
   }
   return st;
@@ -496,7 +491,7 @@ function renderLayer(i) {
       editItems(i).forEach(t => {
         if (replaced.has(t.key)) return;
         const r = el('rect', { class: 'titem' + (st === 'reveal' ? ' rev' : ''), x: t.x - 0.5, y: t.top - 0.5, width: t.w + 1, height: t.h + 1, rx: 0.8, 'data-key': t.key }, svg);
-        if (st === 'reveal') r.style.animationDelay = `${Math.round(SWEEP * (1 - (t.top + t.h / 2) / H) / 1.15 - el0)}ms`;
+        if (st === 'reveal') r.style.animationDelay = `${Math.round(SWEEP * (t.top + t.h / 2) / H - el0)}ms`;
       });
     }
   } else p.el.querySelector('.scan-fx')?.remove();

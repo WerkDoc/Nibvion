@@ -33,6 +33,7 @@ export const CAM_MODES = [
   { id: 'scan', label: 'Scannen' },
   { id: 'id', label: 'Ausweise' },
   { id: 'text', label: 'Text extrahieren' },
+  { id: 'translate', label: 'Übersetzen' },
   { id: 'word', label: 'Zu Word' },
   { id: 'excel', label: 'Zu Excel' },
   { id: 'sign', label: 'Unterschreiben' },
@@ -48,7 +49,7 @@ const ID_TYPES = [
   { id: 'other', label: 'Andere', sides: 2, r: 85.6 / 54 },
 ];
 const HINTS = {
-  scan: 'Dokument ins Bild halten', text: 'Text ins Bild halten', word: 'Dokument ins Bild halten',
+  scan: 'Dokument ins Bild halten', text: 'Text ins Bild halten', translate: 'Text zum Übersetzen ins Bild halten', word: 'Dokument ins Bild halten',
   excel: 'Tabelle ins Bild halten', sign: 'Dokument zum Unterschreiben', stamp: 'Foto mit Datum und Uhrzeit', qr: 'QR-Code in den Rahmen halten',
 };
 let jsqrP = null;
@@ -137,7 +138,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
     const idt = () => ID_TYPES.find(t => t.id === idType) || ID_TYPES[0];
     const cardMode = () => mode === 'id' && idt().sides > 0;     // Ausweis mit Rahmen-Schablone
     const usesQuad = () => !['stamp', 'qr'].includes(mode) && !cardMode();
-    const autoOK = () => auto && ['scan', 'word', 'excel', 'sign', 'text'].includes(mode) || (auto && mode === 'id' && !cardMode());
+    const autoOK = () => auto && ['scan', 'word', 'excel', 'sign', 'text', 'translate'].includes(mode) || (auto && mode === 'id' && !cardMode());
 
     const updThumb = () => {
       const n = startCount + items.length;
@@ -178,13 +179,13 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
         track_.style.transform = `translateX(${track_.parentElement.clientWidth / 2 - x}px)`;
       }
       wrap.querySelectorAll('[data-idt]').forEach(b => b.classList.toggle('on', b.dataset.idt === idType));
-      wrap.querySelector('[data-auto]').hidden = !['scan', 'word', 'excel', 'sign', 'text'].includes(mode) && !(mode === 'id' && !cardMode());
+      wrap.querySelector('[data-auto]').hidden = !['scan', 'word', 'excel', 'sign', 'text', 'translate'].includes(mode) && !(mode === 'id' && !cardMode());
       quad = null; stable = 0;
       qrRes.hidden = true; qrPaused = false;
       layoutGuide(); setHint();
       if (mode === 'qr') loadJsQR().catch(e => toast(e.message, true));
     };
-    const DOC = ['scan', 'text', 'word', 'excel', 'sign'];
+    const DOC = ['scan', 'text', 'translate', 'word', 'excel', 'sign'];
     const switchMode = async m => {
       if (m === mode || lockMode) return;
       // Seiten bleiben erhalten, solange beide Modi „Dokument“-Modi sind; sonst nachfragen
@@ -304,7 +305,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
     const flash = () => { const fl = wrap.querySelector('.cam-flash'); fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go'); };
     const finishAfter = () => {
       // Modi mit genau einer Aufnahme schließen danach von selbst
-      if (mode === 'text' || mode === 'stamp') return close(items);
+      if (mode === 'text' || mode === 'translate' || mode === 'stamp') return close(items);
       if (maxShots && items.length >= maxShots) return close(items);     // z. B. „Erneut aufnehmen“: genau ein Foto
       if (mode === 'id' && idt().sides > 0 && items.length >= idt().sides) return close(items);
     };
