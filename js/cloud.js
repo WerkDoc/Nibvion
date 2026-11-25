@@ -21,7 +21,7 @@ const b64url = s => b64(te.encode(s)).replace(/\+/g, '-').replace(/\//g, '_').re
 // Eingebautes Nibvion-Projekt: dann muss nur noch E-Mail + Passwort eingegeben werden.
 // Der Publishable key ist öffentlich gedacht (Zugriff regeln die RLS-Regeln aus cloud.sql).
 export const NIB_URL = 'https://mkumrhjtldwbeenxocxf.supabase.co';
-export const NIB_KEY = '';
+export const NIB_KEY = 'sb_publishable_kjTFxd__JX2LZXDU-pCY3Q_R-rzgcgR';
 const base = () => (settings.get('cloudUrl') || NIB_URL).replace(/\/+$/, '');
 const anon = () => settings.get('cloudAnon') || (base() === NIB_URL ? NIB_KEY : '');
 export const cloudProject = () => ({ url: base(), key: anon() });
@@ -270,6 +270,8 @@ export const pendingCount = () => Object.keys(dirty()).length;
 
 // Start: gleich abgleichen, beim Zurückkehren in die App und jede Minute
 export function initCloud() {
+  // Alte Installationen: eingetragene Projektdaten = eingebautes Projekt → nicht mehr extra merken
+  if ((settings.get('cloudUrl') || '').replace(/\/+$/, '') === NIB_URL && settings.get('cloudAnon') === NIB_KEY) { settings.set('cloudUrl', ''); settings.set('cloudAnon', ''); }
   if (cloudOn()) { status({ state: 'idle', at: settings.get('cloudLast') }); schedule(800); }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') schedule(300); });
   addEventListener('online', () => schedule(300));
