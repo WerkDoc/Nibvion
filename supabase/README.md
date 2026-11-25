@@ -28,3 +28,5 @@ Optional. Ohne Einrichtung bleibt Nibvion komplett lokal.
    - Zugangsschlüssel: derselbe Wert wie `NIBVION_KEY` → *Testen* → *Speichern*
 
 Danach gibt es in der Scan-Ansicht den Filter **„☁️ Online“**. Nur dann wird das Foto an TextIn gesendet.
+
+**Text bearbeiten (Ausweis-Editor):** Ist der Online-Scan eingerichtet, liest die TextIn-KI („pdf_to_markdown“, nur Textzeilen mit Positionen) den Text – deutlich genauer als die Erkennung auf dem Gerät. Dafür muss die Funktion `textin-scan` den Stand ab v1.27.0 haben (Code neu einfügen → *Deploy*). Ohne Verbindung liest die App wie bisher auf dem Gerät.

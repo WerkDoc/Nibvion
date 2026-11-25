@@ -14,6 +14,7 @@ import { ID_CATS, idCat } from './files.js';
 import { shareBytes } from './editor.js';
 import { moveToTrash } from './trash.js';
 import { liveScanner, cameraSupported, cardCorners } from './camera.js';
+import { onlineReady, onlineOcr } from './online.js';
 import { reorderPages, titlesSheet, collage, renderLayout, adjOf, defaultTpl, PAGE_SIZES } from './idpages.js';
 
 let ctx = {};
@@ -700,8 +701,17 @@ function imageEditor(k) {
     if (!w.boxes) {
       busy(true, 'Text wird erkannt …');
       try {
-        const { recognizeEditLines } = await import('./ocr.js');
-        w.boxes = await recognizeEditLines(withOverlay(w.base, w.ov), { onProgress: p => busy(true, `Text wird erkannt … ${Math.round(p * 100)} %`) });
+        const c = withOverlay(w.base, w.ov);
+        let done = false;
+        if (onlineReady()) {                    // KI von TextIn (CamScanner-Technik), wenn eingerichtet
+          busy(true, 'KI liest den Text …');
+          try { w.boxes = await onlineOcr(c); done = true; }
+          catch (e) { console.warn(e); toast(`Online-KI nicht erreichbar (${e.message}) – lese auf dem Gerät`, true); }
+        }
+        if (!done) {
+          const { recognizeEditLines } = await import('./ocr.js');
+          w.boxes = await recognizeEditLines(c, { onProgress: p => busy(true, `Text wird erkannt … ${Math.round(p * 100)} %`) });
+        }
       } catch (e) { console.warn(e); busy(false); tool = null; paintTools(); return toast('Texterkennung fehlgeschlagen', true); }
       busy(false);
     }

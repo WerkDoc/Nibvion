@@ -1,5 +1,5 @@
 // Supabase Edge Function „textin-scan“ für Nibvion (Online-Scan über TextIn / CamScanner-Technik).
-// Leitet ein Foto an die TextIn-API „crop_enhance_image“ weiter. Die TextIn-Zugangsdaten liegen nur
+// Leitet ein Foto an die TextIn-API „crop_enhance_image“ (Scan) bzw. mit ?op=ocr an „pdf_to_markdown“ (Text + Positionen) weiter. Die TextIn-Zugangsdaten liegen nur
 // hier als Secrets (TEXTIN_APP_ID, TEXTIN_SECRET) – nie in der App. NIBVION_KEY schützt vor Fremdnutzung.
 // Einstellung in Supabase: „Verify JWT“ für diese Funktion AUS (Schutz läuft über x-nibvion-key).
 
@@ -9,6 +9,8 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const ALLOWED = ['enhance_mode', 'crop_image', 'dewarp_image', 'deblur_image', 'correct_direction', 'size_and_positon', 'jpeg_quality'];
+// op=ocr: Texterkennung mit Positionen (TextIn Dokument-Erkennung, nur Textzeilen) – für „Text bearbeiten“
+const OCR_QUERY = 'parse_mode=scan&get_image=none&markdown_details=0&page_details=1&apply_document_tree=0';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
@@ -27,7 +29,8 @@ Deno.serve(async (req) => {
 
   // Internationales Konto (textin.ai) → api.textin.ai, chinesisches (textin.com) → per Secret TEXTIN_HOST umstellen
   const host = Deno.env.get('TEXTIN_HOST') || 'https://api.textin.ai';
-  const r = await fetch(`${host}/ai/service/v1/crop_enhance_image?${q}`, {
+  const path = url.searchParams.get('op') === 'ocr' ? `/ai/service/v1/pdf_to_markdown?${OCR_QUERY}` : `/ai/service/v1/crop_enhance_image?${q}`;
+  const r = await fetch(`${host}${path}`, {
     method: 'POST',
     headers: { 'x-ti-app-id': appId, 'x-ti-secret-code': secret, 'Content-Type': 'application/octet-stream' },
     body,
