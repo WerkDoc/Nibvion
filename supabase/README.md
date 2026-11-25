@@ -3,7 +3,9 @@
 1. **Supabase** → Projekt „Nivion“ → *SQL Editor* → *New query* → Inhalt von `supabase/cloud.sql` einfügen → **Run**.
 2. *Authentication → Sign In / Providers → Email*: **„Confirm email“ ausschalten** (sonst muss erst der Link in der Mail bestätigt werden).
 3. *Project Settings → API*: **Project URL** und **anon public** Key kopieren.
-4. **In Nibvion**: Einstellungen → Nibvion-Cloud → Supabase-Projekt eintragen → *Neues Konto* (erstes Gerät) bzw. *Anmelden* (weitere Geräte).
+4. **In Nibvion**: Einstellungen → Nibvion-Cloud → *Neues Konto* (erstes Gerät) bzw. *Anmelden* (weitere Geräte). Das Nibvion-Projekt ist in `js/cloud.js` (`NIB_URL`/`NIB_KEY`) eingebaut – nur für ein anderes Projekt muss „Supabase-Projekt“ geändert werden.
+
+Die Online-Scan-Einstellungen (TextIn-Adresse + Schlüssel) wandern verschlüsselt mit und sind nach dem Anmelden auf jedem Gerät wieder da.
 
 Alles wird auf dem Gerät verschlüsselt (AES-256-GCM). Supabase speichert nur verschlüsselte Dateien, Schlüsselnamen und Zeitstempel. Passwort vergessen = Cloud-Daten nicht mehr lesbar.
 

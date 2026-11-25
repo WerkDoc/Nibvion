@@ -18,8 +18,13 @@ const lsSet = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 const b64 = u8 => { let s = ''; const a = new Uint8Array(u8); for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode(...a.subarray(i, i + 0x8000)); return btoa(s); };
 const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const b64url = s => b64(te.encode(s)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const base = () => (settings.get('cloudUrl') || '').replace(/\/+$/, '');
-const anon = () => settings.get('cloudAnon') || '';
+// Eingebautes Nibvion-Projekt: dann muss nur noch E-Mail + Passwort eingegeben werden.
+// Der Publishable key ist öffentlich gedacht (Zugriff regeln die RLS-Regeln aus cloud.sql).
+export const NIB_URL = 'https://mkumrhjtldwbeenxocxf.supabase.co';
+export const NIB_KEY = 'sb_publishable_kjTFxd__JX2LZXDU-pCY3Q_R-rzgcgR';
+const base = () => (settings.get('cloudUrl') || NIB_URL).replace(/\/+$/, '');
+const anon = () => settings.get('cloudAnon') || (base() === NIB_URL ? NIB_KEY : '');
+export const cloudProject = () => ({ url: base(), key: anon() });
 
 async function derive(pw, email, purpose) {
   const k = await crypto.subtle.importKey('raw', te.encode(pw), 'PBKDF2', false, ['deriveBits']);
@@ -89,6 +94,7 @@ export async function cloudLogin(email, pw, create = false) {
   catch (e) { lsSet(LS.auth, null); throw e; }          // halb angemeldet bleibt nichts hängen
   // Alles Lokale vormerken; beim Abgleich gewinnt jeweils der neuere Stand
   lsSet(LS.known, {}); lsSet(LS.last, '1970-01-01T00:00:00Z');
+  if (!await db.get('assets', PREFS_ID)) await writePrefs(true);   // eigene Einstellungen erst anlegen, wenn welche da sind
   await markAll();
 }
 
@@ -112,6 +118,20 @@ export async function cloudLogout() {
   DEK = null; await keyOp('readwrite', s => s.delete('dek'));
   status({ state: 'off' });
 }
+
+// ---------- Einstellungen, die mitwandern (Online-Scan / TextIn) ----------
+// Liegen als verschlüsselter Eintrag in „assets“ (kind: 'prefs'), damit sie nach dem Anmelden
+// auf jedem Gerät automatisch wieder da sind.
+const PREFS_ID = 'nib-prefs', PREF_KEYS = ['onlineUrl', 'onlineKey', 'onlineMode'];
+async function writePrefs(onlyIfSet = false) {
+  const vals = Object.fromEntries(PREF_KEYS.map(k => [k, settings.get(k) || '']));
+  if (onlyIfSet && !vals.onlineKey) return;
+  const now = Date.now();
+  await db.rawPut('assets', { id: PREFS_ID, kind: 'prefs', ...vals, created: now, updated: now });
+}
+/** Nach Änderungen an den Online-Scan-Einstellungen aufrufen. */
+export async function savePrefs() { await writePrefs(); if (cloudOn()) markDirty('assets', PREFS_ID); }
+function applyPrefs(rec) { for (const k of PREF_KEYS) if (k in rec) settings.set(k, rec[k] || ''); }
 
 // ---------- Änderungen merken ----------
 const KEY = (s, id) => `${s}:${id}`;
@@ -204,6 +224,7 @@ async function pull(onProgress) {
         const res = await api(`/storage/v1/object/authenticated/${BUCKET}/${objPath(r.k)}`);
         const rec = unpack(s, await open_(DEK, await res.arrayBuffer()));
         await db.rawPut(s, rec);
+        if (s === 'assets' && rec.kind === 'prefs') applyPrefs(rec);
       }
       known[r.k] = r.updated; got++;
       const x = dirty(); if (x[r.k] && x[r.k].t <= r.updated) { delete x[r.k]; lsSet(LS.dirty, x); }
@@ -249,6 +270,8 @@ export const pendingCount = () => Object.keys(dirty()).length;
 
 // Start: gleich abgleichen, beim Zurückkehren in die App und jede Minute
 export function initCloud() {
+  // Alte Installationen: eingetragene Projektdaten = eingebautes Projekt → nicht mehr extra merken
+  if ((settings.get('cloudUrl') || '').replace(/\/+$/, '') === NIB_URL && settings.get('cloudAnon') === NIB_KEY) { settings.set('cloudUrl', ''); settings.set('cloudAnon', ''); }
   if (cloudOn()) { status({ state: 'idle', at: settings.get('cloudLast') }); schedule(800); }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') schedule(300); });
   addEventListener('online', () => schedule(300));
