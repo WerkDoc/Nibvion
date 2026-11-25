@@ -1001,3 +1001,5 @@ body.selecting .fab { transform: scale(0); }
 .tr-read-body { flex: 1; overflow-y: auto; padding: 18px 26px calc(var(--safe-bottom) + 30px); font-size: 18px; line-height: 1.6; user-select: text; -webkit-user-select: text; }
 .tr-read-body h3 { font-size: 20px; margin: 22px 0 8px; }
 .tr-read-body p { margin: 0 0 18px; }
+.txt-fonts { margin-left: auto; }
+.txt-fonts button { font-size: 14px; padding: 8px 10px; }

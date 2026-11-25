@@ -3,7 +3,7 @@ import { aiScan } from './aifx.js';
 import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
 import { sheet, toast, busy, confirmDlg, promptDlg, esc, pickFiles, today, haptic } from './ui.js';
-import { pdfjsLib, loadPdf, closePdf, pageInfos, flatten, pagesOp, renderThumb, inkPath, normalizeImage, TEXT_ASC, LINE_H } from './pdfcore.js';
+import { pdfjsLib, loadPdf, closePdf, pageInfos, flatten, pagesOp, renderThumb, inkPath, normalizeImage, TEXT_ASC, LINE_H, FONT_CSS, pdfFontInfo } from './pdfcore.js';
 import { makeSymbol } from './sign.js';
 import { signatureSheet, stampSheet, freshStamp } from './assets.js';
 import { settings } from './settings.js';
@@ -301,10 +301,10 @@ async function loadText(i) {
       let asc = st.ascent ?? 0.8, desc = st.descent ?? -0.2;
       if (!(asc > 0.5 && asc < 1.15)) asc = 0.8;
       if (!(desc < 0 && desc > -0.5)) desc = -0.2;
-      let bold = false;
-      try { const f = page.commonObjs.has(it.fontName) && page.commonObjs.get(it.fontName); bold = /bold|black|heavy|semibold|demi/i.test(f?.name || ''); } catch {}
+      let fi = pdfFontInfo(null, st);
+      try { const f = page.commonObjs.has(it.fontName) && page.commonObjs.get(it.fontName); fi = pdfFontInfo(f, st); } catch {}
       const w = it.width; if (w < 0.5) return;
-      items.push({ key: `${i}:${k}`, str: it.str, x: tx[4], base: tx[5], top: tx[5] - fh * asc, h: fh * (asc - desc), w, size: fh, bold });
+      items.push({ key: `${i}:${k}`, str: it.str, x: tx[4], base: tx[5], top: tx[5] - fh * asc, h: fh * (asc - desc), w, size: fh, bold: fi.bold, italic: fi.italic, font: fi.font });
     });
     // Gescannte Seite? Kein Text oder nur eine unsichtbare Texterkennungs-Ebene → zum Ändern selbst lesen
     let invisible = false;
@@ -387,13 +387,19 @@ function sampleColors(i, box) {
     for (let xx = 0; xx < w; xx++) { add(px(xx, 0)); add(px(xx, h - 1)); }
     for (let yy = 0; yy < h; yy++) { add(px(0, yy)); add(px(w - 1, yy)); }
     const bg = Object.values(counts).sort((a, b) => b.n - a.n)[0].c;
-    let best = null, bd = -1;
+    // Schriftfarbe: Mittel der kräftigsten Schriftpixel (Kern der Striche, nicht ein einzelner Ausreißer)
+    const ink = []; let bd = 0;
     for (let yy = 1; yy < h - 1; yy += 1) for (let xx = 1; xx < w - 1; xx += 1) {
       const c = px(xx, yy); const dd = Math.abs(c[0] - bg[0]) + Math.abs(c[1] - bg[1]) + Math.abs(c[2] - bg[2]);
-      if (dd > bd) { bd = dd; best = c; }
+      if (dd > 60) ink.push([dd, c]); if (dd > bd) bd = dd;
     }
-    const hex = c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
-    out.bg = hex(bg); if (best && bd > 60) out.fg = hex(best);
+    const hex = c => '#' + c.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
+    out.bg = hex(bg);
+    if (ink.length) {
+      ink.sort((a, b) => b[0] - a[0]);
+      const top = ink.filter(([dd]) => dd >= bd * 0.8).slice(0, Math.max(3, Math.round(ink.length * 0.35)));
+      out.fg = hex([0, 1, 2].map(k => top.reduce((s0, q) => s0 + q[1][k], 0) / top.length));
+    }
   } catch {}
   return out;
 }
@@ -402,7 +408,7 @@ function sampleColors(i, box) {
 const mctx = document.createElement('canvas').getContext('2d');
 function measure(o) {
   if (o.type !== 'text') return o;
-  mctx.font = `${o.bold ? '700' : '400'} ${o.size}px Helvetica, Arial, sans-serif`;
+  mctx.font = `${o.italic ? 'italic ' : ''}${o.bold ? '700' : '400'} ${o.size}px ${FONT_CSS[o.font] || FONT_CSS.sans}`;
   const lines = String(o.text).split('\n');
   o.w = Math.max(o.size * 0.5, ...lines.map(l => mctx.measureText(l).width));
   o.h = o.size * (1 + (lines.length - 1) * LINE_H);
@@ -432,7 +438,7 @@ function drawObj(o, parent) {
       if (o.cover) el('rect', { x: o.cover.x, y: o.cover.y, width: o.cover.w, height: o.cover.h, fill: o.cover.color }, g);
       if (o.bg) el('rect', { x: o.x - 4, y: o.y - 3, width: o.w + 8, height: o.h + 6, rx: 2, fill: o.bg, stroke: '#e3c34a', 'stroke-width': 0.6 }, g);
       el('rect', { x: o.x, y: o.y, width: o.w, height: o.h, fill: 'transparent' }, g);
-      const t = el('text', { 'font-family': 'Helvetica, Arial, sans-serif', 'font-size': o.size, 'font-weight': o.bold ? 700 : 400, fill: o.color, style: 'white-space:pre' }, g);
+      const t = el('text', { 'font-family': FONT_CSS[o.font] || FONT_CSS.sans, 'font-size': o.size, 'font-weight': o.bold ? 700 : 400, 'font-style': o.italic ? 'italic' : null, fill: o.color, style: 'white-space:pre' }, g);
       String(o.text).split('\n').forEach((ln, k) => { const s = el('tspan', { x: o.x, y: o.y + o.size * TEXT_ASC + k * o.size * LINE_H }, t); s.textContent = ln || ' '; });
       break;
     }
@@ -771,7 +777,7 @@ async function replaceText(i, key) {
   snapshot();
   const o = measure({
     id: uid(), type: 'text', page: i, srcKey: key, x: it.x, y: it.base - size * TEXT_ASC, size, bold: it.bold,
-    color: cols.fg, text: it.str.replace(/\s+$/, ''),
+    font: it.font || 'sans', italic: !!it.italic, color: cols.fg, text: it.str.replace(/\s+$/, ''),
     cover: { x: it.x - 0.8, y: it.top - 0.6, w: it.w + 1.6, h: it.h + 1.2, color: cols.bg },
   });
   E.objects.push(o); E.dirtyThumb = true; select(o.id); changed([i]);
@@ -791,12 +797,14 @@ function openTextEditor(o, isNew, isReplace) {
       <div class="txt-tools" style="margin-top:12px">
         <div class="stepper"><button data-s="-1">${icon('minus')}</button><span data-sz>${fmtSz(o.size)}</span><button data-s="1">${icon('plus')}</button></div>
         <button class="toggle ${o.bold ? 'on' : ''}" data-b>${icon('bold')}</button>
+        <button class="toggle ${o.italic ? 'on' : ''}" data-it style="font:italic 600 19px Georgia,serif">I</button>
+        <div class="seg txt-fonts">${[['sans', 'Arial'], ['serif', 'Times'], ['mono', 'Courier']].map(([k, n]) => `<button class="${(o.font || 'sans') === k ? 'on' : ''}" data-f="${k}" style="font-family:${FONT_CSS[k].replace(/"/g, '&quot;')}">${n}</button>`).join('')}</div>
         <div class="colors" style="flex:1 0 100%;justify-content:flex-end;flex-wrap:nowrap;gap:7px">${TEXT_COLORS.slice(0, 5).map(c => `<button class="color ${c === o.color ? 'on' : ''}" data-c="${c}" style="background:${c};width:28px;height:28px;flex:none"></button>`).join('')}</div>
       </div>
       <div class="btn-row"><button class="btn danger" data-del style="flex:0 0 auto;width:56px">${icon('trash')}</button><button class="btn primary" data-ok>${icon('check')} Fertig</button></div>`,
     onMount(el, api) {
       const ta = el.querySelector('[data-t]');
-      const upd = () => { measure(o); renderLayer(o.page); };
+      const upd = () => { measure(o); renderLayer(o.page); ta.style.fontFamily = FONT_CSS[o.font] || ''; ta.style.fontStyle = o.italic ? 'italic' : ''; ta.style.fontWeight = o.bold ? '700' : ''; };
       setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 380);
       ta.oninput = () => { o.text = ta.value; upd(); };
       el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => {
@@ -804,6 +812,9 @@ function openTextEditor(o, isNew, isReplace) {
         el.querySelector('[data-sz]').textContent = fmtSz(o.size); upd();
       });
       el.querySelector('[data-b]').onclick = e => { o.bold = !o.bold; e.currentTarget.classList.toggle('on', o.bold); upd(); };
+      el.querySelector('[data-it]').onclick = e => { o.italic = !o.italic; e.currentTarget.classList.toggle('on', o.italic); upd(); };
+      el.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { el.querySelectorAll('[data-f]').forEach(x => x.classList.remove('on')); b.classList.add('on'); o.font = b.dataset.f; upd(); });
+      ta.style.fontFamily = FONT_CSS[o.font] || ''; ta.style.fontStyle = o.italic ? 'italic' : ''; ta.style.fontWeight = o.bold ? '700' : '';
       el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { el.querySelectorAll('[data-c]').forEach(x => x.classList.remove('on')); b.classList.add('on'); o.color = b.dataset.c; upd(); });
       el.querySelector('[data-del]').onclick = () => { o._del = true; api.close(); };
       el.querySelector('[data-ok]').onclick = () => api.close();
