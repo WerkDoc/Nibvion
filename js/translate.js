@@ -45,7 +45,10 @@ export function groupLines(lines, W, H) {
       const okGap = gap > -lh * 0.4 && (b.lines.length > 1 ? gap < b.gap + lh * 0.4 : gap < lh * 0.7);
       const ended = b.lines.length > 1 && (last.x1 - last.x0) < (b.x1 - b.x0) * 0.72;
       const heading = b.lines.length === 1 && (l.x1 - l.x0) > (last.x1 - last.x0) * 1.6;
-      if (sameSize && okGap && !ended && !heading && ov > Math.min(l.x1 - l.x0, b.x1 - b.x0) * 0.3 && aligned) { best = b; break; }
+      // Menüs/Listen: kurze Einträge (≤ 3 Wörter) untereinander sind keine Absätze
+      const words = t => t.trim().split(/\s+/).length;
+      const list = words(last.t) <= 3 && words(l.t) <= 3 && !/[-‐,]$/.test(last.t) && (gap > lh * 0.3 || /^\p{Lu}/u.test(l.t));
+      if (sameSize && okGap && !ended && !heading && !list && ov > Math.min(l.x1 - l.x0, b.x1 - b.x0) * 0.3 && aligned) { best = b; break; }
     }
     if (best) {
       const last = best.lines[best.lines.length - 1], prev = last.t, gap = l.y0 - last.y1;
@@ -58,6 +61,20 @@ export function groupLines(lines, W, H) {
   // Nur Zahlen/Zeichen nicht übersetzen
   blocks.forEach(b => { b.skip = !/\p{L}{2,}/u.test(b.text); });
   return blocks;
+}
+
+// Übersetzungen prüfen: Unverändertes (Marken, schon Zielsprache) und erfundene Sätze
+// bei abgeschnittenen Wortresten („tes ago“) bleiben im Bild wie im Original.
+export function cleanTexts(blocks, raw) {
+  const norm = v => (v || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  return blocks.map((b, i) => {
+    const t = raw[i]; if (!t || b.skip) return '';
+    const a = norm(b.text), z = norm(t);
+    if (!z || a === z) return '';
+    if (a.length < 25 && z.length > a.length * 2.5 + 8) return '';        // aus Bruchstück wurde ein ganzer Satz
+    if (b.lines.length === 1 && /^\p{Ll}{1,3}\s/u.test(b.text.trim()) && a.length < 10) return '';   // abgeschnittener Wortrest („ays ago“)
+    return t;
+  });
 }
 
 // ---------- Schrift im Bild finden (Maske + Farbe) ----------
@@ -138,30 +155,46 @@ export function paintTranslation(src, blocks, texts) {
   const act = blocks.map((b, i) => (!b.skip && texts[i]) ? textMask(data, W, H, b) : null);
   act.forEach(m => { if (m) inpaintRegion(outImg.data, W, H, m.mask, m.box); });
   x.putImageData(outImg, 0, 0);
-  const hs = blocks.map(b => b.h).sort((a, b) => a - b), medH = hs[hs.length >> 1] || 10;
   const FONT = '-apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif';
+  // Schriftgröße aus der Breite des Originaltexts (misst sich an der echten Schrift, auch bei Screenshots)
+  const sizeOf = b => {
+    x.font = `500 100px ${FONT}`;
+    const rs = b.lines.filter((l, k) => b.lines.length === 1 || k < b.lines.length - 1 || (l.x1 - l.x0) > (b.x1 - b.x0) * 0.9)
+      .map(l => { const mw = x.measureText(l.t.trim()).width; return mw > 0 ? 100 * (l.x1 - l.x0) / mw : 0; }).filter(v => v > 0).sort((p, q) => p - q);
+    const fw = rs.length ? rs[rs.length >> 1] : 0;
+    const boxH = Math.min(...b.lines.map(l => l.y1 - l.y0));
+    const fh = Math.max(b.h * 1.25, boxH * 0.9);                 // Obergrenze aus der Zeilenhöhe
+    return fw ? Math.min(fw, fh * 1.15) : b.h * 1.3;
+  };
+  const sizes = blocks.map((b, i) => act[i] ? sizeOf(b) : 0);
+  const sv = blocks.map(sizeOf).sort((p, q) => p - q), medS = sv[sv.length >> 1] || 20;
   blocks.forEach((b, i) => {
     const t = texts[i], m = act[i]; if (!m) return;
-    const bold = b.h > medH * 1.25 ? 700 : b.h > medH * 1.1 ? 600 : 500;
+    const fs0 = sizes[i];
+    const bold = fs0 > medS * 1.3 && b.lines.length <= 2 ? 700 : 500;
     const bw0 = b.x1 - b.x0;
-    const maxW = b.lines.length === 1 ? Math.max(bw0, Math.min(W * 0.97 - b.x0, bw0 * 2.2)) : bw0;
+    // Platz nach rechts (einzeilig) bis zum nächsten Block in derselben Höhe
+    let right = W * 0.98;
+    for (const o of blocks) if (o !== b && o.x0 >= b.x1 - 2 && Math.min(o.y1, b.y1) > Math.max(o.y0, b.y0)) right = Math.min(right, o.x0 - fs0 * 0.4);
+    const maxW = b.lines.length === 1 ? Math.max(bw0, Math.min(right - b.x0, bw0 * 2.4)) : bw0;
     // Platz nach unten bis zum nächsten Block darunter
     let below = H - b.y1;
     for (const o of blocks) if (o !== b && o.y0 >= b.y1 - 2 && Math.min(o.x1, b.x1) > Math.max(o.x0, b.x0)) below = Math.min(below, o.y0 - b.y1);
-    const pitch = b.lines.length > 1 ? (b.y1 - b.y0) / b.lines.length : (b.y1 - b.y0) * 1.25;
-    const maxH = (b.y1 - b.y0) + Math.max(0, below - b.h * 0.6) * 0.8;
-    const fs0 = b.h * 1.38;
+    const pitch = b.lines.length > 1 ? (b.lines[b.lines.length - 1].y1 - b.lines[0].y1) / (b.lines.length - 1) : fs0 * 1.25;
+    const maxH = (b.y1 - b.y0) + Math.max(0, below - fs0 * 0.5) * 0.8;
     let fs = fs0, lines, lh;
     for (let k = 0; k < 40; k++) {
       x.font = `${bold} ${fs}px ${FONT}`;
       lines = wrap(x, t, maxW);
-      lh = Math.max(fs * 1.16, Math.min(pitch, fs * 1.45));
-      if (lines.length * lh <= maxH + lh * 0.25 || fs < fs0 * 0.62) break;
+      lh = b.lines.length > 1 ? Math.max(fs * 1.12, Math.min(pitch, fs * 1.5)) : fs * 1.2;
+      // einzeilige Einträge (Menüs, Knöpfe) bleiben einzeilig – lieber etwas kleiner
+      const fits = b.lines.length === 1 ? lines.length === 1 || fs < fs0 * 0.72 && lines.length * lh <= maxH : lines.length * lh <= maxH + lh * 0.25;
+      if (fits || fs < fs0 * 0.6) break;
       fs *= 0.95;
     }
     x.fillStyle = rgb(m.ink); x.textBaseline = 'alphabetic';
-    // Grundlinie wie im Original: erste Zeile sitzt auf der Grundlinie der ersten Originalzeile
-    const base0 = b.lines[0].y1 - (b.lines[0].y1 - b.lines[0].y0) * 0.12;
+    // Grundlinie: Unterkante der Schrift ohne Unterlängen ≈ Zeilenbox unten minus ~20 % der Schriftgröße
+    const l0 = b.lines[0], base0 = Math.min(l0.y1 - fs0 * 0.18, l0.y0 + fs0 * 0.95);
     lines.forEach((ln, j) => x.fillText(ln, b.x0, base0 + j * lh));
   });
   return c;
@@ -226,8 +259,8 @@ export async function translateFlow(items) {
       const tr = todo.length ? await onlineTranslate(todo.map(([b]) => b.text), target, source) : [];
       const base = target.split('-')[0], texts = [];
       // schon in der Zielsprache → Original im Bild lassen
-      const norm = v => v.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-      todo.forEach(([b, i], k) => { const r = tr[k]; texts[i] = !r || norm(r.text) === norm(b.text) ? '' : r.text; });
+      todo.forEach(([, i], k) => { texts[i] = tr[k]?.text || ''; });
+      const clean = cleanTexts(p.blocks, texts); clean.forEach((v, i) => { texts[i] = v; });
       const out = paintTranslation(p.src, p.blocks, texts);
       p.res[resKey()] = { canvas: out, url: out.toDataURL('image/jpeg', 0.9), texts, lang: tr[0]?.lang };
       if (my !== gen || !el.isConnected) { fx.remove(); return; }
