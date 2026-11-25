@@ -206,6 +206,8 @@ function tocSheet() {
   });
 }
 
+export async function closeEditorIfOpen() { if (E.open) await closeEditor(); }
+
 async function closeEditor() {
   await saveNow();
   E.ocrGen++; ocrQueue = []; releaseEditOcr();
