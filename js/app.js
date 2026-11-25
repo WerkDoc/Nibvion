@@ -20,7 +20,7 @@ import { initTranslate, translateFlow } from './translate.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.31.0';
+export const VERSION = '1.31.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
