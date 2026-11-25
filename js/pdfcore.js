@@ -157,13 +157,16 @@ export async function mergePdfs(list) {
 }
 
 // Bilder -> PDF (A4, eingepasst)
-export async function imagesToPdf(dataUrls, { fit = 'a4', margin = 0 } = {}) {
+export async function imagesToPdf(dataUrls, { fit = 'a4', margin = 0, mm = null } = {}) {
   const { PDFDocument } = L();
   const doc = await PDFDocument.create();
   for (const u of dataUrls) {
     const b = dataUrlToBytes(u);
     const img = u.startsWith('data:image/png') ? await doc.embedPng(b) : await doc.embedJpg(b);
-    if (fit === 'a4') {
+    if (mm) {                                    // feste Seitengröße in mm (Bild füllt die Seite)
+      const W = mm[0] * 72 / 25.4, H = mm[1] * 72 / 25.4;
+      doc.addPage([W, H]).drawImage(img, { x: 0, y: 0, width: W, height: H });
+    } else if (fit === 'a4') {
       const land = img.width > img.height;
       const W = land ? 841.89 : 595.28, H = land ? 595.28 : 841.89;
       const s = Math.min((W - 2 * margin) / img.width, (H - 2 * margin) / img.height);

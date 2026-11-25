@@ -6,13 +6,15 @@
 //   meta.idInfo = { name, number, … }  ·  meta.idSize = 'large' | 'orig'  ·  meta.idOcr = erkannte Wörter
 import { db } from './db.js';
 import { icon } from './icons.js';
-import { toast, busy, sheet, confirmDlg, promptDlg, esc, haptic } from './ui.js';
+import { toast, busy, sheet, confirmDlg, promptDlg, esc, haptic, pickFiles } from './ui.js';
 import { loadPdf, closePdf, renderThumb, imagesToPdf } from './pdfcore.js';
-import { cropEditor, render, toCanvas, rotateCanvas } from './scanner.js';
+import { cropEditor, render, toCanvas, rotateCanvas, loadFileImage } from './scanner.js';
 import { settings } from './settings.js';
 import { ID_CATS, idCat } from './files.js';
 import { shareBytes } from './editor.js';
 import { moveToTrash } from './trash.js';
+import { liveScanner, cameraSupported, cardCorners } from './camera.js';
+import { reorderPages, titlesSheet, collage, renderLayout, adjOf, defaultTpl, PAGE_SIZES } from './idpages.js';
 
 let ctx = {};
 export function initIdView(c) { ctx = c; }
@@ -21,7 +23,8 @@ const today = () => new Date().toLocaleDateString('de-DE', { day: '2-digit', mon
 const nowHM = () => new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }).replace(':', '.');
 const tick = () => new Promise(r => setTimeout(r, 0));
 const sideKey = (id, i) => `${id}#s${i}`, ovKey = (id, i) => `${id}#o${i}`;
-const sideName = (n, i) => n === 1 ? 'Datenseite' : i === 0 ? 'Vorderseite' : 'Rückseite';
+const sideName = (n, i, title) => title || (n === 1 ? 'Datenseite' : i === 0 ? 'Vorderseite' : i === 1 ? 'Rückseite' : `Seite ${i + 1}`);
+const stName = (states, k) => sideName(states.length, k, states[k]?.side?.title);
 
 // ---------- Felder je Ausweis-Art ----------
 const FIELDS = {
@@ -67,6 +70,11 @@ async function finalCanvas(st, maxSide = 2000) { return withOverlay(baseCanvas(s
 
 // ---------- PDF zusammensetzen ----------
 async function composePdf(canvases, catId, size = 'large') {
+  const urls = [];
+  for (let i = 0; i < canvases.length; i += 2) urls.push((await composeSheet(canvases.slice(i, i + 2), catId, size)).toDataURL('image/jpeg', 0.92));   // je 2 Seiten pro Blatt
+  return imagesToPdf(urls, { margin: 0 });
+}
+async function composeSheet(canvases, catId, size) {
   const MM = 10, W = 210 * MM, H = 297 * MM;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
@@ -83,7 +91,7 @@ async function composePdf(canvases, catId, size = 'large') {
     top += h + gap * MM;
     await tick();
   }
-  return imagesToPdf([c.toDataURL('image/jpeg', 0.92)], { margin: 0 });
+  return c;
 }
 
 async function writePdf(d, bytes) {
@@ -97,6 +105,10 @@ async function writePdf(d, bytes) {
 }
 async function rebuildPdf(d, states) {
   const cs = []; for (const st of states) { cs.push(await finalCanvas(st)); await tick(); }
+  if (d.idLayout) {                             // Collage (Menü „Seiten“)
+    const pages = renderLayout(cs, states.map(st => adjOf(st.side)), d.idLayout, 10);
+    return writePdf(d, await imagesToPdf(pages.map(c => c.toDataURL('image/jpeg', 0.92)), { mm: (PAGE_SIZES[d.idLayout.size] || PAGE_SIZES.a4).slice(0, 2) }));
+  }
   await writePdf(d, await composePdf(cs, d.idCat, d.idSize));
 }
 
@@ -211,7 +223,7 @@ function paintView() {
         ${filled ? `<div class="idv-rows">${infoRows(d)}</div><button class="link-btn" data-fill>Bearbeiten</button>`
           : `<button class="btn primary idv-fill" data-fill>Ausfüllen</button><div class="idv-sub">ID-Angaben eingeben</div>`}
       </div>
-      ${states.map((st, k) => `<button class="idv-side" data-side="${k}"><img alt="${sideName(states.length, k)}"></button>`).join('')}
+      ${states.map((st, k) => `<button class="idv-side" data-side="${k}"><img alt="${esc(stName(states, k))}">${st.side.title ? `<span class="idv-side-ttl">${esc(st.side.title)}</span>` : ''}</button>`).join('')}
       <div class="idv-space"></div>
     </div>
     <div class="idv-bar">
@@ -303,7 +315,7 @@ function sideViewer(k) {
     k = n; haptic(); show();
   }, { passive: true });
   const jpg = async () => canvasBytes(await finalCanvas(states[k], 2400), 'image/jpeg', 0.93);
-  const fname = () => `${d.name.replace(/\.pdf$/i, '')} ${sideName(states.length, k)}.jpg`;
+  const fname = () => `${d.name.replace(/\.pdf$/i, '')} ${stName(states, k)}.jpg`;
   el.querySelector('[data-save]').onclick = async () => { toast('Im Teilen-Menü „Bild sichern“ wählen'); shareBytes(new Uint8Array(await jpg()), fname(), 'image/jpeg'); };
   el.querySelector('[data-share]').onclick = () => sheet({
     title: 'Freigeben',
@@ -415,6 +427,53 @@ function smartErase(w, maskC) {
   oc.putImageData(od, x0, y0);
 }
 
+// ---------- Hilfen für „Text bearbeiten“ / „Erneut aufnehmen“ ----------
+// Wörter einer Zeile zu einem antippbaren Block zusammenfassen
+function groupLines(words, ar) {
+  const ws = words.map(w => ({ t: w.t, b: [...w.b] })).sort((a, b) => (a.b[1] + a.b[3]) - (b.b[1] + b.b[3]) || a.b[0] - b.b[0]);
+  const lines = [];
+  for (const w of ws.sort((a, b) => a.b[0] - b.b[0])) {
+    const h = w.b[3] - w.b[1];
+    const ln = lines.find(l => {
+      const ov = Math.min(l.b[3], w.b[3]) - Math.max(l.b[1], w.b[1]);
+      return ov > 0.5 * Math.min(h, l.b[3] - l.b[1]) && (w.b[0] - l.b[2]) * ar < 1.6 * Math.max(h, l.b[3] - l.b[1]) && w.b[0] >= l.b[2] - 0.01;
+    });
+    if (ln) { ln.t += ' ' + w.t; ln.hs.push(h); ln.b = [Math.min(ln.b[0], w.b[0]), Math.min(ln.b[1], w.b[1]), Math.max(ln.b[2], w.b[2]), Math.max(ln.b[3], w.b[3])]; }
+    else lines.push({ t: w.t, b: [...w.b], hs: [h] });
+  }
+  // Schriftgröße: mittlere Wordhöhe (nicht die ganze Box – Logos o. Ä. machen sie sonst zu groß)
+  for (const l of lines) l.h = l.hs.sort((a, b) => a - b)[(l.hs.length - 1) >> 1];
+  return lines;
+}
+// Schriftfarbe in einem Kasten: Pixel, die am stärksten vom Hintergrund abweichen
+function inkColor(c, x0, y0, x1, y1) {
+  x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
+  const w = Math.max(1, Math.min(c.width - x0, Math.ceil(x1 - x0))), h = Math.max(1, Math.min(c.height - y0, Math.ceil(y1 - y0)));
+  const px = c.getContext('2d').getImageData(x0, y0, w, h).data, L = [];
+  for (let i = 0; i < px.length; i += 4) L.push([0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2], i]);
+  const med = [...L].sort((a, b) => a[0] - b[0])[L.length >> 1][0];
+  L.sort((a, b) => Math.abs(b[0] - med) - Math.abs(a[0] - med));
+  const n = Math.max(1, Math.round(L.length * 0.12));
+  let r = 0, g = 0, b = 0;
+  for (let j = 0; j < n; j++) { const i = L[j][1]; r += px[i]; g += px[i + 1]; b += px[i + 2]; }
+  const hx = v => Math.round(v / n).toString(16).padStart(2, '0');
+  return `#${hx(r)}${hx(g)}${hx(b)}`;
+}
+// Ein Foto aufnehmen (Live-Kamera im Ausweis-Modus, sonst aus Fotos)
+async function takePhoto(catId) {
+  const cam = ['idcard', 'driver', 'passport', 'bank', 'other'].includes(catId) ? catId : 'other';
+  if (cameraSupported()) {
+    const shots = await liveScanner({ mode: 'id', idType: cam, lockMode: true, maxShots: 1 });
+    if (shots?.length) return shots[0];
+    if (shots) return null;                    // abgebrochen
+  }
+  const fs = await pickFiles('file-img'); if (!fs.length) return null;
+  try {
+    const { img, url } = await loadFileImage(fs[0]);
+    return { img, url, corners: cardCorners(img, cam === 'passport' ? 125 / 88 : 85.6 / 54), rot: 0, card: true, straighten: false };
+  } catch { toast('Bild konnte nicht geladen werden', true); return null; }
+}
+
 // ---------- Bild-Editor (Ausschneiden, Filtern, Drehen, Pinsel, Text, Mosaik, Wasserzeichen) ----------
 const CARD_FILTERS = [['card', 'Foto'], ['', 'Original'], ['gray', 'Graustufen'], ['bw', 'Schwarz-Weiß']];
 const COLORS = ['#111111', '#e11d48', '#2563eb', '#16a34a', '#ffffff'];
@@ -422,21 +481,23 @@ const COLORS = ['#111111', '#e11d48', '#2563eb', '#16a34a', '#ffffff'];
 function imageEditor(k) {
   const { states, d } = view;
   // Arbeitskopie je Seite: Basis + Markierungs-Ebene
-  const work = states.map(st => {
+  const mkWork = st => {
     const base = baseCanvas(st.img, st.side, 1600);
     const ov = document.createElement('canvas'); ov.width = base.width; ov.height = base.height;
     if (st.ov) ov.getContext('2d').drawImage(st.ov, 0, 0, ov.width, ov.height);
     return { st, side: { ...st.side, corners: st.side.corners.map(p => [...p]) }, base, ov, undo: [], dirty: false, hasOv: !!st.ov, texts: [] };
-  });
+  };
+  let work = states.map(mkWork);
   let tab = 'img', tool = null, color = COLORS[1];
+  let structChanged = false, lay = d.idLayout ? { ...d.idLayout } : null;
   const el = document.createElement('div'); el.className = 'ide';
   el.innerHTML = `
     <div class="ide-head"><button class="icon-btn" data-x aria-label="Abbrechen">${icon('x')}</button><div class="ide-title">Bearbeiten</div><button class="btn primary ide-done" data-ok>Fertig</button></div>
-    <div class="ide-stage no-swipe"><div class="ide-frame"><canvas class="ide-base"></canvas><canvas class="ide-ov"></canvas><div class="ide-texts"></div></div></div>
+    <div class="ide-stage no-swipe"><div class="ide-frame"><canvas class="ide-base"></canvas><canvas class="ide-ov"></canvas><div class="ide-boxes"></div><div class="ide-texts"></div></div></div>
     <div class="ide-pager"><button data-prev>${icon('chevronLeft')}</button><span data-count></span><button data-next>${icon('chevronRight')}</button></div>
     <div class="ide-colors" hidden>${COLORS.map(c => `<button data-c="${c}" style="background:${c}"></button>`).join('')}</div>
     <div class="ide-panel">
-      <div class="ide-tabs"><button data-tab="img">Bild</button><button data-tab="mark">Markup</button></div>
+      <div class="ide-tabs"><button data-tab="img">Bild</button><button data-tab="mark">Markup</button><button data-tab="pages">Seiten</button></div>
       <div class="ide-tools"></div>
     </div>`;
   document.body.appendChild(el);
@@ -451,13 +512,14 @@ function imageEditor(k) {
     co.width = w.ov.width; co.height = w.ov.height; drawOv(); requestAnimationFrame(paintTexts);
     el.querySelector('[data-count]').textContent = work.length > 1 ? `${k + 1}/${work.length}` : '';
     el.querySelector('.ide-pager').hidden = work.length < 2;
+    paintBoxes();
   };
   // ---- Text als verschiebbare Objekte (erst beim Speichern ins Bild gebrannt) ----
   let selT = null;
   const tl = el.querySelector('.ide-texts');
   const paintTexts = () => {
     const w = W(), sc = frame.clientWidth;
-    tl.innerHTML = w.texts.map((t, j) => `<div class="ide-txt${t === selT ? ' sel' : ''}" data-j="${j}" style="left:${t.x * 100}%;top:${t.y * 100}%;color:${t.color};font-size:${t.fs * sc}px">${esc(t.t).replace(/\n/g, '<br>')}</div>`).join('')
+    tl.innerHTML = w.texts.map((t, j) => `<div class="ide-txt${t === selT ? ' sel' : ''}" data-j="${j}" style="left:${t.x * 100}%;top:${t.y * 100}%;color:${t.color};font-size:${t.fs * sc}px;font-weight:${t.wt || 600}">${esc(t.t).replace(/\n/g, '<br>')}</div>`).join('')
       + (selT && w.texts.includes(selT) ? `<div class="ide-tbar" style="left:${selT.x * 100}%;top:${selT.y * 100}%">
           <button data-ta="edit">${icon('edit')}</button><button data-ta="minus">A−</button><button data-ta="plus">A+</button><button data-ta="del">${icon('trash')}</button></div>` : '');
     tl.querySelectorAll('[data-j]').forEach(d => d.onpointerdown = e => textDrag(e, w.texts[+d.dataset.j], d));
@@ -500,17 +562,22 @@ function imageEditor(k) {
     w.texts.push(t); selT = t; w.dirty = true; paintTexts();
     toast('Text ziehen zum Verschieben · nochmal antippen zum Ändern');
   };
+  const drawTexts = (x, texts, Wd, Hd) => {
+    for (const t of texts) {
+      const fs = t.fs * Wd;
+      x.font = `${t.wt || 600} ${fs}px -apple-system, Helvetica, Arial, sans-serif`; x.fillStyle = t.color; x.textBaseline = 'middle';
+      const ls = t.t.split('\n'), y0 = t.y * Hd - (ls.length - 1) * fs * 0.6;
+      ls.forEach((ln, i) => x.fillText(ln, t.x * Wd, y0 + i * fs * 1.2));
+    }
+  };
   const burnTexts = w => {
     if (!w.texts.length) return;
-    const x = w.ov.getContext('2d');
-    for (const t of w.texts) {
-      const fs = t.fs * w.ov.width;
-      x.font = `600 ${fs}px -apple-system, Helvetica, Arial, sans-serif`; x.fillStyle = t.color; x.textBaseline = 'middle';
-      const ls = t.t.split('\n'), y0 = t.y * w.ov.height - (ls.length - 1) * fs * 0.6;
-      ls.forEach((ln, i) => x.fillText(ln, t.x * w.ov.width, y0 + i * fs * 1.2));
-    }
+    drawTexts(w.ov.getContext('2d'), w.texts, w.ov.width, w.ov.height);
     w.texts = []; w.hasOv = true;
   };
+  // Fertiges Bild einer Seite inkl. noch verschiebbarer Texte (für Vorschauen)
+  const pageCanvas = w => { const c = withOverlay(w.base, w.ov); drawTexts(c.getContext('2d'), w.texts, c.width, c.height); return c; };
+  const thumbOf = w => { const c = pageCanvas(w), s = Math.min(1, 420 / c.width); return copyCanvas(c, Math.round(c.width * s), Math.round(c.height * s)).toDataURL('image/jpeg', 0.8); };
   // Tippen ins Leere: Auswahl aufheben bzw. (Text-Werkzeug) neuen Text setzen
   frame.addEventListener('pointerdown', e => {
     if (e.target.closest('.ide-txt, .ide-tbar')) return;
@@ -521,8 +588,9 @@ function imageEditor(k) {
   const snap = () => { const w = W(); w.undo.push(copyCanvas(w.ov)); if (w.undo.length > 15) w.undo.shift(); w.dirty = true; w.hasOv = true; };
 
   const TOOLS = {
-    img: [['crop', 'fit', 'Ausschneiden'], ['filter', 'sliders', 'Filtern'], ['rot', 'rotate', 'Drehen']],
-    mark: [['pen', 'pen', 'Pinsel'], ['text', 'textPlus', 'Text'], ['smart', 'sparkles', 'Intelligent löschen'], ['mosaic', 'grid', 'Mosaik'], ['wm', 'drop', 'Wasserzeichen'], ['eraser', 'eraser', 'Radierer'], ['undo', 'undo', 'Zurück']],
+    img: [['crop', 'fit', 'Ausschneiden'], ['filter', 'sliders', 'Filtern'], ['rot', 'rotate', 'Drehen'], ['retake', 'scan', 'Erneut aufnehmen']],
+    mark: [['pen', 'pen', 'Pinsel'], ['text', 'textPlus', 'Text'], ['textedit', 'textEdit', 'Text bearbeiten'], ['smart', 'sparkles', 'Intelligent löschen'], ['mosaic', 'grid', 'Mosaik'], ['wm', 'drop', 'Wasserzeichen'], ['eraser', 'eraser', 'Radierer'], ['undo', 'undo', 'Zurück']],
+    pages: [['reorder', 'pages', 'Seiten neu anordnen'], ['collage', 'grid', 'Kollagen'], ['titles', 'rename', 'Seitentitel']],
   };
   const paintTools = () => {
     el.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -530,7 +598,8 @@ function imageEditor(k) {
     el.querySelector('.ide-colors').hidden = !(tool === 'pen' || tool === 'text' || selT);
     el.querySelectorAll('[data-c]').forEach(b => b.classList.toggle('on', b.dataset.c === color));
     el.querySelectorAll('[data-t]').forEach(b => b.onclick = () => action(b.dataset.t));
-    co.style.pointerEvents = tool ? 'auto' : 'none';
+    co.style.pointerEvents = tool && tool !== 'textedit' ? 'auto' : 'none';
+    paintBoxes();
   };
   el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; tool = null; haptic(); paintTools(); });
   el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { color = b.dataset.c; if (selT) { selT.color = color; W().dirty = true; paintTexts(); } haptic(); paintTools(); });
@@ -541,7 +610,8 @@ function imageEditor(k) {
     let nov = document.createElement('canvas'); nov.width = w.base.width; nov.height = w.base.height;
     if (keepOv && w.hasOv) { const r = rotDeg ? rotateCanvas(old, rotDeg) : old; nov.getContext('2d').drawImage(r, 0, 0, nov.width, nov.height); }
     else w.hasOv = false;
-    w.ov = nov; w.undo = []; w.dirty = true; layout();
+    w.ov = nov; w.undo = []; w.dirty = true; w.boxes = null; layout();
+    if (tool === 'textedit') startTextEdit();
   };
 
   const action = async t => {
@@ -557,7 +627,12 @@ function imageEditor(k) {
     if (t === 'filter') return filterSheet();
     if (t === 'undo') { if (!w.undo.length) return toast('Nichts rückgängig zu machen'); w.ov = w.undo.pop(); w.dirty = true; return drawOv(); }
     if (t === 'wm') return watermark();
+    if (t === 'retake') return retake();
+    if (t === 'reorder') return doReorder();
+    if (t === 'collage') return doCollage();
+    if (t === 'titles') return doTitles();
     tool = tool === t ? null : t; paintTools();
+    if (tool === 'textedit') return startTextEdit();
     if (tool === 'text') toast('Auf das Bild tippen, wo der Text hin soll');
     if (tool !== 'text' && selT) { selT = null; paintTexts(); }
     if (tool === 'mosaic') toast('Über Bereiche wischen, die unkenntlich werden sollen');
@@ -594,6 +669,108 @@ function imageEditor(k) {
     }
     drawOv(); toast('Wasserzeichen auf allen Seiten');
   };
+
+  // ---- Text bearbeiten: Text erkennen → antippen → ändern. Alter Text wird intelligent entfernt,
+  //      neuer Text in passender Farbe/Größe als verschiebbares Objekt eingesetzt. ----
+  const bl = el.querySelector('.ide-boxes');
+  function paintBoxes() {
+    const w = W();
+    if (tool !== 'textedit' || !w?.boxes) { bl.innerHTML = ''; bl.classList.remove('on'); return; }
+    bl.classList.add('on');
+    bl.innerHTML = w.boxes.map((b, j) => `<button data-b="${j}" aria-label="${esc(b.t)}" style="left:${b.b[0] * 100}%;top:${b.b[1] * 100}%;width:${(b.b[2] - b.b[0]) * 100}%;height:${(b.b[3] - b.b[1]) * 100}%"></button>`).join('');
+    bl.querySelectorAll('[data-b]').forEach(b => b.onclick = e => { e.stopPropagation(); editBox(+b.dataset.b); });
+  }
+  async function startTextEdit() {
+    const w = W();
+    if (selT) { selT = null; paintTexts(); }
+    if (!w.boxes) {
+      busy(true, 'Text wird erkannt …');
+      try {
+        const { recognizeWords } = await import('./ocr.js');
+        const c = withOverlay(w.base, w.ov);
+        const [o] = await recognizeWords([c], { minConf: 30, mrz: false, chan: 'multi', onProgress: p => busy(true, `Text wird erkannt … ${Math.round(p * 100)} %`) });
+        // Zeichensalat (z. B. aus Logos/Chip) weglassen
+        const real = x => !x.mrz && (x.t.match(/[\p{L}\d]/gu) || []).length >= Math.max(2, x.t.length * 0.6);
+        w.boxes = groupLines(o.words.filter(real), c.width / c.height);
+      } catch (e) { console.warn(e); busy(false); tool = null; paintTools(); return toast('Texterkennung fehlgeschlagen', true); }
+      busy(false);
+    }
+    if (tool !== 'textedit' || W() !== w) return;
+    paintBoxes();
+    toast(w.boxes.length ? 'Markierten Text antippen, um ihn zu ändern' : 'Kein Text gefunden', !w.boxes.length);
+  }
+  async function editBox(j) {
+    const w = W(), b = w.boxes[j]; if (!b) return;
+    const v = await promptDlg('Text bearbeiten', b.t, 'Fertig', 'Leer lassen = Text entfernen');
+    if (v == null || v === b.t) return;
+    const Wd = w.ov.width, Hd = w.ov.height;
+    const x0 = b.b[0] * Wd, y0 = b.b[1] * Hd, x1 = b.b[2] * Wd, y1 = b.b[3] * Hd, h = y1 - y0;
+    const col = inkColor(withOverlay(w.base, w.ov), x0, y0, x1, y1);
+    snap();
+    const m = document.createElement('canvas'); m.width = Wd; m.height = Hd;
+    const p = Math.max(3, h * 0.22); m.getContext('2d').fillRect(x0 - p, y0 - p, x1 - x0 + 2 * p, h + 2 * p);
+    busy(true, 'Text wird ersetzt …'); await tick();
+    try { smartErase(w, m); } catch (e) { console.warn(e); }
+    busy(false); drawOv();
+    w.boxes.splice(j, 1);
+    if (v.trim()) {
+      const th = (b.h || b.b[3] - b.b[1]) * Hd;
+      const t = { t: v.trim(), x: x0 / Wd, y: (y0 + h / 2) / Hd, color: col, fs: th * 1.15 / Wd, wt: 500 };
+      w.texts.push(t); paintTexts();
+    }
+    w.dirty = true; haptic(); paintBoxes();
+    toast(v.trim() ? 'Text ersetzt – antippen zum Verschieben oder Anpassen' : 'Text entfernt');
+  }
+
+  // ---- Erneut aufnehmen: Foto dieser Seite ersetzen ----
+  async function retake() {
+    const w = W();
+    if ((w.hasOv || w.texts.length) && !await confirmDlg('Seite neu aufnehmen?', 'Markierungen und Text dieser Seite werden dabei entfernt.', 'Weiter', false)) return;
+    const shot = await takePhoto(d.idCat); if (!shot) return;
+    const r = await cropEditor(shot); if (!r) return;
+    w.st = { ...w.st, img: shot.img };
+    Object.assign(w.side, { corners: r.corners, rot: r.rot });
+    w.texts = []; selT = null; w.imgChanged = true;
+    rebuildBase(false); paintTexts(); toast(`${sideName(work.length, k, w.side.title)} ersetzt`);
+  }
+  const newWork = async () => {
+    const shot = await takePhoto(d.idCat); if (!shot) return null;
+    const r = await cropEditor(shot); if (!r) return null;
+    const nw = mkWork({ i: -1, img: shot.img, side: { corners: r.corners, rot: r.rot, filter: 'card', ov: false }, ov: null });
+    nw.imgChanged = true; nw.dirty = true;
+    return nw;
+  };
+
+  // ---- Menü „Seiten“ ----
+  async function doReorder() {
+    if (selT) { selT = null; paintTexts(); }
+    const r = await reorderPages(work.map(w => ({ src: thumbOf(w), title: w.side.title })));
+    if (!r) return;
+    const nw = r.order.map(i => work[i]);
+    if (nw.length === work.length && nw.every((w, i) => w === work[i])) return;
+    work = nw; structChanged = true; k = Math.min(k, work.length - 1); layout();
+    toast('Übernommen – mit „Fertig“ speichern');
+  }
+  async function doCollage() {
+    if (selT) { selT = null; paintTexts(); }
+    const items = work.map(w => ({ ref: w, img: pageCanvas(w), adj: adjOf(w.side) }));
+    const r = await collage(items, {
+      layout: lay || { tpl: defaultTpl(d.idCat, d.idSize), size: 'a4', wm: '' },
+      addPage: async () => { const w = await newWork(); return w && { ref: w, img: pageCanvas(w), adj: adjOf(w.side) }; },
+    });
+    if (!r) return;
+    lay = r.layout;
+    work = r.items.map(it => { it.ref.side.col = it.adj; return it.ref; });
+    structChanged = true; k = Math.min(k, work.length - 1); layout();
+    toast('Collage übernommen – mit „Fertig“ speichern');
+  }
+  async function doTitles() {
+    const r = await titlesSheet(work.map(w => ({ src: thumbOf(w), title: w.side.title || '' })), i => sideName(work.length, i));
+    if (!r) return;
+    let n = 0;
+    r.forEach((t, i) => { if ((work[i].side.title || '') !== t) { work[i].side.title = t; work[i].dirty = true; n++; } });
+    if (n) toast('Seitentitel übernommen');
+  }
 
   // Zeichnen auf der Markierungs-Ebene
   let last = null, mosaicDone = null, baseData = null;
@@ -658,28 +835,41 @@ function imageEditor(k) {
   };
   co.addEventListener('pointerup', up); co.addEventListener('pointercancel', up);
 
-  el.querySelector('[data-prev]').onclick = () => { if (k > 0) { selT = null; k--; haptic(); layout(); } };
-  el.querySelector('[data-next]').onclick = () => { if (k < work.length - 1) { selT = null; k++; haptic(); layout(); } };
+  const go = n => { selT = null; k = n; haptic(); layout(); if (tool === 'textedit') startTextEdit(); };
+  el.querySelector('[data-prev]').onclick = () => { if (k > 0) go(k - 1); };
+  el.querySelector('[data-next]').onclick = () => { if (k < work.length - 1) go(k + 1); };
   const close = () => { removeEventListener('resize', layout); el.classList.add('out'); setTimeout(() => el.remove(), 220); };
   el.querySelector('[data-x]').onclick = async () => {
     if (work.some(w => w.dirty) && !await confirmDlg('Änderungen verwerfen?', 'Deine Bearbeitung geht verloren.', 'Verwerfen')) return;
     close();
   };
   el.querySelector('[data-ok]').onclick = async () => {
-    if (!work.some(w => w.dirty)) return close();
+    if (!structChanged && !work.some(w => w.dirty)) return close();
     busy(true, 'Wird gespeichert …');
     try {
-      for (const w of work) {
-        if (!w.dirty) continue;
-        burnTexts(w);
-        const i = w.st.i, empty = !w.hasOv;
-        w.st.side = { ...w.side, ov: !empty };
-        if (empty) { w.st.ov = null; await db.del('files', ovKey(d.id, i)); }
-        else { await db.put('files', { id: ovKey(d.id, i), data: await canvasBytes(w.ov, 'image/png') }); w.st.ov = copyCanvas(w.ov); }
-        d.idSides[i] = w.st.side;
+      const oldN = d.idSides.length, imgBytes = [];
+      // Fotos zuerst einlesen, bevor durch neue Reihenfolge etwas überschrieben wird
+      for (let j = 0; j < work.length; j++) {
+        const w = work[j];
+        if (w.imgChanged) imgBytes[j] = await canvasBytes(toCanvas(w.st.img, 2600), 'image/jpeg', 0.9);
+        else if (w.st.i !== j) imgBytes[j] = (await db.get('files', sideKey(d.id, w.st.i)))?.data;
       }
+      for (let j = 0; j < work.length; j++) {
+        const w = work[j], moved = w.st.i !== j;
+        if (imgBytes[j]) await db.put('files', { id: sideKey(d.id, j), data: imgBytes[j] });
+        if (w.dirty || moved) {
+          burnTexts(w);
+          if (w.hasOv) await db.put('files', { id: ovKey(d.id, j), data: await canvasBytes(w.ov, 'image/png') });
+          else await db.del('files', ovKey(d.id, j));
+        }
+        w.st = { ...w.st, i: j, side: { ...w.side, ov: !!w.hasOv }, ov: w.hasOv ? copyCanvas(w.ov) : null };
+      }
+      for (let j = work.length; j < oldN; j++) { await db.del('files', sideKey(d.id, j)); await db.del('files', ovKey(d.id, j)); }
+      d.idSides = work.map(w => w.st.side);
+      if (lay) d.idLayout = lay;
+      view.states = work.map(w => w.st);
       delete d.idOcr;                           // Bild geändert → Texterkennung neu
-      await rebuildPdf(d, states);
+      await rebuildPdf(d, view.states);
       busy(false); toast('Gespeichert'); close(); paintView();
     } catch (e) { console.error(e); busy(false); toast('Speichern fehlgeschlagen', true); }
   };

@@ -195,14 +195,20 @@ export async function recognizeCanvases(canvases, { onProgress } = {}) {
  * 1. Durchgang: ganzes Bild (Graustufen, Kontrast gespreizt) – nur sichere Wörter, kein Guilloche-Rauschen
  * 2. Durchgang: maschinenlesbare Zone (MRZ) unten, stark vergrößert, nur A–Z 0–9 < erlaubt
  */
-const prep = (src, x0 = 0, y0 = 0, w0 = src.width, h0 = src.height, minW = 0, bin = false) => {
+const prep = (src, x0 = 0, y0 = 0, w0 = src.width, h0 = src.height, minW = 0, bin = false, chan = -1) => {
   const k = Math.max(1, minW / w0), c = document.createElement('canvas');
   c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
   const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high';
   x.drawImage(src, x0, y0, w0, h0, 0, 0, c.width, c.height);
   const id = x.getImageData(0, 0, c.width, c.height), d = id.data, n = d.length / 4;
   const L = new Uint8Array(n), hist = new Uint32Array(256);
-  for (let i = 0; i < n; i++) { const v = Math.min(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]) * 0.5 + (d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11) * 0.5; L[i] = v; hist[v | 0]++; }
+  if (chan === 'auto') {                              // farbiger Untergrund (z. B. rote Karte): Kanal mit dem meisten Kontrast
+    const m = [0, 0, 0], q = [0, 0, 0];
+    for (let i = 0; i < n; i += 7) for (let ch = 0; ch < 3; ch++) { const v = d[i * 4 + ch]; m[ch] += v; q[ch] += v * v; }
+    const k = Math.ceil(n / 7), sd = m.map((v, ch) => q[ch] / k - (v / k) ** 2);
+    chan = sd.indexOf(Math.max(...sd));
+  }
+  for (let i = 0; i < n; i++) { const v = chan >= 0 ? d[i * 4 + chan] : Math.min(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]) * 0.5 + (d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11) * 0.5; L[i] = v; hist[v | 0]++; }
   let a = 0, lo = 0, hi = 255;
   for (let v = 0; v < 256; v++) { a += hist[v]; if (a < n * 0.01) lo = v; if (a < n * 0.97) hi = v; }
   let thr = 0;
@@ -220,27 +226,48 @@ const prep = (src, x0 = 0, y0 = 0, w0 = src.width, h0 = src.height, minW = 0, bi
   return c;
 };
 
-export async function recognizeWords(canvases, { onProgress } = {}) {
-  const total = canvases.length * 2; let step = 0;
+// Anteil, zu dem sich zwei Kästen überdecken (bezogen auf den kleineren)
+const overlap = (a, b) => {
+  const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  return w > 0 && h > 0 ? w * h / Math.min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])) : 0;
+};
+// Hellster Farbkanal, wenn sich die Kanäle deutlich unterscheiden (farbiger Untergrund)
+function brightChan(c) {
+  const t = document.createElement('canvas'); t.width = 64; t.height = Math.max(1, Math.round(64 * c.height / c.width));
+  const x = t.getContext('2d', { willReadFrequently: true }); x.drawImage(c, 0, 0, t.width, t.height);
+  const d = x.getImageData(0, 0, t.width, t.height).data, m = [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) { m[0] += d[i]; m[1] += d[i + 1]; m[2] += d[i + 2]; }
+  const hi = Math.max(...m), lo = Math.min(...m);
+  return (hi - lo) / (d.length / 4) > 25 ? [m.indexOf(hi)] : [];
+}
+
+export async function recognizeWords(canvases, { onProgress, minConf = 60, mrz = true, chan = -1 } = {}) {
+  const total = canvases.length * (mrz ? 2 : 1); let step = 0;
   const worker = await makeWorker(m => { if (m.status === 'recognizing text' && onProgress) onProgress((step + m.progress) / total); });
   try {
     const out = [];
     for (const c of canvases) {
       await tick();
-      const pc = prep(c, 0, 0, c.width, c.height, 2000);
-      const { data } = await worker.recognize(pc, {}, { blocks: true, text: true });
-      step++;
+      // 'multi': zusätzlich der hellste Farbkanal – dunkle Schrift auf farbigem Grund (z. B. Name auf roter Karte)
+      const passes = chan === 'multi' ? [-1, ...brightChan(c)] : [chan];
       const words = [], lines = [];
-      for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
-        const good = (l.words || []).filter(w => {
-          const t = (w.text || '').trim(), h = (w.bbox.y1 - w.bbox.y0) / pc.height;
-          return t && w.confidence >= 60 && /[\p{L}\d]/u.test(t) && (t.length >= 2 || /\d/.test(t)) && h > 0.012;
-        });
-        if (good.length) lines.push(good.map(w => w.text.trim()).join(' '));
-        for (const w of good) words.push({ t: w.text.trim(), b: [w.bbox.x0 / pc.width, w.bbox.y0 / pc.height, w.bbox.x1 / pc.width, w.bbox.y1 / pc.height] });
+      for (const ch of passes) {
+        const pc = prep(c, 0, 0, c.width, c.height, 2000, false, ch);
+        const { data } = await worker.recognize(pc, {}, { blocks: true, text: true });
+        for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
+          const good = (l.words || []).filter(w => {
+            const t = (w.text || '').trim(), h = (w.bbox.y1 - w.bbox.y0) / pc.height;
+            return t && w.confidence >= minConf && /[\p{L}\d]/u.test(t) && (t.length >= 2 || /\d/.test(t)) && h > 0.012;
+          }).map(w => ({ t: w.text.trim(), b: [w.bbox.x0 / pc.width, w.bbox.y0 / pc.height, w.bbox.x1 / pc.width, w.bbox.y1 / pc.height] }))
+            .filter(w => !words.some(o => overlap(o.b, w.b) > 0.4));     // schon aus einem anderen Durchgang
+          if (good.length) lines.push(good.map(w => w.t).join(' '));
+          words.push(...good);
+        }
       }
+      step++;
       out.push({ words, lines, mrz: [] });
     }
+    if (!mrz) return out;
     // MRZ: untere Hälfte, nur Zeichen der MRZ, Zeilen als Block
     await worker.setParameters({ tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<', tessedit_pageseg_mode: '6' });
     for (let i = 0; i < canvases.length; i++) {
