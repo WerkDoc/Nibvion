@@ -126,13 +126,13 @@ export function scanReview(opts) {
           if (i === cur) renderFilters();
         }
         if (filter === 'online' && !onlineDone(it)) {
-          el.classList.add('busy');
+          el.classList.add('busy', 'nibopt');
           let pct = el.querySelector('.rv-pct');
           if (!pct) { pct = document.createElement('div'); pct.className = 'rv-pct'; el.appendChild(pct); }
-          pct.textContent = '☁️ Online-Scan …';
+          pct.classList.add('nib'); pct.textContent = 'Wird mit Nibvion optimiert …';
           try { await ensureOnline(it); }
           catch (e) { console.warn(e); toast(`Online-Scan: ${e.message || 'fehlgeschlagen'} – KI-Scan wird verwendet`, true); }
-          pct.remove();
+          pct.remove(); el.classList.remove('nibopt');
           if (closed) return;
           if (i === cur) renderFilters();
         }

@@ -16,10 +16,11 @@ import { initEditor, openEditor, shareBytes, downloadBytes } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 import { initMerge, mergeFlow } from './merge.js';
+import { initTranslate, translateFlow } from './translate.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.29.0';
+export const VERSION = '1.30.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -256,6 +257,7 @@ const TOOL_GROUPS = [
     { id: 'excel', label: 'Excel → PDF', sub: 'XLSX, XLS oder CSV als PDF', icon: 'excel', c: 'c-green' },
     { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
     { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern – auch Scans', icon: 'word', c: 'c-blue' },
+    { id: 'translate', label: 'Übersetzen', sub: 'Foto oder Kamera – Text in eine andere Sprache', icon: 'translate', c: 'c-violet' },
     { id: 'pdf2excel', label: 'PDF / Scan → Excel', sub: 'Tabellen als bearbeitbare XLSX', icon: 'excel', c: 'c-green' },
   ] },
   { title: 'Schützen & Optimieren', items: [
@@ -294,6 +296,7 @@ function runTool(id) {
     case 'imgscan': return imageSheet('imgscan');
     case 'img2pdf': return imageSheet('images');
     case 'merge': return mergeSheet();
+    case 'translate': return translateTool();
     case 'blank': return newBlank();
     case 'pdf2img': return pdfToImages();
     case 'word': return officeToPdf('word');
@@ -358,6 +361,7 @@ async function imageSheet(kind, camOpts = {}) {
   }
   // Kamera-Modi (per Wischen gewählt)
   if (camMode === 'text') return scanText(items, 'color');
+  if (camMode === 'translate') return translateFlow(items);
   if (camMode === 'word' || camMode === 'excel') return scanToOffice(camMode, items.map(it => () => renderScan(it, 'doc', 2400)), `Scan ${today()}`);
   if (camMode === 'stamp') return saveStamped(items);
   if (camMode === 'id') {
@@ -446,6 +450,27 @@ async function textFromDoc(d) {
     const pages = await extractPdfText(f.data, { onProgress: (t, x) => busy(true, x > 0 && x < 1 ? `${t} ${Math.round(x * 100)} %` : t) });
     busy(false); textSheet(pages, d.name);
   } catch (e) { console.error(e); busy(false); toast(e?.message?.includes('geladen') ? e.message : 'Text konnte nicht gelesen werden', true); }
+}
+
+// ----- Übersetzen: Kamera (Modus „Übersetzen“) oder Foto aus der Mediathek -----
+function translateTool() {
+  sheet({
+    title: 'Übersetzen',
+    html: `<div class="menu">
+      <button class="row" data-s="cam"><span class="row-ic c-violet">${icon('scan')}</span><span class="row-main"><span class="row-title">Kamera</span><span class="row-sub">Text abfotografieren</span></span>${icon('chevronRight')}</button>
+      <button class="row" data-s="img"><span class="row-ic c-blue">${icon('images')}</span><span class="row-main"><span class="row-title">Foto wählen</span><span class="row-sub">Bild oder Screenshot</span></span>${icon('chevronRight')}</button></div>`,
+    onMount(el, api) {
+      el.querySelector('[data-s="cam"]').onclick = () => { api.close(); cameraSupported() ? imageSheet('scan', { mode: 'translate' }) : el.querySelector('[data-s="img"]').onclick(); };
+      el.querySelector('[data-s="img"]').onclick = async () => {
+        api.close();
+        const fs = await pickFiles('file-img'); if (!fs.length) return;
+        busy(true, 'Bild wird geladen …'); const items = [];
+        for (const f of fs.slice(0, 10)) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); } catch {} }
+        busy(false);
+        if (items.length) translateFlow(items); else toast('Bild konnte nicht geladen werden', true);
+      };
+    },
+  });
 }
 
 // ----- Zusammenfügen -----
@@ -1132,6 +1157,7 @@ async function init() {
   onCloudStatus(() => { if (document.body.dataset.tab === 'settings') renderSettings(); });
   try { navigator.storage?.persist?.(); } catch {}
   initIdView({ saveNewDoc, refresh: async () => { await renderRecents(); if (document.body.dataset.tab === 'files') renderFiles(); }, openPdf: id => openEditor(id, 'view', renderRecents) });
+  initTranslate({ imagesToPdf, saveNewDoc, openDoc });
   initMerge({
     docBytes, saveNewDoc, openDoc,
     async importPdfs() {

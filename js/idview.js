@@ -4,6 +4,7 @@
 //   meta.idSides = [{ corners, rot, filter, ov }]           (in „docs“)
 //   files `${id}#s${i}` = Original-Foto (JPEG), `${id}#o${i}` = Markierungen (PNG, transparent)
 //   meta.idInfo = { name, number, … }  ·  meta.idSize = 'large' | 'orig'  ·  meta.idOcr = erkannte Wörter
+import { aiScan } from './aifx.js';
 import { db } from './db.js';
 import { icon } from './icons.js';
 import { toast, busy, sheet, confirmDlg, promptDlg, esc, haptic, pickFiles, spinRotate } from './ui.js';
@@ -707,21 +708,20 @@ function imageEditor(k) {
     const w = W();
     if (selT) { selT = null; paintTexts(); }
     if (!w.boxes) {
-      busy(true, 'Text wird erkannt …');
+      const c = withOverlay(w.base, w.ov);
+      const fx = aiScan(frame, { src: c });
       try {
-        const c = withOverlay(w.base, w.ov);
         let done = false;
         if (onlineReady()) {                    // KI von TextIn (CamScanner-Technik), wenn eingerichtet
-          busy(true, 'KI liest den Text …');
           try { w.boxes = await onlineOcr(c); done = true; }
           catch (e) { console.warn(e); toast(`Online-KI nicht erreichbar (${e.message}) – lese auf dem Gerät`, true); }
         }
         if (!done) {
           const { recognizeEditLines } = await import('./ocr.js');
-          w.boxes = await recognizeEditLines(c, { onProgress: p => busy(true, `Text wird erkannt … ${Math.round(p * 100)} %`) });
+          w.boxes = await recognizeEditLines(c, { onProgress: p => fx.setText(`Nibvion AI analysiert … ${Math.round(p * 100)} %`) });
         }
-      } catch (e) { console.warn(e); busy(false); tool = null; paintTools(); return toast('Texterkennung fehlgeschlagen', true); }
-      busy(false);
+      } catch (e) { console.warn(e); fx.remove(); tool = null; paintTools(); return toast('Texterkennung fehlgeschlagen', true); }
+      await fx.finish();
     }
     if (tool !== 'textedit' || W() !== w) return;
     paintBoxes();
