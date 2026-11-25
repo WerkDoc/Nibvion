@@ -35,6 +35,11 @@ drop policy if exists "nib keys own" on public.nib_keys;
 create policy "nib keys own" on public.nib_keys for all to authenticated
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+-- Zugriffsrechte (neuere Supabase-Projekte vergeben sie nicht mehr automatisch)
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.nib_items to authenticated;
+grant select, insert, update, delete on public.nib_keys to authenticated;
+
 -- 3) Privater Speicher für die verschlüsselten Dateien (Ordner = Benutzer-ID)
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('nibvion', 'nibvion', false, 52428800)

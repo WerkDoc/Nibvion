@@ -18,7 +18,7 @@ import { settings, applyTheme } from './settings.js';
 import { initFiles, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.24.0';
+export const VERSION = '1.24.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1051,8 +1051,8 @@ function cloudSheet() {
     <p class="cloud-note" style="margin-top:0">Deine Dokumente, Ausweise, Ordner, Unterschriften und Stempel werden über dein Supabase-Projekt auf allen Geräten abgeglichen. Sie sind <b>Ende-zu-Ende verschlüsselt</b>.</p>
     <details class="cloud-proj" ${guessUrl && settings.get('cloudAnon') ? '' : 'open'}><summary>Supabase-Projekt</summary>
       <input class="field" data-url placeholder="https://xxxx.supabase.co" value="${esc(guessUrl)}" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin:8px 0 10px">
-      <input class="field" data-anon placeholder="anon public key (eyJ…)" value="${esc(settings.get('cloudAnon') || '')}" autocapitalize="off" autocorrect="off" spellcheck="false">
-      <div class="cloud-hint">Supabase → Project Settings → API: „Project URL“ und „anon public“</div></details>
+      <input class="field" data-anon placeholder="Publishable key (sb_publishable_…)" value="${esc(settings.get('cloudAnon') || '')}" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="cloud-hint">Supabase → Project Settings → API Keys: „Publishable key“ (nie den Secret key!)</div></details>
     <div class="seg cloud-seg"><button data-m="login" class="on">Anmelden</button><button data-m="new">Neues Konto</button></div>
     <input class="field" data-mail type="email" placeholder="E-Mail" autocomplete="username" autocapitalize="off" style="margin-bottom:10px">
     <input class="field" data-pw type="password" placeholder="Passwort" autocomplete="current-password" style="margin-bottom:10px">
@@ -1082,7 +1082,7 @@ function cloudSheet() {
       toast(r?.got ? `Cloud aktiv · ${r.got} Element(e) geladen` : 'Cloud aktiv ✓');
     } catch (e) {
       busy(false); console.warn(e);
-      toast(/Failed to fetch|NetworkError/i.test(e.message) ? 'Keine Verbindung zum Supabase-Projekt' : /nib_keys|nib_items|relation|404/.test(e.message) ? 'Cloud-Tabellen fehlen – supabase/cloud.sql ausführen' : e.message, true);
+      toast(/Failed to fetch|NetworkError|Load failed/i.test(e.message) ? 'Keine Verbindung zum Supabase-Projekt' : e.message, true);
     }
   };
 }
