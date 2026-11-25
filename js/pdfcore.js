@@ -66,6 +66,23 @@ export function inkPath(pts) {
 }
 
 export const TEXT_ASC = 0.8, LINE_H = 1.22;
+// Schriftfamilien für Text-Objekte: Vorschau (CSS) und Speichern (PDF-Standardschrift) passen zusammen
+export const FONT_CSS = { sans: 'Helvetica, Arial, sans-serif', serif: '"Times New Roman", Times, serif', mono: '"Courier New", Courier, monospace' };
+/** Schrift eines PDF-Textstücks erkennen → { font: 'sans'|'serif'|'mono', bold, italic } */
+export function pdfFontInfo(fontObj, style) {
+  const n = String(fontObj?.name || '') + ' ' + String(fontObj?.fallbackName || '');
+  const fam = String(style?.fontFamily || '');
+  let font = 'sans';
+  if (fontObj?.isMonospace || /courier|mono|consol|menlo|lucida ?console|typewriter|ocr-?b|letter ?gothic/i.test(n) || /monospace/i.test(fam)) font = 'mono';
+  else if (/times|serif(?!.*sans)|georgia|garamond|cambria|palatino|book ?antiqua|minion|century/i.test(n) && !/sans/i.test(n)) font = 'serif';
+  else if (fontObj?.isSerifFont && !/sans|arial|helvet|calibri|verdana|segoe/i.test(n)) font = 'serif';
+  else if (/^serif$/i.test(fam)) font = 'serif';
+  return {
+    font,
+    bold: !!(fontObj?.bold || fontObj?.black) || /bold|black|heavy|semibold|demi/i.test(n),
+    italic: !!fontObj?.italic || /italic|oblique/i.test(n),
+  };
+}
 
 // Objekte dauerhaft ins PDF schreiben
 export async function flatten(bytes, objects, infos) {
@@ -73,7 +90,15 @@ export async function flatten(bytes, objects, infos) {
   const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const pages = doc.getPages();
   const fonts = {};
-  const font = async bold => fonts[bold ? 1 : 0] ??= await doc.embedFont(bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica);
+  const STD = {
+    sans: ['Helvetica', 'HelveticaBold', 'HelveticaOblique', 'HelveticaBoldOblique'],
+    serif: ['TimesRoman', 'TimesRomanBold', 'TimesRomanItalic', 'TimesRomanBoldItalic'],
+    mono: ['Courier', 'CourierBold', 'CourierOblique', 'CourierBoldOblique'],
+  };
+  const font = async (bold, fam = 'sans', italic = false) => {
+    const name = (STD[fam] || STD.sans)[(bold ? 1 : 0) + (italic ? 2 : 0)];
+    return fonts[name] ??= await doc.embedFont(StandardFonts[name]);
+  };
   const imgs = {};
   const embedImg = async src => {
     if (imgs[src]) return imgs[src];
@@ -96,7 +121,7 @@ export async function flatten(bytes, objects, infos) {
     if (o.type === 'text') {
       if (o.cover) rect(o.cover.x, o.cover.y, o.cover.w, o.cover.h, { color: hexToRgb(o.cover.color) });
       if (o.bg) rect(o.x - 4, o.y - 3, o.w + 8, o.h + 6, { color: hexToRgb(o.bg), borderColor: hexToRgb('#e3c34a'), borderWidth: 0.6 });
-      const f = await font(o.bold);
+      const f = await font(o.bold, o.font, o.italic);
       String(o.text).split('\n').forEach((ln, i) => {
         if (!ln) return;
         const p = M(o.x, o.y + o.size * TEXT_ASC + i * o.size * LINE_H);

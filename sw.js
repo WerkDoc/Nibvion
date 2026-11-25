@@ -1,5 +1,5 @@
 // Nibvion Service Worker – offline-fähig
-const VERSION = 'nibvion-v1.31.1';
+const VERSION = 'nibvion-v1.32.0';
 // Bei Änderungen an Dateien in BIG_PATHS den Namen hochzählen
 const BIG = 'nibvion-big-1';
 const BIG_PATHS = ['/lib/models/', '/lib/ort/', '/lib/tesseract/'];
