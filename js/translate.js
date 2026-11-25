@@ -7,6 +7,7 @@ import { settings } from './settings.js';
 import { onlineReady, onlineOcr, onlineTranslate } from './online.js';
 import { render as renderScan, cropEditor } from './scanner.js';
 import { aiScan } from './aifx.js';
+import { inpaintRegion, dilate } from './inpaint.js';
 import { shareBytes } from './editor.js';
 
 // [DeepL-Ziel, Name, DeepL-Quelle]
@@ -25,82 +26,89 @@ let ctx = {};
 export function initTranslate(c) { ctx = c; }
 
 // ---------- Zeilen → Absätze ----------
+// Überschriften bleiben eigene Blöcke, ein Absatz endet nach einer kurzen letzten Zeile
+// oder wenn der Abstand größer wird als der übliche Zeilenabstand im Absatz.
 export function groupLines(lines, W, H) {
   const L = lines.map(l => ({ t: l.t, x0: l.b[0] * W, y0: l.b[1] * H, x1: l.b[2] * W, y1: l.b[3] * H, h: Math.max(4, (l.h || (l.b[3] - l.b[1]) * 0.8) * H) }))
+    .filter(l => l.t && l.t.trim())
     .sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
   const blocks = [];
   for (const l of L) {
     let best = null;
     for (const b of blocks) {
       const last = b.lines[b.lines.length - 1];
-      const lh = last.y1 - last.y0;
+      const lh = Math.max(l.y1 - l.y0, last.y1 - last.y0);
       const gap = l.y0 - last.y1;
       const sameSize = Math.abs(l.h - b.h) / Math.max(l.h, b.h) < 0.2;
       const ov = Math.min(l.x1, b.x1) - Math.max(l.x0, b.x0);
-      const aligned = Math.abs(l.x0 - b.x0) < b.h * 3 || Math.abs((l.x0 + l.x1) / 2 - (b.x0 + b.x1) / 2) < b.h * 2;
-      if (sameSize && gap > -lh * 0.4 && gap < lh * 0.9 && ov > Math.min(l.x1 - l.x0, b.x1 - b.x0) * 0.3 && aligned) { best = b; break; }
+      const aligned = Math.abs(l.x0 - b.x0) < b.h * 2.5 || Math.abs((l.x0 + l.x1) / 2 - (b.x0 + b.x1) / 2) < b.h * 1.5;
+      const okGap = gap > -lh * 0.4 && (b.lines.length > 1 ? gap < b.gap + lh * 0.4 : gap < lh * 0.7);
+      const ended = b.lines.length > 1 && (last.x1 - last.x0) < (b.x1 - b.x0) * 0.72;
+      const heading = b.lines.length === 1 && (l.x1 - l.x0) > (last.x1 - last.x0) * 1.6;
+      if (sameSize && okGap && !ended && !heading && ov > Math.min(l.x1 - l.x0, b.x1 - b.x0) * 0.3 && aligned) { best = b; break; }
     }
     if (best) {
-      const prev = best.lines[best.lines.length - 1].t;
+      const last = best.lines[best.lines.length - 1], prev = last.t, gap = l.y0 - last.y1;
       best.text = /[-‐]$/.test(prev) && /^\p{Ll}/u.test(l.t) ? best.text.replace(/[-‐]$/, '') + l.t : best.text + ' ' + l.t;
+      best.gap = best.lines.length > 1 ? (best.gap * (best.lines.length - 1) + gap) / best.lines.length : gap;
       best.lines.push(l); best.x0 = Math.min(best.x0, l.x0); best.x1 = Math.max(best.x1, l.x1); best.y1 = Math.max(best.y1, l.y1);
       best.h = (best.h * (best.lines.length - 1) + l.h) / best.lines.length;
-    } else blocks.push({ text: l.t, lines: [l], x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1, h: l.h });
+    } else blocks.push({ text: l.t, lines: [l], x0: l.x0, y0: l.y0, x1: l.x1, y1: l.y1, h: l.h, gap: 0 });
   }
   // Nur Zahlen/Zeichen nicht übersetzen
   blocks.forEach(b => { b.skip = !/\p{L}{2,}/u.test(b.text); });
   return blocks;
 }
 
-// ---------- Farben messen ----------
-const lum = p => p[0] * 0.3 + p[1] * 0.59 + p[2] * 0.11;
-export function measure(data, W, H, b) {
-  const pad = Math.max(2, b.h * 0.35);
+// ---------- Schrift im Bild finden (Maske + Farbe) ----------
+const lum = (r, g, b) => r * 0.3 + g * 0.59 + b * 0.11;
+export function textMask(data, W, H, b) {
+  const pad = Math.max(3, Math.round(b.h * 0.5));
   const x0 = Math.max(0, Math.floor(b.x0 - pad)), y0 = Math.max(0, Math.floor(b.y0 - pad)), x1 = Math.min(W - 1, Math.ceil(b.x1 + pad)), y1 = Math.min(H - 1, Math.ceil(b.y1 + pad));
-  const px = (x, y) => { const i = (y * W + x) * 4; return [data[i], data[i + 1], data[i + 2]]; };
-  const ring = [];
-  const step = Math.max(1, Math.round((x1 - x0 + y1 - y0) / 160));
-  for (let x = x0; x <= x1; x += step) ring.push(px(x, y0), px(x, y1));
-  for (let y = y0; y <= y1; y += step) ring.push(px(x0, y), px(x1, y));
-  const med = k => { const v = ring.map(p => p[k]).sort((a, c) => a - c); return v[v.length >> 1]; };
-  const bg = [med(0), med(1), med(2)], lb = lum(bg);
-  // Schrift: die stärkste Abweichung vom Hintergrund (heller oder dunkler) – Licht/Schatten im Foto zählt weniger
-  // Hintergrund-Streuung am Rand messen: Schrift = was deutlich darüber bzw. darunter liegt
-  const rl = ring.map(lum).sort((a, c) => a - c);
-  const r5 = rl[Math.floor(rl.length * 0.08)], r95 = rl[Math.floor(rl.length * 0.92)];
-  const all = [];
-  const st2 = Math.max(1, Math.round(Math.sqrt((x1 - x0) * (y1 - y0) / 6000)));
-  for (let y = y0; y <= y1; y += st2) for (let x = x0; x <= x1; x += st2) { const p = px(x, y); all.push([lum(p), p]); }
-  const L1 = all.filter(([l]) => l > r95 + 25), D1 = all.filter(([l]) => l < r5 - 25);
-  const lightText = L1.length >= D1.length;
-  const grp = (lightText ? L1 : D1).sort((a, c) => lightText ? c[0] - a[0] : a[0] - c[0]);
-  const top = grp.slice(0, Math.max(1, Math.round(grp.length * 0.5)));
-  const ink = top.length > 3 ? [0, 1, 2].map(k => Math.round(top.reduce((s, q) => s + q[1][k], 0) / top.length))
-    : lb > 128 ? [20, 20, 24] : [250, 250, 250];
-  return { bg, ink, box: [x0, y0, x1, y1] };
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, N = w * h;
+  const Lm = new Float32Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = ((y + y0) * W + x + x0) * 4; Lm[y * w + x] = lum(data[o], data[o + 1], data[o + 2]); }
+  // Hintergrund = weiches Mittel der Umgebung (Radius ≈ Schrifthöhe)
+  const r = Math.max(4, Math.round(b.h * 1.1));
+  const I = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += Lm[y * w + x]; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row; } }
+  const bgL = (x, y) => { const a = Math.max(0, y - r), c = Math.min(h, y + r + 1), l = Math.max(0, x - r), rr = Math.min(w, x + r + 1);
+    return (I[c * (w + 1) + rr] - I[a * (w + 1) + rr] - I[c * (w + 1) + l] + I[a * (w + 1) + l]) / ((c - a) * (rr - l)); };
+  const dl = new Float32Array(N);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) dl[y * w + x] = Lm[y * w + x] - bgL(x, y);
+  // Nur innerhalb der Zeilen suchen
+  const inLine = new Uint8Array(N), core = new Uint8Array(N);
+  for (const l of b.lines) {
+    const e = (l.y1 - l.y0) * 0.22;
+    for (let y = Math.max(0, Math.floor(l.y0 - e - y0)); y <= Math.min(h - 1, Math.ceil(l.y1 + e - y0)); y++)
+      for (let x = Math.max(0, Math.floor(l.x0 - e - x0)); x <= Math.min(w - 1, Math.ceil(l.x1 + e - x0)); x++) {
+        inLine[y * w + x] = 1;
+        const yy = y + y0; if (yy > l.y0 + (l.y1 - l.y0) * 0.3 && yy < l.y1 - (l.y1 - l.y0) * 0.3) core[y * w + x] = 1;
+      }
+  }
+  // Hell auf dunkel oder dunkel auf hell? → was im Kern der Zeilen stärker ausschlägt
+  let sp = 0, sn = 0;
+  for (let i = 0; i < N; i++) if (core[i]) { if (dl[i] > 18) sp += dl[i]; else if (dl[i] < -18) sn -= dl[i]; }
+  const pol = sp >= sn ? 1 : -1;
+  const vals = []; for (let i = 0; i < N; i++) if (core[i] && pol * dl[i] > 0) vals.push(pol * dl[i]);
+  vals.sort((a, c) => a - c);
+  const peak = vals[Math.floor(vals.length * 0.9)] || 40, T = Math.max(14, peak * 0.33);
+  let mask = new Uint8Array(N); let cnt = 0;
+  // Schrift + ihr Schatten/Kontur (Gegenrichtung) gehören beide weg
+  for (let i = 0; i < N; i++) if (inLine[i] && (pol * dl[i] > T * 0.75 || -pol * dl[i] > T)) { mask[i] = 1; cnt++; }
+  // Schriftfarbe: Kern der Striche (Mitte der Verteilung, nicht die überstrahlten Spitzen)
+  const lo = vals[Math.floor(vals.length * 0.6)] || T, hi = vals[Math.floor(vals.length * 0.93)] || peak * 2;
+  let rs = 0, gs = 0, bs = 0, n = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x; if (!core[i]) continue; const v = pol * dl[i]; if (v < Math.max(T, lo) || v > hi) continue;
+    const o = ((y + y0) * W + x + x0) * 4; rs += data[o]; gs += data[o + 1]; bs += data[o + 2]; n++;
+  }
+  let ink = n > 5 ? [rs / n, gs / n, bs / n].map(Math.round) : pol > 0 ? [250, 250, 250] : [25, 25, 28];
+  // Rand + Schatten der Buchstaben mit entfernen
+  mask = dilate(mask, w, h, Math.max(2, Math.round(b.h * 0.12)));
+  return { mask, box: [x0, y0, x1, y1], ink, pol, cnt };
 }
 const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
-
-// Fläche unter dem alten Text füllen: Verlauf aus den Randfarben (passt zu Licht & Schatten im Foto)
-function fillBox(src, out, W, m) {
-  const [x0, y0, x1, y1] = m.box, bw = x1 - x0 + 1, bh = y1 - y0 + 1, lb = lum(m.bg);
-  const at = (x, y) => { const i = (y * W + x) * 4; const p = [src[i], src[i + 1], src[i + 2]]; return Math.abs(lum(p) - lb) > 40 ? m.bg : p; };
-  const smooth = arr => { const r = Math.max(2, Math.round(arr.length / 30)), o = []; for (let i = 0; i < arr.length; i++) { let s0 = 0, s1 = 0, s2 = 0, n = 0; for (let k = Math.max(0, i - r); k <= Math.min(arr.length - 1, i + r); k++) { s0 += arr[k][0]; s1 += arr[k][1]; s2 += arr[k][2]; n++; } o.push([s0 / n, s1 / n, s2 / n]); } return o; };
-  const T = smooth(Array.from({ length: bw }, (_, i) => at(x0 + i, y0))), B = smooth(Array.from({ length: bw }, (_, i) => at(x0 + i, y1)));
-  const Lc = smooth(Array.from({ length: bh }, (_, j) => at(x0, y0 + j))), R = smooth(Array.from({ length: bh }, (_, j) => at(x1, y0 + j)));
-  for (let j = 0; j < bh; j++) {
-    const v = bh > 1 ? j / (bh - 1) : 0;
-    for (let i = 0; i < bw; i++) {
-      const u = bw > 1 ? i / (bw - 1) : 0, o = ((y0 + j) * W + x0 + i) * 4;
-      // Gewicht: näher am linken/rechten Rand → waagerecht, näher an oben/unten → senkrecht
-      const wh = 1 / (Math.min(u, 1 - u) * bw + 1), wv = 1 / (Math.min(v, 1 - v) * bh + 1), sw = wh + wv;
-      for (let k = 0; k < 3; k++) {
-        const hz = Lc[j][k] * (1 - u) + R[j][k] * u, vt = T[i][k] * (1 - v) + B[i][k] * v;
-        out[o + k] = (hz * wh + vt * wv) / sw;
-      }
-    }
-  }
-}
 
 // ---------- Text umbrechen ----------
 function wrap(x, text, maxW) {
@@ -120,36 +128,41 @@ function wrap(x, text, maxW) {
   return out;
 }
 
-/** Übersetzung ins Bild schreiben. */
+/** Übersetzung ins Bild schreiben: alte Schrift wegretuschieren, neue in gemessener Farbe/Größe. */
 export function paintTranslation(src, blocks, texts) {
   const W = src.width, H = src.height;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d'); x.drawImage(src, 0, 0);
   const data = src.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
   const outImg = x.getImageData(0, 0, W, H);
-  const ms = blocks.map((b, i) => (b.skip || !texts[i]) ? null : measure(data, W, H, b));
-  ms.forEach(m => m && fillBox(data, outImg.data, W, m));
+  const act = blocks.map((b, i) => (!b.skip && texts[i]) ? textMask(data, W, H, b) : null);
+  act.forEach(m => { if (m) inpaintRegion(outImg.data, W, H, m.mask, m.box); });
   x.putImageData(outImg, 0, 0);
   const hs = blocks.map(b => b.h).sort((a, b) => a - b), medH = hs[hs.length >> 1] || 10;
-  const FONT = '-apple-system, "SF Pro Text", Helvetica, Arial, sans-serif';
+  const FONT = '-apple-system, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif';
   blocks.forEach((b, i) => {
-    const t = texts[i]; if (b.skip || !t) return;
-    const m = ms[i];
-    // Schriftgröße so wählen, dass der Absatz in den Kasten passt
+    const t = texts[i], m = act[i]; if (!m) return;
     const bold = b.h > medH * 1.25 ? 700 : b.h > medH * 1.1 ? 600 : 500;
-    // einzeilige Kästen (Überschriften) dürfen nach rechts etwas breiter werden
-    const bw0 = b.x1 - b.x0, maxW = b.lines.length === 1 ? Math.max(bw0, Math.min(W * 0.96 - b.x0, bw0 * 2)) : Math.max(bw0, b.h * 4);
-    const maxH = (b.y1 - b.y0) * 1.12 + b.h * 0.3;
-    let fs = b.h * 1.4, lines;
-    for (let k = 0; k < 30; k++) {
+    const bw0 = b.x1 - b.x0;
+    const maxW = b.lines.length === 1 ? Math.max(bw0, Math.min(W * 0.97 - b.x0, bw0 * 2.2)) : bw0;
+    // Platz nach unten bis zum nächsten Block darunter
+    let below = H - b.y1;
+    for (const o of blocks) if (o !== b && o.y0 >= b.y1 - 2 && Math.min(o.x1, b.x1) > Math.max(o.x0, b.x0)) below = Math.min(below, o.y0 - b.y1);
+    const pitch = b.lines.length > 1 ? (b.y1 - b.y0) / b.lines.length : (b.y1 - b.y0) * 1.25;
+    const maxH = (b.y1 - b.y0) + Math.max(0, below - b.h * 0.6) * 0.8;
+    const fs0 = b.h * 1.38;
+    let fs = fs0, lines, lh;
+    for (let k = 0; k < 40; k++) {
       x.font = `${bold} ${fs}px ${FONT}`;
       lines = wrap(x, t, maxW);
-      if (lines.length * fs * 1.2 <= maxH || fs < b.h * 0.55) break;
-      fs *= 0.94;
+      lh = Math.max(fs * 1.16, Math.min(pitch, fs * 1.45));
+      if (lines.length * lh <= maxH + lh * 0.25 || fs < fs0 * 0.62) break;
+      fs *= 0.95;
     }
-    x.fillStyle = rgb(m.ink); x.textBaseline = 'top';
-    const lh = fs * 1.2, top = b.y0 + ((b.y1 - b.y0) - lines.length * lh) / 2 + fs * 0.06;
-    lines.forEach((ln, j) => x.fillText(ln, b.x0, top + j * lh));
+    x.fillStyle = rgb(m.ink); x.textBaseline = 'alphabetic';
+    // Grundlinie wie im Original: erste Zeile sitzt auf der Grundlinie der ersten Originalzeile
+    const base0 = b.lines[0].y1 - (b.lines[0].y1 - b.lines[0].y0) * 0.12;
+    lines.forEach((ln, j) => x.fillText(ln, b.x0, base0 + j * lh));
   });
   return c;
 }
@@ -203,7 +216,7 @@ export async function translateFlow(items) {
   };
   const run = async () => {
     const p = pages[cur], my = ++gen;
-    if (!p.src) { p.src = renderScan(p.it, 'color', 2400); p.url = p.src.toDataURL('image/jpeg', 0.9); }
+    if (!p.src) { p.src = renderScan(p.it, '', 2400); p.url = p.src.toDataURL('image/jpeg', 0.9); }
     show();
     if (p.res[resKey()]) return;
     const fx = aiScan(frame, { src: p.src, text: 'Nibvion AI übersetzt' });
@@ -213,7 +226,8 @@ export async function translateFlow(items) {
       const tr = todo.length ? await onlineTranslate(todo.map(([b]) => b.text), target, source) : [];
       const base = target.split('-')[0], texts = [];
       // schon in der Zielsprache → Original im Bild lassen
-      todo.forEach(([b, i], k) => { const r = tr[k]; texts[i] = !r ? '' : (r.lang === base && r.text.trim() === b.text.trim()) ? '' : r.text; });
+      const norm = v => v.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      todo.forEach(([b, i], k) => { const r = tr[k]; texts[i] = !r || norm(r.text) === norm(b.text) ? '' : r.text; });
       const out = paintTranslation(p.src, p.blocks, texts);
       p.res[resKey()] = { canvas: out, url: out.toDataURL('image/jpeg', 0.9), texts, lang: tr[0]?.lang };
       if (my !== gen || !el.isConnected) { fx.remove(); return; }
