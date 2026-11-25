@@ -21,7 +21,7 @@ import { initPageTools, headerFooterSheet, cropSheet } from './pagetools.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.33.0';
+export const VERSION = '1.34.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -255,6 +255,7 @@ const TOOL_GROUPS = [
     { id: 'img2pdf', label: 'Bilder → PDF', sub: 'Fotos & Screenshots zusammenfassen', icon: 'images', c: 'c-blue' },
     { id: 'merge', label: 'PDFs zusammenfügen', sub: 'Mehrere PDFs zu einem', icon: 'merge', c: 'c-orange' },
     { id: 'split', label: 'PDF aufteilen', sub: 'Seiten als eigene PDFs speichern', icon: 'split', c: 'c-teal' },
+    { id: 'compare', label: 'PDFs vergleichen', sub: 'Zwei Versionen Seite für Seite – Unterschiede markiert', icon: 'compare', c: 'c-orange' },
     { id: 'blank', label: 'Leeres PDF', sub: 'A4-Seite zum Ausfüllen', icon: 'filePlus', c: 'c-gray' },
   ] },
   { title: 'Konvertieren', items: [
@@ -318,6 +319,7 @@ function runTool(id) {
     case 'protect': return docPicker('Mit Passwort schützen', 'Die PDF lässt sich danach nur mit Passwort öffnen.', protectSheet);
     case 'redact': return docPicker('Schwärzen', 'Namen, Adressen, Kontonummern … endgültig aus der PDF entfernen – nicht nur abdecken.', redactDoc);
     case 'form': return docPicker('Formular ausfüllen', 'Für PDFs mit ausfüllbaren Feldern (Anträge, Verträge, Formulare).', formDoc);
+    case 'compare': return import('./compare.js').then(m => m.compareSheet(toolCtx())).catch(e => { console.error(e); toast('Funktion konnte nicht geladen werden', true); });
     case 'split': return docPicker('PDF aufteilen', 'Seiten oder Bereiche als eigene PDFs speichern.', splitDoc);
     case 'sigs': return signatureSheet(null);
     case 'stamps': return stampSheet(null);
@@ -802,7 +804,7 @@ function compressSheet(d) {
 }
 
 // ----- Schwärzen / Formular / Aufteilen (eigene Module, erst bei Bedarf geladen) -----
-const toolCtx = () => ({ docBytes, storeResult, saveNewDoc, renderRecents, openDoc });
+const toolCtx = () => ({ docBytes, storeResult, saveNewDoc, renderRecents, openDoc, allDocs, importFile });
 async function lazyTool(mod, fn, d) {
   if (!d) return;
   try { const m = await import(mod); return m[fn](d, toolCtx()); }
