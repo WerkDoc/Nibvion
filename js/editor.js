@@ -84,6 +84,126 @@ async function loadDocument() {
   E.infos = await pageInfos(E.pdf);
   E.text = {}; E.ocr = {}; E.needOcr = {}; E.scanFx = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
+  loadOutline();
+}
+
+// ======================= Inhaltsverzeichnis (PDF-Outline) =======================
+// pdf.js liefert doc.getOutline(): [{ title, dest, url, items, bold, italic }]. Ziele (Name oder
+// Array) werden in Seitenindex + Höhe auf der Seite aufgelöst; Tippen springt direkt dorthin.
+async function loadOutline() {
+  const pdf = E.pdf; E.outline = null; E.tocOpen = null;
+  const chip = $('toc-chip'); chip.hidden = true;
+  let raw = null;
+  try { raw = await pdf.getOutline(); } catch {}
+  if (!raw?.length || pdf !== E.pdf) return;
+  const refCache = new Map();
+  const resolve = async dest => {
+    try {
+      if (typeof dest === 'string') dest = await pdf.getDestination(dest);
+      if (!Array.isArray(dest) || !dest.length) return null;
+      const ref = dest[0];
+      let page = null;
+      if (ref && typeof ref === 'object') {
+        const k = `${ref.num}R${ref.gen}`;
+        if (!refCache.has(k)) refCache.set(k, await pdf.getPageIndex(ref).catch(() => null));
+        page = refCache.get(k);
+      } else if (Number.isInteger(ref)) page = ref;
+      if (page == null || page < 0 || page >= pdf.numPages) return null;
+      // Höhe auf der Seite (nur bei /XYZ und /FitH bzw. /FitBH mit Wert)
+      const kind = dest[1]?.name, y = kind === 'XYZ' ? dest[3] : (kind === 'FitH' || kind === 'FitBH') ? dest[2] : null;
+      return { page, top: typeof y === 'number' ? y : null };
+    } catch { return null; }
+  };
+  let count = 0;
+  const walk = async (items, depth) => {
+    const out = [];
+    for (const it of items || []) {
+      if (++count > 3000) break;
+      const t = await resolve(it.dest);
+      out.push({ id: count, title: String(it.title || '').replace(/\s+/g, ' ').trim() || 'Ohne Titel', page: t?.page ?? null, top: t?.top ?? null,
+        url: it.url || null, bold: !!it.bold, italic: !!it.italic, depth, items: depth < 8 ? await walk(it.items, depth + 1) : [] });
+    }
+    return out;
+  };
+  const tree = await walk(raw, 0);
+  if (pdf !== E.pdf || !tree.length) return;
+  E.outline = tree; E.tocOpen = new Set();
+  chip.hidden = false;
+}
+
+function tocFlat(nodes = E.outline || [], out = []) { for (const n of nodes) { out.push(n); tocFlat(n.items, out); } return out; }
+
+// Aktuelles Kapitel = letzter Eintrag, dessen Seite ≤ aktueller Seite
+function tocCurrent() {
+  const cur = currentPage(); let best = null;
+  for (const n of tocFlat()) if (n.page != null && n.page <= cur && (!best || n.page >= best.page)) best = n;
+  return best;
+}
+
+function jumpTo(page, top) {
+  const p = E.pages[page]; if (!p) return;
+  const sc = $('ed-scroll'), info = E.infos[page];
+  let y = 0;
+  if (top != null && info && !info.rot) y = Math.max(0, (info.view[3] - top) * scale() - 8);
+  sc.scrollTo({ top: Math.max(0, p.el.offsetTop + y - 12), behavior: 'smooth' });
+  setTimeout(updPageChip, 450);
+}
+
+function tocSheet() {
+  if (!E.outline) return toast('Dieses PDF hat kein Inhaltsverzeichnis');
+  const flat = tocFlat(), cur = tocCurrent();
+  // Pfad zum aktuellen Kapitel aufklappen
+  const parents = new Map();
+  (function link(nodes, par) { for (const n of nodes) { parents.set(n.id, par); link(n.items, n); } })(E.outline, null);
+  for (let p = cur && parents.get(cur.id); p; p = parents.get(p.id)) E.tocOpen.add(p.id);
+  const search = flat.length > 20;
+  sheet({
+    title: 'Inhaltsverzeichnis',
+    html: `${search ? `<input class="field toc-q" type="search" placeholder="Kapitel suchen" data-q autocomplete="off">` : ''}
+      <div class="toc-meta">${flat.length} ${flat.length === 1 ? 'Eintrag' : 'Einträge'} · ${E.pages.length} Seiten
+        ${flat.some(n => n.items.length) ? `<span class="toc-all"><button data-all="1">Alle aufklappen</button><button data-all="0">Zuklappen</button></span>` : ''}</div>
+      <div class="menu toc" data-list></div>`,
+    onMount(el, api) {
+      const list = el.querySelector('[data-list]'), q = el.querySelector('[data-q]');
+      list.classList.toggle('nested', flat.some(n => n.items.length));
+      const row = (n, depth, show) => {
+        const has = n.items.length, open = E.tocOpen.has(n.id);
+        const dis = n.page == null;
+        return `<div class="toc-row${n === cur ? ' cur' : ''}${dis ? ' dis' : ''}" data-id="${n.id}" style="--d:${depth}">
+          ${has && !show ? `<button class="toc-tw${open ? ' open' : ''}" data-tw aria-label="${open ? 'Zuklappen' : 'Aufklappen'}">${icon('chevronRight')}</button>` : '<span class="toc-tw sp"></span>'}
+          <button class="toc-main" data-go ${dis ? 'disabled' : ''}><span class="toc-t" style="${n.bold || depth === 0 ? 'font-weight:650;' : ''}${n.italic ? 'font-style:italic;' : ''}">${esc(n.title)}</span>
+          <span class="toc-p">${n.page != null ? n.page + 1 : n.url ? icon('globe') : '–'}</span></button></div>`;
+      };
+      const render = () => {
+        const term = (q?.value || '').trim().toLowerCase();
+        let html = '';
+        if (term) {
+          const hits = flat.filter(n => n.title.toLowerCase().includes(term));
+          html = hits.map(n => row(n, 0, true)).join('') || `<div class="empty" style="border:0;padding:22px">Kein Kapitel gefunden</div>`;
+        } else {
+          const rec = (nodes, d) => { for (const n of nodes) { html += row(n, d, false); if (n.items.length && E.tocOpen.has(n.id)) rec(n.items, d + 1); } };
+          rec(E.outline, 0);
+        }
+        list.innerHTML = html;
+        list.querySelectorAll('.toc-row').forEach(r => {
+          const n = flat.find(x => x.id === +r.dataset.id);
+          r.querySelector('[data-tw]')?.addEventListener('click', () => { E.tocOpen.has(n.id) ? E.tocOpen.delete(n.id) : E.tocOpen.add(n.id); haptic(); render(); });
+          r.querySelector('[data-go]').onclick = () => {
+            if (n.page == null) { if (n.url) window.open(n.url, '_blank', 'noopener'); return; }
+            haptic(); api.close(); jumpTo(n.page, n.top);
+          };
+        });
+      };
+      if (q) q.oninput = render;
+      el.querySelectorAll('[data-all]').forEach(b => b.onclick = () => {
+        haptic();
+        if (b.dataset.all === '1') flat.forEach(n => n.items.length && E.tocOpen.add(n.id)); else E.tocOpen.clear();
+        render();
+      });
+      render();
+      requestAnimationFrame(() => list.querySelector('.toc-row.cur')?.scrollIntoView({ block: 'center' }));
+    },
+  });
 }
 
 async function closeEditor() {
@@ -930,10 +1050,11 @@ function moreSheet() {
   sheet({
     title: E.doc.name,
     html: `
-      <div class="menu-grid" style="margin-bottom:16px">
+      <div class="menu-grid" style="margin-bottom:16px${E.outline ? ';grid-template-columns:repeat(4,1fr)' : ''}">
         <button data-a="share"><span class="qt-ic c-blue">${icon('share')}</span>Teilen</button>
         <button data-a="download"><span class="qt-ic c-green">${icon('download')}</span>Sichern</button>
         <button data-a="pages"><span class="qt-ic c-violet">${icon('pages')}</span>Seiten</button>
+        ${E.outline ? `<button data-a="toc"><span class="qt-ic c-orange">${icon('toc')}</span>Inhalt</button>` : ''}
       </div>
       <div class="menu">
         <button class="row" data-a="bake"><span class="row-ic c-orange">${icon('check')}</span><span class="row-main"><span class="row-title">Fertigstellen</span><span class="row-sub">Änderungen fest ins PDF übernehmen</span></span></button>
@@ -944,6 +1065,7 @@ function moreSheet() {
     onMount(el, api) {
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         const a = b.dataset.a; api.close();
+        if (a === 'toc') return tocSheet();
         try {
           if (a === 'share' || a === 'download') {
             busy(true, 'PDF wird erstellt …');
@@ -1066,6 +1188,7 @@ export function initEditor() {
     if (a === 'ed-back') closeEditor();
     if (a === 'ed-mode') modeSheet();
     if (a === 'ed-more') moreSheet();
+    if (a === 'ed-toc') { haptic(); tocSheet(); }
     if (a === 'ed-options') optionsSheet();
     if (a === 'undo') undo();
     if (a === 'redo') redo();
