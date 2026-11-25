@@ -157,3 +157,31 @@ export function dataUrlToBytes(u) {
   return a;
 }
 export function haptic() { try { navigator.vibrate && navigator.vibrate(8); } catch {} }
+
+// ---------- Sanftes Drehen ----------
+export const ROT_MS = 480;
+export const ROT_EASE = 'cubic-bezier(.45,0,.2,1)';
+export const reducedMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } };
+export const easeInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+/**
+ * Element langsam um 90° drehen und dabei in die freie Fläche (aw × ah) einpassen.
+ * Danach `apply()` (zeichnet das neue, gedrehte Bild) – die Drehung bleibt stehen, bis
+ * `ready` (Promise, optional) erfüllt ist, damit nichts zurückspringt.
+ */
+export async function spinRotate(el, aw, ah, apply, deg = 90) {
+  const r = el && el.getBoundingClientRect();
+  if (!el || !el.animate || reducedMotion() || !r.width || !r.height) { await apply(); return; }
+  const k = Math.min(aw / r.height, ah / r.width);
+  const anim = el.animate([{ transform: 'none' }, { transform: `rotate(${deg}deg) scale(${k})` }], { duration: ROT_MS, easing: ROT_EASE, fill: 'forwards' });
+  try { await anim.finished; } catch {}
+  const ready = await apply();
+  try { if (ready && ready.then) await Promise.race([ready, new Promise(r => setTimeout(r, 2500))]); } catch {}
+  requestAnimationFrame(() => anim.cancel());
+}
+
+/** Wartet, bis ein <img> sein neues Bild geladen hat. */
+export const imgLoaded = img => new Promise(res => {
+  const done = () => { img.removeEventListener('load', done); img.removeEventListener('error', done); res(); };
+  img.addEventListener('load', done); img.addEventListener('error', done);
+});

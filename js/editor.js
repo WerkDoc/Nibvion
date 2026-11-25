@@ -998,7 +998,12 @@ async function pageManager() {
           <div class="pg-acts"><button data-l="${k}" ${k ? '' : 'disabled style="opacity:.3"'}>${icon('chevronLeft')}</button><button data-r="${k}">${icon('rotate')}</button><button data-d="${k}">${icon('trash')}</button></div></div>`).join('')
           + (blank ? `<div class="pg"><div class="pg-img"></div><div class="pg-n">Neu</div></div>` : '');
         grid.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { const k = +b.dataset.l; if (!k) return; [order[k - 1], order[k]] = [order[k], order[k - 1]]; render(); });
-        grid.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { order[+b.dataset.r].rot = (order[+b.dataset.r].rot + 90) % 360; render(); });
+        grid.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+          const p = order[+b.dataset.r], im = b.closest('.pg').querySelector('.pg-img');
+          p.rot = (p.rot + 90) % 360; haptic();
+          // sanft weiterdrehen (Winkel läuft weiter, 270° → 360° statt zurück auf 0°)
+          im.dataset.v = (+(im.dataset.v ?? (p.rot + 270) % 360)) + 90; im.style.transform = `rotate(${im.dataset.v}deg)`;
+        });
         grid.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { if (order.length <= 1) return toast('Mindestens eine Seite muss bleiben', true); order.splice(+b.dataset.d, 1); render(); });
       };
       render();
