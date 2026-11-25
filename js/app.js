@@ -20,7 +20,7 @@ import { initTranslate, translateFlow } from './translate.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.30.0';
+export const VERSION = '1.30.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -465,7 +465,7 @@ function translateTool() {
         api.close();
         const fs = await pickFiles('file-img'); if (!fs.length) return;
         busy(true, 'Bild wird geladen …'); const items = [];
-        for (const f of fs.slice(0, 10)) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: detectCorners(img), rot: 0 }); } catch {} }
+        for (const f of fs.slice(0, 10)) { try { const { img, url } = await loadFileImage(f); items.push({ img, url, corners: FULL.map(p => [...p]), rot: 0 }); } catch {} }
         busy(false);
         if (items.length) translateFlow(items); else toast('Bild konnte nicht geladen werden', true);
       };

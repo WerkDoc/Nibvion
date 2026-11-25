@@ -49,7 +49,7 @@ const ID_TYPES = [
   { id: 'other', label: 'Andere', sides: 2, r: 85.6 / 54 },
 ];
 const HINTS = {
-  scan: 'Dokument ins Bild halten', text: 'Text ins Bild halten', translate: 'Text zum Übersetzen ins Bild halten', word: 'Dokument ins Bild halten',
+  scan: 'Dokument ins Bild halten', text: 'Text ins Bild halten', translate: 'Text ins Bild halten und auslösen', word: 'Dokument ins Bild halten',
   excel: 'Tabelle ins Bild halten', sign: 'Dokument zum Unterschreiben', stamp: 'Foto mit Datum und Uhrzeit', qr: 'QR-Code in den Rahmen halten',
 };
 let jsqrP = null;
@@ -137,8 +137,8 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
 
     const idt = () => ID_TYPES.find(t => t.id === idType) || ID_TYPES[0];
     const cardMode = () => mode === 'id' && idt().sides > 0;     // Ausweis mit Rahmen-Schablone
-    const usesQuad = () => !['stamp', 'qr'].includes(mode) && !cardMode();
-    const autoOK = () => auto && ['scan', 'word', 'excel', 'sign', 'text', 'translate'].includes(mode) || (auto && mode === 'id' && !cardMode());
+    const usesQuad = () => !['stamp', 'qr', 'translate'].includes(mode) && !cardMode();   // Übersetzen: ganzes Bild (wie CamScanner)
+    const autoOK = () => auto && ['scan', 'word', 'excel', 'sign', 'text'].includes(mode) || (auto && mode === 'id' && !cardMode());
 
     const updThumb = () => {
       const n = startCount + items.length;
@@ -179,7 +179,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
         track_.style.transform = `translateX(${track_.parentElement.clientWidth / 2 - x}px)`;
       }
       wrap.querySelectorAll('[data-idt]').forEach(b => b.classList.toggle('on', b.dataset.idt === idType));
-      wrap.querySelector('[data-auto]').hidden = !['scan', 'word', 'excel', 'sign', 'text', 'translate'].includes(mode) && !(mode === 'id' && !cardMode());
+      wrap.querySelector('[data-auto]').hidden = !['scan', 'word', 'excel', 'sign', 'text'].includes(mode) && !(mode === 'id' && !cardMode());
       quad = null; stable = 0;
       qrRes.hidden = true; qrPaused = false;
       layoutGuide(); setHint();
@@ -320,7 +320,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
         updThumb(); busy = false;
         return setTimeout(finishAfter, 350);
       }
-      let corners = detectQuad(c, 480);
+      let corners = mode === 'translate' ? FULL.map(p => [...p]) : detectQuad(c, 480);
       if (cardMode()) {
         // Karte: erkannte Kanten nur nehmen, wenn sie zur Schablone passen, sonst den Schablonen-Rahmen
         const g = guide.getBoundingClientRect(), st = stage.getBoundingClientRect();
@@ -411,7 +411,7 @@ export function liveScanner({ startCount = 0, mode: startMode = 'scan', idType: 
         try {
           const { img, url } = await loadFileImage(f);
           if (cardMode()) items.push({ img, url, corners: cardCorners(img, idt().r), rot: 0, card: true, straighten: false });
-          else items.push({ img, url, corners: detectCorners(img), rot: 0 });
+          else items.push({ img, url, corners: mode === 'translate' ? FULL.map(p => [...p]) : detectCorners(img), rot: 0 });
         }
         catch { toast('Bild konnte nicht geladen werden', true); }
       }
