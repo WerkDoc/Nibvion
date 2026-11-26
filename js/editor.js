@@ -7,6 +7,7 @@ import { pdfjsLib, loadPdf, closePdf, pageInfos, flatten, pagesOp, renderThumb, 
 import { makeSymbol } from './sign.js';
 import { signatureSheet, stampSheet, freshStamp } from './assets.js';
 import { analyzeAll, blankReview, duplexOrder } from './pageorder.js';
+import { initScrubber, toggleScrubber, scrubberReset, scrubberSync } from './scrubber.js';
 import { settings } from './settings.js';
 import { ocrEditItems, releaseEditOcr } from './ocr.js';
 
@@ -85,6 +86,7 @@ async function loadDocument() {
   E.infos = await pageInfos(E.pdf);
   E.text = {}; E.ocr = {}; E.needOcr = {}; E.scanFx = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
+  scrubberReset(E.pdf);
   loadOutline();
 }
 
@@ -214,6 +216,7 @@ async function closeEditor() {
   E.ocrGen++; ocrQueue = []; releaseEditOcr();
   if (E.dirtyThumb) await updateThumb();
   E.open = false;
+  toggleScrubber(false);
   $('editor').classList.remove('open'); $('editor').setAttribute('aria-hidden', 'true');
   document.body.classList.remove('in-editor');
   hideSelMenu();
@@ -356,7 +359,7 @@ function currentPage() {
   E.pages.forEach((p, i) => { const r = p.el.getBoundingClientRect(); const d = r.top > mid ? r.top - mid : r.bottom < mid ? mid - r.bottom : 0; if (d < bd) { bd = d; best = i; } });
   return best;
 }
-function updPageChip() { $('page-chip').textContent = `${currentPage() + 1} / ${E.pages.length}`; }
+function updPageChip() { const c = currentPage(); $('page-chip').textContent = `${c + 1} / ${E.pages.length}`; scrubberSync(c); }
 
 // ======================= Modus & Werkzeuge =======================
 function setMode(mode, first) {
@@ -1059,6 +1062,10 @@ function moreSheet() {
         <button data-a="pages"><span class="qt-ic c-violet">${icon('pages')}</span>Seiten</button>
         ${E.outline ? `<button data-a="toc"><span class="qt-ic c-orange">${icon('toc')}</span>Inhalt</button>` : ''}
       </div>
+      <div class="menu" style="margin-bottom:12px">
+        <button class="row" data-a="present"><span class="row-ic c-violet">${icon('present')}</span><span class="row-main"><span class="row-title">Präsentieren</span><span class="row-sub">Vollbild mit Laserpointer</span></span>${icon('chevronRight')}</button>
+        <button class="row" data-a="fix"><span class="row-ic c-red">${icon('lock')}</span><span class="row-main"><span class="row-title">Als schreibgeschütztes PDF fixieren</span><span class="row-sub">Flatten: Felder, Stempel, Unterschriften fest einbrennen</span></span>${icon('chevronRight')}</button>
+      </div>
       <div class="menu">
         <button class="row" data-a="bake"><span class="row-ic c-orange">${icon('check')}</span><span class="row-main"><span class="row-title">Fertigstellen</span><span class="row-sub">Änderungen fest ins PDF übernehmen</span></span></button>
         <button class="row" data-a="copy"><span class="row-ic c-teal">${icon('copy')}</span><span class="row-main"><span class="row-title">Als Kopie speichern</span></span></button>
@@ -1069,6 +1076,8 @@ function moreSheet() {
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         const a = b.dataset.a; api.close();
         if (a === 'toc') return tocSheet();
+        if (a === 'present') return present();
+        if (a === 'fix') return fixSheet();
         try {
           if (a === 'share' || a === 'download') {
             busy(true, 'PDF wird erstellt …');
@@ -1105,6 +1114,76 @@ function moreSheet() {
             }
           }
         } catch (err) { console.error(err); busy(false); toast('Das hat nicht geklappt', true); }
+      });
+    },
+  });
+}
+
+// ======================= Präsentieren =======================
+async function present() {
+  let pdf = E.pdf, temp = null;
+  try {
+    if (E.objects.length) {       // eigene Ebenen mit anzeigen (ohne das Dokument zu ändern)
+      busy(true, 'Präsentation wird vorbereitet …');
+      temp = pdf = await loadPdf(await exportBytes());
+      busy(false);
+    }
+    const { presentMode } = await import('./present.js');
+    const last = await presentMode({ pdf, start: currentPage(), title: E.doc.name.replace(/\.pdf$/i, '') });
+    if (E.open && last !== currentPage()) { const p = E.pages[last]; if (p) $('ed-scroll').scrollTop = Math.max(0, p.el.offsetTop - 12); updPageChip(); rerenderVisible(); }
+  } catch (e) { console.error(e); busy(false); toast('Präsentation konnte nicht gestartet werden', true); }
+  finally { if (temp) setTimeout(() => closePdf(temp), 400); }
+}
+
+// ======================= Fixieren (Flatten) =======================
+async function fixSheet() {
+  const st = { raster: false, dpi: 200 };
+  const { fixatePdf, countEditable } = await import('./fixate.js');
+  sheet({
+    title: 'PDF fixieren',
+    html: `<p class="fx-intro">Alles wird fest in die Seiten eingebrannt – danach gibt es <b>keine bearbeitbaren Formularfelder</b> und <b>keine verschiebbaren Ebenen</b> mehr. Ideal für Verträge und Formulare zum Versenden. Dein Dokument in Nibvion bleibt unverändert.</p>
+      <div class="fx-list" data-list>
+        <div class="fx-it"><span class="row-ic c-blue">${icon('form')}</span><span>Formularfelder</span><b data-c="fields">…</b></div>
+        <div class="fx-it"><span class="row-ic c-green">${icon('sign')}</span><span>Stempel, Unterschriften, Texte, Zeichnungen</span><b>${E.objects.length}</b></div>
+        <div class="fx-it"><span class="row-ic c-amber">${icon('comment')}</span><span>Kommentare & Markierungen im PDF</span><b data-c="annots">…</b></div>
+      </div>
+      <div class="menu fx-opt">
+        <div class="row"><span class="row-ic c-red">${icon('shieldLock')}</span><span class="row-main"><span class="row-title">Seiten zusätzlich rastern</span><span class="row-sub">Maximaler Schutz: Seiten werden zu Bildern – Text & Unterschriften lassen sich auch in Profi-Editoren nicht mehr zerlegen</span></span>
+          <div class="seg" data-raster><button data-v="1">An</button><button data-v="0" class="on">Aus</button></div></div>
+        <div class="row" data-dpirow hidden><span class="row-main"><span class="row-title">Auflösung</span><span class="row-sub" data-dpisub></span></span>
+          <div class="seg" data-dpi><button data-v="150">150</button><button data-v="200" class="on">200</button><button data-v="300">300 dpi</button></div></div>
+      </div>
+      <p class="fx-note" data-note hidden>${icon('info')} Gerasterte Seiten sind nicht mehr durchsuchbar und Text kann nicht kopiert werden. Die Datei wird größer.</p>
+      <div class="btn-row"><button class="btn" data-go="copy">${icon('copy')} Als Kopie</button><button class="btn" data-go="download">${icon('download')} Sichern</button></div>
+      <div class="btn-row" style="margin-top:8px"><button class="btn primary" data-go="share">${icon('share')} Fixieren & teilen</button></div>`,
+    onMount(el, api) {
+      const $q = s => el.querySelector(s);
+      countEditable(E.pdf).then(c => { if (api.closed) return; $q('[data-c=fields]').textContent = c.fields; $q('[data-c=annots]').textContent = c.annots; }).catch(() => {});
+      const dpiSub = () => { $q('[data-dpisub]').textContent = { 150: 'Kleinere Datei', 200: 'Empfohlen – scharf & handlich', 300: 'Druckqualität, große Datei' }[st.dpi]; };
+      el.querySelectorAll('[data-raster] button').forEach(btn => btn.onclick = () => {
+        st.raster = btn.dataset.v === '1'; haptic();
+        el.querySelectorAll('[data-raster] button').forEach(x => x.classList.toggle('on', x === btn));
+        $q('[data-dpirow]').hidden = !st.raster; $q('[data-note]').hidden = !st.raster; dpiSub();
+      });
+      el.querySelectorAll('[data-dpi] button').forEach(b => b.onclick = () => { st.dpi = +b.dataset.v; el.querySelectorAll('[data-dpi] button').forEach(x => x.classList.toggle('on', x === b)); dpiSub(); haptic(); });
+      el.querySelectorAll('[data-go]').forEach(b => b.onclick = async () => {
+        const how = b.dataset.go; api.close();
+        const base = E.doc.name.replace(/\.pdf$/i, ''), name = `${base} (fixiert).pdf`;
+        busy(true, 'PDF wird fixiert …');
+        try {
+          const src = await exportBytes();
+          const r = await fixatePdf(src, { raster: st.raster, dpi: st.dpi, title: base, onProgress: t => busy(true, t) });
+          busy(false);
+          if (how === 'share') await shareBytes(r.bytes, name);
+          else if (how === 'download') downloadBytes(r.bytes, name);
+          else {
+            busy(true, 'Kopie wird gespeichert …');
+            const { saveNewDoc } = await import('./app.js');
+            await saveNewDoc(r.bytes, name);
+            busy(false); toast(st.raster ? 'Gerasterte Kopie gespeichert' : 'Fixierte Kopie gespeichert');
+          }
+          if (!r.formOk) toast('Einige Formularfelder wurden als Bild eingebrannt');
+        } catch (e) { console.error(e); busy(false); toast('Fixieren fehlgeschlagen', true); }
       });
     },
   });
@@ -1196,6 +1275,11 @@ async function pageManager() {
 export function initEditor() {
   hydrateIcons($('editor'));
   const sc = $('ed-scroll');
+  initScrubber($('editor'), {
+    pdf: () => E.pdf, count: () => E.pages.length, current: currentPage,
+    jump: i => { const p = E.pages[i]; if (p) sc.scrollTop = Math.max(0, p.el.offsetTop - 12); $('page-chip').textContent = `${i + 1} / ${E.pages.length}`; },
+    done: () => { rerenderVisible(); updPageChip(); },
+  });
   sc.addEventListener('scroll', () => { updPageChip(); if (E.sel) placeSelMenu(); }, { passive: true });
   // Pinch-Zoom
   let pinch = null;
@@ -1229,6 +1313,7 @@ export function initEditor() {
     if (a === 'ed-mode') modeSheet();
     if (a === 'ed-more') moreSheet();
     if (a === 'ed-toc') { haptic(); tocSheet(); }
+    if (a === 'ed-scrub') { haptic(); if (!toggleScrubber() && E.pages.length < 2) toast('Das PDF hat nur eine Seite'); }
     if (a === 'ed-options') optionsSheet();
     if (a === 'undo') undo();
     if (a === 'redo') redo();
