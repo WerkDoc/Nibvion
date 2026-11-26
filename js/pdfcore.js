@@ -86,9 +86,17 @@ export function pdfFontInfo(fontObj, style) {
 
 // Objekte dauerhaft ins PDF schreiben
 export async function flatten(bytes, objects, infos) {
-  const { PDFDocument, StandardFonts, degrees, BlendMode, LineCapStyle } = L();
+  const { PDFDocument, StandardFonts, degrees, BlendMode, LineCapStyle, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = L();
   const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const pages = doc.getPages();
+  // Gedrehtes Objekt: Editor dreht im Uhrzeigersinn (y nach unten). Die Abbildung Editor → PDF
+  // spiegelt immer (Determinante −1), daher im PDF um −Winkel um die Mitte drehen.
+  const rotStart = (page, M, o) => {
+    if (!o.rot || (o.type !== 'image' && o.type !== 'text')) return false;
+    const c = M(o.x + o.w / 2, o.y + o.h / 2), r = -o.rot * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+    page.pushOperators(pushGraphicsState(), concatTransformationMatrix(cs, sn, -sn, cs, c.x - c.x * cs + c.y * sn, c.y - c.x * sn - c.y * cs));
+    return true;
+  };
   const fonts = {};
   const STD = {
     sans: ['Helvetica', 'HelveticaBold', 'HelveticaOblique', 'HelveticaBoldOblique'],
@@ -117,6 +125,7 @@ export async function flatten(bytes, objects, infos) {
     if (!page || !info) continue;
     const M = mapper(info); const R = degrees(info.rot);
     const rect = (x, y, w, h, opts) => { const p = M(x, y + h); page.drawRectangle({ x: p.x, y: p.y, width: w, height: h, rotate: R, ...opts }); };
+    const rotated = rotStart(page, M, o);
 
     if (o.type === 'text') {
       if (o.cover) rect(o.cover.x, o.cover.y, o.cover.w, o.cover.h, { color: hexToRgb(o.cover.color) });
@@ -146,6 +155,7 @@ export async function flatten(bytes, objects, infos) {
         borderLineCap: LineCapStyle.Round, blendMode: (o.opacity ?? 1) < 1 ? BlendMode.Multiply : undefined,
       });
     }
+    if (rotated) page.pushOperators(popGraphicsState());
   }
   return doc.save();
 }

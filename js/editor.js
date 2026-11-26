@@ -550,6 +550,38 @@ function bbox(o) {
 }
 const byId = id => E.objects.find(o => o.id === id);
 
+// ---------- Drehen ----------
+// Bilder (Stempel, Unterschriften, QR), Texte und Zeichnungen lassen sich am Eck-Punkt drehen.
+// Bild/Text: Winkel in o.rot (Grad, im Uhrzeigersinn, um die Mitte). Zeichnung: Punkte werden direkt gedreht.
+const canRotate = o => o.type === 'image' || o.type === 'ink' || (o.type === 'text' && !o.cover);
+const normDeg = a => { a = ((a % 360) + 540) % 360 - 180; return Math.abs(a) < 0.05 ? 0 : +a.toFixed(2); };
+function rotTf(o) {
+  if (!o.rot || o.type === 'ink') return null;
+  const b = bbox(o);
+  return `rotate(${o.rot} ${b.x + b.w / 2} ${b.y + b.h / 2})`;
+}
+// Achsenparalleles Rechteck um das gedrehte Objekt (für Menü-Position)
+function rbbox(o) {
+  const b = bbox(o); if (!o.rot || o.type === 'ink') return b;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2, r = o.rot * Math.PI / 180, c = Math.abs(Math.cos(r)), sn = Math.abs(Math.sin(r));
+  const w = b.w * c + b.h * sn, h = b.w * sn + b.h * c;
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
+}
+function rotatePts(pts, cx, cy, deg, f = 1) {
+  const r = deg * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r);
+  return pts.map(([x, y]) => { const dx = (x - cx) * f, dy = (y - cy) * f; return [cx + dx * c - dy * sn, cy + dx * sn + dy * c]; });
+}
+let rotTip = null;
+function showRotTip(e, deg, f, snapped) {
+  if (!rotTip) { rotTip = document.createElement('div'); rotTip.className = 'rot-tip'; $('editor').appendChild(rotTip); }
+  const er = $('editor').getBoundingClientRect();
+  rotTip.innerHTML = `<b>${Math.round(deg)}°</b><span>${Math.round(f * 100)} %</span>`;
+  rotTip.classList.toggle('snap', snapped);
+  rotTip.style.left = (e.clientX - er.left) + 'px'; rotTip.style.top = (e.clientY - er.top - 64) + 'px';
+  rotTip.classList.add('show');
+}
+const hideRotTip = () => rotTip?.classList.remove('show');
+
 function el(tag, attrs = {}, parent) {
   const n = document.createElementNS(NS, tag);
   for (const k in attrs) if (attrs[k] != null) n.setAttribute(k, attrs[k]);
@@ -558,7 +590,7 @@ function el(tag, attrs = {}, parent) {
 }
 
 function drawObj(o, parent) {
-  const g = el('g', { class: 'obj', 'data-id': o.id }, parent);
+  const g = el('g', { class: 'obj', 'data-id': o.id, transform: rotTf(o) }, parent);
   switch (o.type) {
     case 'text': {
       if (o.cover) el('rect', { x: o.cover.x, y: o.cover.y, width: o.cover.w, height: o.cover.h, fill: o.cover.color }, g);
@@ -631,8 +663,16 @@ function renderLayer(i) {
   const s = E.sel && byId(E.sel);
   if (s && s.page === i) {
     const b = bbox(s), pad = 4 / scale(), r = 9 / scale();
-    el('rect', { class: 'selbox', x: b.x - pad, y: b.y - pad, width: b.w + 2 * pad, height: b.h + 2 * pad, rx: 3 / scale() }, svg);
-    el('circle', { class: 'handle', cx: b.x + b.w + pad, cy: b.y + b.h + pad, r, 'data-handle': 1 }, svg);
+    const sg = el('g', { transform: rotTf(s) }, svg);
+    el('rect', { class: 'selbox', x: b.x - pad, y: b.y - pad, width: b.w + 2 * pad, height: b.h + 2 * pad, rx: 3 / scale() }, sg);
+    const hg = el('g', { class: 'handle-g' + (canRotate(s) ? ' rot' : ''), 'data-handle': 1 }, sg);
+    el('circle', { class: 'handle', cx: b.x + b.w + pad, cy: b.y + b.h + pad, r, 'data-handle': 1 }, hg);
+    if (canRotate(s)) {
+      // kleines Dreh-Symbol im Punkt
+      const hx = b.x + b.w + pad, hy = b.y + b.h + pad, q = r * 0.5;
+      el('path', { class: 'handle-ic', d: `M${hx - q} ${hy + q * 0.2}A${q} ${q} 0 1 1 ${hx + q * 0.25} ${hy + q * 0.95}`, 'data-handle': 1 }, hg);
+      el('path', { class: 'handle-ic', d: `M${hx - q * 1.35} ${hy - q * 0.25}L${hx - q} ${hy + q * 0.35}L${hx - q * 0.4} ${hy}`, 'data-handle': 1 }, hg);
+    }
   }
 }
 
@@ -655,8 +695,12 @@ function onDown(e, i) {
   const svg = E.pages[i].svg;
   const begin = (g) => { G = { ...g, page: i, pid: e.pointerId, sx: x, sy: y, moved: false }; try { svg.setPointerCapture(e.pointerId); } catch {} };
 
-  if (target.dataset?.handle && E.sel) {
+  if (target.closest?.('[data-handle]') && E.sel) {
     const o = byId(E.sel); snapshot();
+    if (canRotate(o)) {
+      const b = bbox(o), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      return begin({ type: 'transform', obj: o, orig: JSON.parse(JSON.stringify(o)), cx, cy, a0: Math.atan2(y - cy, x - cx), d0: Math.max(1e-3, Math.hypot(x - cx, y - cy)), snapped: true });
+    }
     return begin({ type: 'resize', obj: o, orig: JSON.parse(JSON.stringify(o)), b: bbox(o) });
   }
   if (k === 'ink') {
@@ -720,6 +764,7 @@ function onMove(e) {
       moveObj(G.obj, G.orig, dx, dy); renderLayer(G.page); break;
     }
     case 'resize': resizeObj(G.obj, G.orig, G.b, x, y); renderLayer(G.page); hideSelMenu(); break;
+    case 'transform': transformObj(G, x, y, e); renderLayer(G.page); hideSelMenu(); break;
   }
 }
 
@@ -739,6 +784,7 @@ function onUp(e) {
       else placeSelMenu();
       break;
     case 'resize': changed([g.page]); placeSelMenu(); break;
+    case 'transform': hideRotTip(); if (!g.moved) E.undo.pop(); changed([g.page]); placeSelMenu(); break;
     case 'tap': if (!g.moved) g.fn(); break;
   }
 }
@@ -749,6 +795,7 @@ function cancelGesture() {
   if (g.type === 'drag') g.draft.remove();
   if (g.type === 'erase') g.dot.remove();
   if (g.type === 'move' && g.snap) { Object.assign(g.obj, g.orig); E.undo.pop(); renderLayer(g.page); }
+  if (g.type === 'transform') { hideRotTip(); Object.assign(g.obj, g.orig); E.undo.pop(); renderLayer(g.page); placeSelMenu(); }
 }
 window.addEventListener('pointermove', onMove, { passive: false });
 window.addEventListener('pointerup', onUp);
@@ -769,6 +816,31 @@ function resizeObj(o, orig, b, x, y) {
     o.points = orig.points.map(([px, py]) => [b.x + (px - b.x) * f, b.y + (py - b.y) * f]);
     o.width = Math.max(0.3, orig.width * f);
   } else { o.w = nw; o.h = nh; }
+}
+// Eck-Punkt: Abstand zur Mitte = Größe, Winkel zur Mitte = Drehung (rastet bei 0/90/180/270° ein)
+function transformObj(g, x, y, e) {
+  const o = g.obj, orig = g.orig, { cx, cy } = g;
+  const d = Math.hypot(x - cx, y - cy), a = Math.atan2(y - cy, x - cx);
+  let f = Math.max(0.08, Math.min(12, d / g.d0));
+  let dDeg = (a - g.a0) * 180 / Math.PI;
+  const base = o.type === 'ink' ? 0 : (orig.rot || 0);
+  let total = base + dDeg;
+  const near = Math.round(total / 90) * 90, snap = Math.abs(total - near) < 5;
+  if (snap) { total = near; dDeg = near - base; }
+  if (snap && !g.snapped) haptic();
+  g.snapped = snap;
+  if (o.type === 'image') {
+    o.w = Math.max(6, orig.w * f); o.h = o.w * orig.h / orig.w; f = o.w / orig.w;
+    o.x = cx - o.w / 2; o.y = cy - o.h / 2; o.rot = normDeg(total);
+  } else if (o.type === 'text') {
+    o.size = Math.max(4, Math.min(200, orig.size * f)); f = o.size / orig.size;
+    measure(o); o.x = cx - o.w / 2; o.y = cy - o.h / 2; o.rot = normDeg(total);
+  } else if (o.type === 'ink') {
+    o.points = rotatePts(orig.points, cx, cy, dDeg, f);
+    o.width = Math.max(0.3, orig.width * f);
+    g.inkDeg = dDeg;
+  }
+  if (g.moved || Math.abs(f - 1) > 0.01 || Math.abs(dDeg) > 0.5) { g.moved = true; showRotTip(e, o.type === 'ink' ? normDeg(dDeg) : (o.rot || 0), f, snap); }
 }
 function eraseAt(i, x, y) {
   const r = 10 / scale();
@@ -826,12 +898,13 @@ function hideSelMenu() { $('selmenu').classList.remove('show'); }
 function placeSelMenu() {
   const m = $('selmenu');
   const o = E.sel && byId(E.sel); if (!o) return hideSelMenu();
-  const b = bbox(o), svg = E.pages[o.page].svg, ctm = svg.getScreenCTM();
+  const b = rbbox(o), svg = E.pages[o.page].svg, ctm = svg.getScreenCTM();
   const p = new DOMPoint(b.x + b.w / 2, b.y).matrixTransform(ctm);
   const er = $('editor').getBoundingClientRect();
   const acts = [];
   if (o.type === 'text') acts.push(['edit', 'Bearbeiten', 'rename']);
   if (o.type !== 'ink') acts.push(['dup', 'Duplizieren', 'copy']);
+  if (canRotate(o)) acts.push(['rot', o.rot ? 'Gerade' : 'Drehen', 'rotate']);
   if (['highlight', 'underline', 'strike', 'ink', 'whiteout'].includes(o.type)) acts.push(['color', 'Farbe', 'sliders']);
   acts.push(['del', 'Löschen', 'trash']);
   m.innerHTML = acts.map(([a, l, ic]) => `<button data-a="${a}" class="${a === 'del' ? 'danger' : ''}">${icon(ic)}${l}</button>`).join('');
@@ -847,6 +920,12 @@ function selAction(a) {
   if (a === 'del') { snapshot(); E.objects = E.objects.filter(x => x !== o); E.sel = null; hideSelMenu(); E.dirtyThumb = true; changed([o.page]); haptic(); }
   if (a === 'dup') { snapshot(); const c = JSON.parse(JSON.stringify(o)); c.id = uid(); delete c.srcKey; delete c.cover; c.x += 12; c.y += 12; E.objects.push(c); select(c.id); changed([o.page]); }
   if (a === 'edit') openTextEditor(o, false);
+  if (a === 'rot') {
+    snapshot(); haptic();
+    if (o.type === 'ink') { const b = bbox(o); o.points = rotatePts(o.points, b.x + b.w / 2, b.y + b.h / 2, 90); }
+    else o.rot = o.rot ? 0 : 90;      // gedreht → wieder gerade, sonst 90°
+    changed([o.page]); placeSelMenu();
+  }
   if (a === 'color') colorSheet(o);
 }
 
@@ -869,7 +948,7 @@ function addCentered(base) {
   E.objects.push(o); E.dirtyThumb = true;
   if (E.tool !== 'select') { E.tool = 'select'; renderToolbar(); }
   select(o.id); changed([i]); haptic();
-  hint('Verschieben oder an der Ecke skalieren');
+  hint('Verschieben – am Eck-Punkt skalieren & drehen');
 }
 
 function placeAt(i, x, y) {

@@ -23,7 +23,7 @@ import { initPageOrder, duplexSheet, blankTool } from './pageorder.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.37.0';
+export const VERSION = '1.38.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
