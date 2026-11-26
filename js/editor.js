@@ -293,6 +293,7 @@ function redo() {
 let io;
 function buildPages() {
   const wrap = $('ed-pages'); wrap.innerHTML = '';
+  wrap.classList.toggle('anim', E.infos.length <= 20);      // Einblend-Animation nur bei kurzen PDFs (iOS-Speicher)
   const sc = $('ed-scroll');
   const maxW = Math.max(...E.infos.map(i => i.w));
   E.base = Math.max(0.2, (sc.clientWidth - 24) / maxW);
