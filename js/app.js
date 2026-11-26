@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.42.4';
+export const VERSION = '1.42.5';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1036,6 +1036,7 @@ async function renderSettings() {
       <div class="row"><span class="row-ic c-orange">${icon('gauge')}</span><span class="row-main"><span class="row-title">Sparsamer Speichermodus</span><span class="row-sub" style="display:block">Für sehr große PDFs – etwas weniger scharf, dafür stabil</span></span>
         <div class="seg" data-lm><button data-v="1" class="${settings.get('lowMem') ? 'on' : ''}">An</button><button data-v="0" class="${settings.get('lowMem') ? '' : 'on'}">Aus</button></div></div>
       <button class="row" data-s="cache"><span class="row-ic c-teal">${icon('rotate')}</span><span class="row-main"><span class="row-title">App-Cache leeren & neu laden</span><span class="row-sub" style="display:block">Lädt die App frisch – deine PDFs bleiben erhalten${(settings.get('safeDocs') || []).length ? ' · Notfallmodus zurücksetzen' : ''}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
+      ${settings.get('lastCrash') ? (() => { const c = settings.get('lastCrash'); return `<div class="row"><span class="row-ic c-red">${icon('info')}</span><span class="row-main"><span class="row-title">Letzter Absturz</span><span class="row-sub" style="display:block;user-select:text;-webkit-user-select:text">${esc(c.doc)} (${c.pages} S.) · Schritt: „${esc(c.step)}“ · v${esc(c.ver)} · ${fmtDate(c.t)}</span></span></div>`; })() : ''}
       <button class="row" data-s="backup"><span class="row-ic c-blue">${icon('archive')}</span><span class="row-main"><span class="row-title">Backup erstellen</span><span class="row-sub" style="display:block">${settings.get('lastBackup') ? 'Zuletzt: ' + fmtDate(settings.get('lastBackup')) : 'Alle PDFs, Unterschriften & Stempel als ZIP sichern'}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
       <button class="row" data-s="restore"><span class="row-ic c-violet">${icon('restore')}</span><span class="row-main"><span class="row-title">Backup wiederherstellen</span><span class="row-sub" style="display:block">ZIP-Datei aus „Dateien“ oder iCloud wählen</span></span><span class="row-end">${icon('chevronRight')}</span></button>
       <button class="row" data-s="trash"><span class="row-ic c-orange">${icon('trash')}</span><span class="row-main"><span class="row-title">Papierkorb</span><span class="row-sub" style="display:block">${trashed ? `${trashed} PDF(s) · ${TRASH_DAYS} Tage wiederherstellbar` : `Gelöschte PDFs ${TRASH_DAYS} Tage wiederherstellen`}</span></span><span class="row-end">${trashed ? `<span class="soon">${trashed}</span>` : ''}${icon('chevronRight')}</span></button>
@@ -1217,9 +1218,12 @@ async function clearAppCache() {
 // Wurde die App beim letzten Öffnen einer PDF von iOS beendet (Speicher), sparsam weitermachen
 // statt bei jedem Öffnen erneut abzustürzen.
 function crashCheck() {
-  let g = null;
+  let g = null, c = null;
   try { g = JSON.parse(localStorage.getItem('nibvion.openGuard') || 'null'); localStorage.removeItem('nibvion.openGuard'); } catch {}
+  try { c = JSON.parse(localStorage.getItem('nibvion.crumb') || 'null'); localStorage.removeItem('nibvion.crumb'); } catch {}
   if (!g || Date.now() - g.t > 30 * 60 * 1000) return;
+  // Flugschreiber auswerten: letzter Schritt vor dem Absturz → in Einstellungen sichtbar
+  if (c && c.step !== 'ok') settings.set('lastCrash', { doc: c.doc, pages: c.pages, step: c.step, t: c.t, ver: VERSION, ua: navigator.userAgent.replace(/^.*?\(|\).*$/g, '').slice(0, 60) });
   const msg = [];
   if (g.what === 'view' && settings.get('viewMode') !== 'scroll') { settings.set('viewMode', 'scroll'); msg.push('view'); }
   if (!settings.get('lowMem')) { settings.set('lowMem', true); msg.push('low'); }

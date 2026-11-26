@@ -67,6 +67,10 @@ export const GUARD = 'nibvion.openGuard';
 const guardSet = (docId, what) => { try { localStorage.setItem(GUARD, JSON.stringify({ id: docId, what, t: Date.now() })); } catch {} };
 const guardClear = () => { try { localStorage.removeItem(GUARD); } catch {} };
 const lowMem = () => !!settings.get('lowMem') || safeDoc();
+// „Flugschreiber“: jeder Schritt beim Öffnen wird notiert. Beendet iOS die App, zeigt der nächste
+// Start (js/app.js → crashCheck), bei welchem Schritt es passiert ist.
+export const CRUMB = 'nibvion.crumb';
+const crumb = step => { try { localStorage.setItem(CRUMB, JSON.stringify({ step, doc: E.doc?.name || '', pages: E.infos?.length || 0, t: Date.now() })); } catch {} };
 // Notfallmodus für einzelne PDFs, bei denen die App trotz Sparmodus abgestürzt ist
 const safeDoc = () => !!E.doc && (settings.get('safeDocs') || []).includes(E.doc.id);
 
@@ -78,6 +82,7 @@ export async function openEditor(docId, mode = 'view', onClose, page = 0) {
     const file = await db.get('files', docId);
     if (!meta || !file) throw new Error('Datei nicht gefunden');
     E.doc = meta; E.bytes = file.data; E.objects = meta.objects || [];
+    crumb('Datei geladen');
     E.undo = []; E.redo = []; E.sel = null; E.zoom = 1; E.onClose = onClose; E.dirtyThumb = false;
     await loadDocument();
     document.body.classList.add('in-editor');
@@ -89,7 +94,7 @@ export async function openEditor(docId, mode = 'view', onClose, page = 0) {
     meta.opened = Date.now(); db.put('docs', meta);
     const vm = settings.get('viewMode');
     if (mode === 'view' && (vm === 'single' || vm === 'flip')) setTimeout(() => { if (E.open && E.doc?.id === docId) pageView(vm, true); }, 380);
-    else setTimeout(() => { if (E.doc?.id === docId) guardClear(); }, 5000);
+    else setTimeout(() => { if (E.doc?.id === docId) { guardClear(); crumb('ok'); } }, 5000);
   } catch (err) {
     console.error(err); guardClear(); toast('PDF konnte nicht geöffnet werden', true);
   } finally { busy(false); }
@@ -97,10 +102,14 @@ export async function openEditor(docId, mode = 'view', onClose, page = 0) {
 
 async function loadDocument() {
   if (E.pdf) closePdf(E.pdf);
+  crumb('PDF wird geöffnet');
   E.pdf = await loadPdf(E.bytes, { safe: safeDoc() });
+  crumb('Seitenmaße werden gelesen');
   E.infos = await pageInfos(E.pdf);
+  crumb('Seiten werden aufgebaut');
   E.text = {}; E.ocr = {}; E.needOcr = {}; E.scanFx = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
+  crumb('Seiten aufgebaut');
   scrubberReset(E.pdf);
   loadOutline();
 }
@@ -316,7 +325,20 @@ function layoutPages() {
   $('zoom-label').textContent = Math.round(E.zoom * 100) + '%';
 }
 
-async function renderPage(i) {
+// Seiten strikt nacheinander rendern – nie mehrere pdf.js-Renderings gleichzeitig (iOS-Speicher)
+let renderChain = Promise.resolve();
+function renderPage(i) {
+  const pdf = E.pdf;
+  renderChain = renderChain.then(() => {
+    if (pdf !== E.pdf) return;
+    const p = E.pages[i]; if (!p) return;
+    const sr = $('ed-scroll').getBoundingClientRect(), r = p.el.getBoundingClientRect();
+    if (r.bottom < sr.top - 1000 || r.top > sr.bottom + 1000) return;    // inzwischen weggescrollt
+    return renderPageNow(i);
+  }).catch(() => {});
+  return renderChain;
+}
+async function renderPageNow(i) {
   const p = E.pages[i], info = E.infos[i]; if (!p || !E.pdf) return;
   if (E.hidden) return;                                   // Editor liegt unter einer Vollbild-Ansicht
   const dpr = Math.min(safeDoc() ? 1.25 : lowMem() ? 2 : 3, window.devicePixelRatio || 1);
@@ -325,10 +347,12 @@ async function renderPage(i) {
   if (info.w * info.h * rs * rs > maxPx) rs = Math.sqrt(maxPx / (info.w * info.h));
   if (Math.abs(p.rs - rs) < 0.01) return;
   p.task?.cancel?.();
+  let c = null;
   try {
+    crumb(`Seite ${i + 1} wird gezeichnet`);
     const page = await E.pdf.getPage(i + 1);
     const vp = page.getViewport({ scale: rs });
-    const c = document.createElement('canvas');
+    c = document.createElement('canvas');
     c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
     const ctx = c.getContext('2d', { willReadFrequently: false });
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
@@ -337,10 +361,12 @@ async function renderPage(i) {
     p.task = null;
     const old = p.canvas; p.el.replaceChild(c, old);
     old.width = old.height = 0;
-    p.canvas = c; p.rs = rs;
+    p.canvas = c; p.rs = rs; c = null;
     p.el.querySelector('.ph')?.remove();
     page.cleanup();                                         // dekodierte Bilder sofort wieder freigeben
+    crumb(`Seite ${i + 1} fertig`);
   } catch (err) { if (err?.name !== 'RenderingCancelledException') console.warn(err); }
+  finally { if (c) c.width = c.height = 0; }              // abgebrochene Canvas sofort freigeben (iOS)
 }
 function freePage(i) {
   const p = E.pages[i]; if (!p || !p.rs) return;
