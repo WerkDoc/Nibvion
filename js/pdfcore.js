@@ -105,8 +105,15 @@ export function hexToRgb(hex) {
   return L().rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
-export function inkPath(pts) {
+export function inkPath(pts, sharp = false) {
   if (!pts.length) return '';
+  if (sharp && pts.length > 1) {
+    // Smart Shapes: exakter Polygonzug (gerade Kanten); geschlossen → Z für saubere Ecke am Start
+    const f = q => `${q[0].toFixed(2)} ${q[1].toFixed(2)}`, l = pts[pts.length - 1];
+    const closed = pts.length > 3 && Math.hypot(l[0] - pts[0][0], l[1] - pts[0][1]) < 1e-3;
+    const body = closed ? pts.slice(0, -1) : pts;
+    return 'M' + f(body[0]) + body.slice(1).map(q => ' L' + f(q)).join('') + (closed ? ' Z' : '');
+  }
   if (pts.length === 1) { const [x, y] = pts[0]; return `M${x} ${y} L${x + 0.01} ${y}`; }
   let d = `M${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`;
   for (let i = 1; i < pts.length - 1; i++) {
@@ -139,7 +146,7 @@ export function pdfFontInfo(fontObj, style) {
 
 // Objekte dauerhaft ins PDF schreiben
 export async function flatten(bytes, objects, infos) {
-  const { PDFDocument, StandardFonts, degrees, BlendMode, LineCapStyle, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = L();
+  const { PDFDocument, StandardFonts, degrees, BlendMode, LineCapStyle, LineJoinStyle, setLineJoin, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = L();
   const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const pages = doc.getPages();
   // Gedrehtes Objekt: Editor dreht im Uhrzeigersinn (y nach unten). Die Abbildung Editor → PDF
@@ -202,11 +209,13 @@ export async function flatten(bytes, objects, infos) {
       page.drawImage(img, { x: p.x, y: p.y, width: o.w, height: o.h, rotate: R, opacity: o.opacity ?? 1 });
     } else if (o.type === 'ink') {
       const origin = M(0, 0);
-      page.drawSvgPath(inkPath(o.points), {
+      if (o.sharp) page.pushOperators(pushGraphicsState(), setLineJoin(LineJoinStyle.Round));
+      page.drawSvgPath(inkPath(o.points, o.sharp), {
         x: origin.x, y: origin.y, rotate: R,
         borderColor: hexToRgb(o.color), borderWidth: o.width, borderOpacity: o.opacity ?? 1,
         borderLineCap: LineCapStyle.Round, blendMode: (o.opacity ?? 1) < 1 ? BlendMode.Multiply : undefined,
       });
+      if (o.sharp) page.pushOperators(popGraphicsState());
     }
     if (rotated) page.pushOperators(popGraphicsState());
   }
