@@ -21,10 +21,12 @@ import { initPageTools, headerFooterSheet, cropSheet } from './pagetools.js';
 import { initIncoming } from './incoming.js';
 import { initPageOrder, duplexSheet, blankTool } from './pageorder.js';
 import { initLayout, spreadSheet, posterSheet } from './layout.js';
-import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
+import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS, tagSheet } from './files.js';
+import { initLinks, linksSheet } from './links.js';
+import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.39.0';
+export const VERSION = '1.40.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -179,6 +181,8 @@ function docMenu(d) {
       ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
         ['fav', d.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen', d.fav ? 'heartFill' : 'heart', 'c-red'],
         ['move', 'In Ordner verschieben', 'folderMove', 'c-green'],
+        ['tags', 'Farb-Tags', 'tag', 'c-orange'],
+        ['links', 'Links verwalten', 'link', 'c-blue'],
         ['form', 'Formular ausfüllen', 'form', 'c-blue'],
         ['split', 'Aufteilen', 'split', 'c-teal'],
         ['redact', 'Schwärzen', 'redact', 'c-gray'],
@@ -197,6 +201,8 @@ function docMenu(d) {
         if (a === 'excel') return exportExcel(d);
         if (a === 'fav') { d.fav = !d.fav; await db.put('docs', d); haptic(); renderRecents(); return toast(d.fav ? 'Zu Favoriten hinzugefügt' : 'Aus Favoriten entfernt'); }
         if (a === 'move') return moveDocSheet(d, renderRecents);
+        if (a === 'tags') return tagSheet(d, renderRecents);
+        if (a === 'links') return linksSheet(d);
         if (a === 'wm') return watermarkSheet(d);
         if (a === 'hf') return headerFooterSheet(d);
         if (a === 'crop') return cropSheet(d);
@@ -215,8 +221,10 @@ function docMenu(d) {
           const f = await db.get('files', d.id); return shareBytes(new Uint8Array(f.data), d.name);
         }
         if (a === 'rename') {
-          const n = await promptDlg('Umbenennen', d.name.replace(/\.pdf$/i, ''));
-          if (n) { d.name = n + '.pdf'; await db.put('docs', d); renderRecents(); }
+          const n = await renameSheet(d.name.replace(/\.pdf$/i, ''), async () => {
+            const pdf = await loadPdf(await docBytes(d)); return { pdf, done: () => closePdf(pdf) };
+          });
+          if (n) { d.name = n + '.pdf'; await db.put('docs', d); renderRecents(); renderFiles(); }
         }
         if (a === 'del' && await confirmDlg('PDF löschen?', `„${d.name}“ kommt in den Papierkorb und kann ${TRASH_DAYS} Tage lang wiederhergestellt werden.`, 'In den Papierkorb')) {
           await moveToTrash(d.id); renderRecents(); toast('In den Papierkorb verschoben');
@@ -257,6 +265,7 @@ const TOOL_GROUPS = [
     { id: 'duplex', label: 'Duplex sortieren', sub: 'Vorder- & Rückseiten in die richtige Reihenfolge', icon: 'duplex', c: 'c-orange' },
     { id: 'spreads', label: 'Doppelseiten teilen', sub: 'Buch- & Heft-Scans in Einzelseiten', icon: 'spread', c: 'c-teal' },
     { id: 'poster', label: 'Poster-Druck (Kacheln)', sub: 'Große Seite auf mehrere A4-Blätter', icon: 'grid', c: 'c-violet' },
+    { id: 'links', label: 'Links verwalten', sub: 'Webadressen klickbar machen oder Links entfernen', icon: 'link', c: 'c-blue' },
     { id: 'blankpages', label: 'Leere Seiten entfernen', sub: 'Leere Rückseiten automatisch erkennen', icon: 'pageBlank', c: 'c-violet' },
   ] },
   { title: 'Erstellen', items: [
@@ -325,6 +334,7 @@ function runTool(id) {
     case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
     case 'hf': return docPicker('Kopf- & Fußzeile', 'Seitenzahlen (1 / 10, Seite 1 von 10 …), Datum oder eigenen Text oben und unten einfügen.', headerFooterSheet);
     case 'duplex': return duplexSheet();
+    case 'links': return docPicker('Links verwalten', 'Webadressen und E-Mail-Adressen im Text klickbar machen – oder alle Links entfernen.', linksSheet);
     case 'spreads': return docPicker('Doppelseiten teilen', 'Gescannte Doppelseiten (Bücher, Hefte) werden in der Mitte geteilt.', spreadSheet);
     case 'poster': return docPicker('Poster-Druck (Kacheln)', 'Wähle das PDF mit dem Plan, Schnittmuster oder Plakat.', posterSheet);
     case 'blankpages': return docPicker('Leere Seiten entfernen', 'Alle Seiten werden geprüft – auch gescannte leere Rückseiten mit Papier-Rauschen.', blankTool);
@@ -1183,6 +1193,7 @@ async function init() {
   initIdView({ saveNewDoc, refresh: async () => { await renderRecents(); if (document.body.dataset.tab === 'files') renderFiles(); }, openPdf: id => openEditor(id, 'view', renderRecents) });
   initTranslate({ imagesToPdf, saveNewDoc, openDoc });
   initPageTools({ docBytes, storeResult, copyRow, bindCopy, renderRecents, openDoc });
+  initLinks({ docBytes, storeResult, copyRow, bindCopy, renderRecents, openDoc });
   initLayout({ docBytes, storeResult, saveNewDoc, copyRow, bindCopy, renderRecents, openDoc });
   initPageOrder({
     docBytes, storeResult, saveNewDoc, copyRow, bindCopy, renderRecents, openDoc, allDocs,
