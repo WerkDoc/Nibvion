@@ -7,8 +7,18 @@ export { pdfjsLib };
 
 const L = () => window.PDFLib;
 
-export function loadPdf(bytes) {
-  return pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)), isEvalSupported: false, useSystemFonts: true }).promise;
+// iPhone/iPad: OffscreenCanvas & ImageDecoder in pdf.js führen in WebKit bei bildlastigen PDFs
+// (Buchcover, Fotos) zu extremem Speicherverbrauch → iOS beendet die App. Deshalb dort aus.
+export const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+/** loadPdf(bytes, { safe }) – safe: Notfallmodus für PDFs, die schon einmal abgestürzt sind */
+export function loadPdf(bytes, { safe = false } = {}) {
+  return pdfjsLib.getDocument({
+    data: new Uint8Array(bytes.slice(0)), isEvalSupported: false, useSystemFonts: true,
+    isOffscreenCanvasSupported: !IOS, isImageDecoderSupported: !IOS,
+    // Riesige Einzelbilder (> Pixel) werden übersprungen statt den Speicher zu sprengen
+    maxImageSize: safe ? 1.6e7 : IOS ? 6e7 : -1,
+    canvasMaxAreaInBytes: IOS ? (safe ? 32 : 96) * 1024 * 1024 : -1,
+  }).promise;
 }
 
 export function closePdf(pdf) { try { pdf?.loadingTask?.destroy(); } catch {} }
@@ -22,7 +32,9 @@ export async function renderThumb(pdf, pageNo = 1, width = 220) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   await p.render({ canvasContext: ctx, viewport: vp }).promise;
-  return c.toDataURL('image/jpeg', 0.78);
+  const url = c.toDataURL('image/jpeg', 0.78);
+  c.width = c.height = 0; p.cleanup();
+  return url;
 }
 
 export async function pageInfos(pdf) {
