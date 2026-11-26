@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.43.0';
+export const VERSION = '1.44.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -294,6 +294,7 @@ const TOOL_GROUPS = [
     { id: 'scan', label: 'Scannen', sub: 'Mit der Kamera zu PDF', icon: 'scan', c: 'c-violet' },
     { id: 'imgscan', label: 'Bild scannen', sub: 'Foto aus der Mediathek: Ränder erkennen, gerade ziehen', icon: 'fit', c: 'c-teal' },
     { id: 'img2pdf', label: 'Bilder → PDF', sub: 'Fotos & Screenshots zusammenfassen', icon: 'images', c: 'c-blue' },
+    { id: 'collage', label: 'Foto-Collage', sub: 'Fotos als Magazin-PDF: Raster, Titelbild, Streifen, Polaroid', icon: 'collage', c: 'c-violet' },
     { id: 'merge', label: 'PDFs zusammenfügen', sub: 'Mehrere PDFs zu einem', icon: 'merge', c: 'c-orange' },
     { id: 'split', label: 'PDF aufteilen', sub: 'Seiten als eigene PDFs speichern', icon: 'split', c: 'c-teal' },
     { id: 'compare', label: 'PDFs vergleichen', sub: 'Zwei Versionen Seite für Seite – Unterschiede markiert', icon: 'compare', c: 'c-orange' },
@@ -345,6 +346,7 @@ function runTool(id) {
     case 'scan': return imageSheet('scan');
     case 'imgscan': return imageSheet('imgscan');
     case 'img2pdf': return imageSheet('images');
+    case 'collage': return lazyTool('./collage.js', 'collageSheet', {});
     case 'merge': return mergeSheet();
     case 'translate': return translateTool();
     case 'blank': return newBlank();
