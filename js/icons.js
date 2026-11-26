@@ -28,6 +28,7 @@ const P = {
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
   coverflow: '<rect x="8.5" y="4" width="7" height="16" rx="1.5"/><path d="M6 6.5 3 7.5v9l3 1M18 6.5l3 1v9l-3 1"/>',
   speaker: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  collage: '<rect x="3" y="3" width="10" height="11" rx="1.5"/><rect x="15" y="3" width="6" height="5" rx="1.2"/><rect x="15" y="10" width="6" height="11" rx="1.2"/><rect x="3" y="16" width="10" height="5" rx="1.2"/>',
   home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',

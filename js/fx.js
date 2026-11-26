@@ -235,3 +235,16 @@ export function flipPlay(container, before) {
     e.animate(sp.frames.map(f => ({ transform: `translate3d(${(dx * (1 - f.v)).toFixed(2)}px,${(dy * (1 - f.v)).toFixed(2)}px,0)`, offset: f.offset })), { duration: sp.ms });
   });
 }
+
+// Federnde Einblend-Keyframes für WAAPI (gedämpfte Feder ζ≈0.42, kurzes Überschwingen wie iOS „bouncy“).
+// base = Grund-Transform (z. B. Zentrierung), from = Start-Skalierung
+export const springKeys = (from, base, n = 22) => {
+  // gedämpfte Feder ζ≈0.42: kräftiges, kurzes Überschwingen (≈ iOS „bouncy“)
+  const z = 0.42, w = 26, wd = w * Math.sqrt(1 - z * z), T = 0.5, out = [];
+  for (let k = 0; k <= n; k++) {
+    const t = k / n * T, e = k === n ? 1 : 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + z * w / wd * Math.sin(wd * t));
+    const sc = from + (1 - from) * e;
+    out.push({ transform: `${base} scale(${sc.toFixed(4)})`, opacity: Math.min(1, k / 4) });
+  }
+  return out;
+};

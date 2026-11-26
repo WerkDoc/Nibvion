@@ -10,8 +10,9 @@ import { analyzeAll, blankReview, duplexOrder } from './pageorder.js';
 import { initScrubber, toggleScrubber, scrubberReset, scrubberSync } from './scrubber.js';
 import { settings } from './settings.js';
 import { ocrEditItems, releaseEditOcr } from './ocr.js';
-import { stampDrop, poof, flipCapture, flipPlay, reducedMotion as noMotion } from './fx.js';
+import { stampDrop, poof, flipCapture, flipPlay, reducedMotion as noMotion, springKeys } from './fx.js';
 import { recognize, morph, pathLen } from './shapes.js';
+import { createInspector, objLayer } from './inspect.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
@@ -113,7 +114,7 @@ async function loadDocument() {
   crumb('Seitenmaße werden gelesen');
   E.infos = await pageInfos(E.pdf);
   crumb('Seiten werden aufgebaut');
-  E.tsel = null; hideTselBar(); E.words = {};
+  E.tsel = null; hideTselBar(); E.words = {}; insp?.reset();
   E.text = {}; E.ocr = {}; E.needOcr = {}; E.scanFx = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
   crumb('Seiten aufgebaut');
@@ -250,7 +251,7 @@ async function closeEditor() {
   toggleScrubber(false);
   $('editor').classList.remove('open'); $('editor').setAttribute('aria-hidden', 'true');
   document.body.classList.remove('in-editor');
-  hideSelMenu(); E.tsel = null; hideTselBar(); try { window.speechSynthesis?.cancel(); speaking = false; } catch {}
+  hideSelMenu(); E.tsel = null; hideTselBar(); insp?.reset(); try { window.speechSynthesis?.cancel(); speaking = false; } catch {}
   setTimeout(() => { if (!E.open) { $('ed-pages').innerHTML = ''; closePdf(E.pdf); E.pdf = null; } }, 500);
   E.onClose && E.onClose();
 }
@@ -353,7 +354,8 @@ async function renderPageNow(i) {
   let rs = scale() * dpr;
   const maxPx = safeDoc() ? 1.5e6 : lowMem() ? 4e6 : 9e6;
   if (info.w * info.h * rs * rs > maxPx) rs = Math.sqrt(maxPx / (info.w * info.h));
-  if (Math.abs(p.rs - rs) < 0.01) return;
+  if (!p.force && Math.abs(p.rs - rs) < 0.01) return;
+  p.force = false;                                        // erzwungenes Neuzeichnen (Ebenen-Filter) erledigt
   p.task?.cancel?.();
   let c = null, beat = null;
   const S = `Seite ${i + 1}`;
@@ -373,7 +375,8 @@ async function renderPageNow(i) {
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     let chunk = 0;
     // Kein separates getOperatorList() mehr: das las jede Seite (inkl. Bilder) ein zweites Mal ein
-    p.task = page.render({ canvasContext: ctx, viewport: vp });
+    // ENABLE_STORAGE: Ebenen-Filter (js/inspect.js) blendet Annotationen über den pdf.js-Speicher aus
+    p.task = page.render({ canvasContext: ctx, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.ENABLE_STORAGE });
     // iOS: zwischen den Abschnitten kurz an Safari zurückgeben (Aufräumen/GC statt Speicherstau)
     p.task.onContinue = cont => { mark(`${S}: zeichnen, Abschnitt ${++chunk}`); IOS ? setTimeout(cont, 0) : cont(); };
     mark(`${S}: zeichnen beginnt`);
@@ -497,9 +500,10 @@ async function loadText(i) {
       if (!(asc > 0.5 && asc < 1.15)) asc = 0.8;
       if (!(desc < 0 && desc > -0.5)) desc = -0.2;
       let fi = pdfFontInfo(null, st);
-      try { const f = page.commonObjs.has(it.fontName) && page.commonObjs.get(it.fontName); fi = pdfFontInfo(f, st); } catch {}
+      let fname = '';
+      try { const f = page.commonObjs.has(it.fontName) && page.commonObjs.get(it.fontName); fi = pdfFontInfo(f, st); fname = f?.name || ''; } catch {}
       const w = it.width; if (w < 0.5) return;
-      items.push({ key: `${i}:${k}`, str: it.str, x: tx[4], base: tx[5], top: tx[5] - fh * asc, h: fh * (asc - desc), w, size: fh, bold: fi.bold, italic: fi.italic, font: fi.font });
+      items.push({ key: `${i}:${k}`, str: it.str, x: tx[4], base: tx[5], top: tx[5] - fh * asc, h: fh * (asc - desc), w, size: fh, bold: fi.bold, italic: fi.italic, font: fi.font, fname });
     });
     // Gescannte Seite? Kein Text oder nur eine unsichtbare Texterkennungs-Ebene → zum Ändern selbst lesen
     let invisible = false;
@@ -659,7 +663,7 @@ function el(tag, attrs = {}, parent) {
 }
 
 function drawObj(o, parent) {
-  const g = el('g', { class: 'obj', 'data-id': o.id, transform: rotTf(o) }, parent);
+  const g = el('g', { class: 'obj', 'data-id': o.id, 'data-layer': objLayer(o), transform: rotTf(o) }, parent);
   switch (o.type) {
     case 'text': {
       if (o.cover) el('rect', { x: o.cover.x, y: o.cover.y, width: o.cover.w, height: o.cover.h, fill: o.cover.color }, g);
@@ -730,6 +734,7 @@ function renderLayer(i) {
   } else p.el.querySelector('.scan-fx')?.remove();
   E.objects.filter(o => o.page === i).forEach(o => drawObj(o, svg));
   drawTsel(svg, i);
+  insp?.drawLayer(svg, i);
   const s = E.sel && byId(E.sel);
   if (s && s.page === i) {
     const b = bbox(s), pad = 4 / scale(), r = 9 / scale();
@@ -761,6 +766,11 @@ function onDown(e, i) {
   if (activePointers.size > 1) { cancelGesture(); return; }
   const k = kind();
   const [x, y] = svgPt(e, i);
+  if (insp?.on) {                      // Element-Details: Antippen zeigt Infos statt Werkzeug
+    const cx = e.clientX, cy = e.clientY;
+    G = { type: 'tap', page: i, pid: e.pointerId, sx: x, sy: y, moved: false, fn: () => insp.tapAt(i, x, y, cx, cy) };
+    return;
+  }
   if (k === 'none') {
     if (E.mode !== 'view') return;
     const svg0 = E.pages[i].svg, h = e.target.closest?.('[data-tsh]')?.dataset.tsh;
@@ -1107,16 +1117,6 @@ function tselMove(x, y) {
 
 // ---- schwebende Aktionsleiste mit Feder ----
 let tbar = null, speaking = false;
-const springKeys = (from, base, n = 22) => {
-  // gedämpfte Feder ζ≈0.42: kräftiges, kurzes Überschwingen (≈ iOS „bouncy“)
-  const z = 0.42, w = 26, wd = w * Math.sqrt(1 - z * z), T = 0.5, out = [];
-  for (let k = 0; k <= n; k++) {
-    const t = k / n * T, e = k === n ? 1 : 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + z * w / wd * Math.sin(wd * t));
-    const sc = from + (1 - from) * e;
-    out.push({ transform: `${base} scale(${sc.toFixed(4)})`, opacity: Math.min(1, k / 4) });
-  }
-  return out;
-};
 function showTselBar() {
   const t = E.tsel; if (!t) return;
   const rects = tselRects(); if (!rects.length) return;
@@ -1521,6 +1521,8 @@ function moreSheet() {
         ${E.outline ? `<button data-a="toc"><span class="qt-ic c-orange">${icon('toc')}</span>Inhalt</button>` : ''}
       </div>
       <div class="menu" style="margin-bottom:12px">
+        <div class="row"><span class="row-ic c-teal">${icon('info')}</span><span class="row-main"><span class="row-title">Element-Details & Filter</span><span class="row-sub">Antippen zeigt Schrift, Bild-DPI, Link-Ziel · Ebenen ein-/ausblenden</span></span>
+          <div class="seg" data-insp><button data-v="1" class="${insp?.on ? 'on' : ''}">An</button><button data-v="0" class="${insp?.on ? '' : 'on'}">Aus</button></div></div>
         <button class="row" data-a="view"><span class="row-ic c-orange">${icon('pages')}</span><span class="row-main"><span class="row-title">Seitenansicht</span><span class="row-sub">${{ single: 'Einzelseite', flip: 'Buch-Umblättern (3D)' }[settings.get('viewMode')] || 'Endlos-Scrollen'} · umschalten</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="reader"><span class="row-ic c-teal">${icon('book')}</span><span class="row-main"><span class="row-title">Lesemodus</span><span class="row-sub">Fließtext fürs Handy · Schriftgröße & Farben</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="present"><span class="row-ic c-violet">${icon('present')}</span><span class="row-main"><span class="row-title">Präsentieren</span><span class="row-sub">Vollbild mit Laserpointer</span></span>${icon('chevronRight')}</button>
@@ -1534,6 +1536,12 @@ function moreSheet() {
         <button class="row" data-a="delete"><span class="row-ic c-red">${icon('trash')}</span><span class="row-main"><span class="row-title" style="color:var(--danger)">Löschen</span></span></button>
       </div>`,
     onMount(el, api) {
+      el.querySelectorAll('[data-insp] button').forEach(b => b.onclick = () => {
+        el.querySelectorAll('[data-insp] button').forEach(x => x.classList.toggle('on', x === b));
+        haptic(); const on = b.dataset.v === '1';
+        if (on) { E.sel = null; hideSelMenu(); clearTsel(); }
+        setTimeout(() => { api.close(); insp.setOn(on); }, 160);
+      });
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         const a = b.dataset.a; api.close();
         if (a === 'toc') return tocSheet();
@@ -1837,15 +1845,24 @@ async function pageManager() {
 }
 
 // ======================= Verkabelung =======================
+let insp = null;
 export function initEditor() {
   hydrateIcons($('editor'));
+  insp = createInspector({
+    el: $('editor'), pdf: () => E.pdf, page: i => E.pages[i], count: () => E.pages.length, scale,
+    loadText: async i => { await loadText(i); return textItems(i); },
+    objects: () => E.objects, bbox: rbbox,
+    rerender: i => { const p = E.pages[i]; if (p) { p.force = true; renderPage(i); } },   // renderPage prüft selbst, ob die Seite sichtbar ist
+    renderLayer, jump: i => jumpTo(i),
+    svgToScreen: (i, x, y) => new DOMPoint(x, y).matrixTransform(E.pages[i].svg.getScreenCTM()),
+  });
   const sc = $('ed-scroll');
   initScrubber($('editor'), {
     pdf: () => E.pdf, count: () => E.pages.length, current: currentPage,
     jump: i => { const p = E.pages[i]; if (p) sc.scrollTop = Math.max(0, p.el.offsetTop - 12); $('page-chip').textContent = `${i + 1} / ${E.pages.length}`; },
     done: () => { rerenderVisible(); updPageChip(); },
   });
-  sc.addEventListener('scroll', () => { updPageChip(); if (E.sel) placeSelMenu(); if (E.tsel && tbar?.classList.contains('show')) placeTselBar(); }, { passive: true });
+  sc.addEventListener('scroll', () => { updPageChip(); if (E.sel) placeSelMenu(); if (E.tsel && tbar?.classList.contains('show')) placeTselBar(); insp?.reposition(); }, { passive: true });
   sc.addEventListener('contextmenu', e => { if (E.mode === 'view') e.preventDefault(); });
   // Pinch-Zoom
   let pinch = null;
