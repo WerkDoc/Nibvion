@@ -231,9 +231,9 @@ svg.layer .eraser-dot { fill: rgba(255,106,91,.15); stroke: var(--accent); strok
 .sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); z-index: 101; background: var(--bg2); border-radius: 26px 26px 0 0; padding: 8px 18px calc(var(--safe-bottom) + 18px); max-height: 88vh; overflow-y: auto; transform: translateY(105%); transition: transform var(--spring-sheet-ms, .42s) var(--spring-sheet, var(--ease)), bottom .25s; will-change: transform; box-shadow: 0 -10px 40px rgba(0,0,0,.35); }
 .sheet.show { transform: none; }
 .sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line2); margin: 2px auto 10px; }
-.sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.sheet-title { font-size: 21px; font-weight: 750; letter-spacing: -.01em; }
-.sheet-close { width: 34px; height: 34px; border-radius: 50%; background: var(--card2); display: grid; place-items: center; color: var(--text2); }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.sheet-title { font-size: 21px; font-weight: 750; letter-spacing: -.01em; min-width: 0; overflow-wrap: anywhere; }
+.sheet-close { flex: none; align-self: flex-start; width: 34px; height: 34px; aspect-ratio: 1; padding: 0; border-radius: 50%; background: var(--card2); display: grid; place-items: center; color: var(--text2); }
 .sheet-close .ico { width: 18px; height: 18px; }
 .menu { background: var(--card); border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
 .menu .row .ico { width: 24px; height: 24px; }
@@ -1035,7 +1035,7 @@ body.selecting .fab { transform: scale(0); }
 .crop-page { position: relative; height: min(46vh, 420px); max-width: 100%; aspect-ratio: .707; background: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); touch-action: none; user-select: none; -webkit-user-select: none; }
 .crop-page img { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .crop-dim { position: absolute; inset: 0; background: rgba(15,17,22,.55); pointer-events: none; }
-.crop-box { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,.6) inset; cursor: move; }
+.crop-box { position: absolute; touch-action: none; border: 2px solid var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,.6) inset; cursor: move; }
 .crop-box i { position: absolute; width: 26px; height: 26px; margin: -13px; touch-action: none; }
 .crop-box i::after { content: ""; position: absolute; inset: 8px; border-radius: 50%; background: #fff; border: 2.5px solid var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
 .crop-box [data-h="tl"] { left: 0; top: 0; } .crop-box [data-h="tr"] { right: 0; top: 0; }

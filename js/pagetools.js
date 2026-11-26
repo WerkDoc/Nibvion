@@ -335,7 +335,7 @@ export async function cropSheet(d) {
   let f = f0();
   sheet({
     title: 'Seiten zuschneiden',
-    html: `<div class="crop-stage" data-stage><div class="crop-page" data-page><img alt="" data-img>
+    html: `<div class="crop-stage no-swipe" data-stage><div class="crop-page" data-page><img alt="" data-img>
         <div class="crop-dim" data-dim></div><div class="crop-box" data-box>
           <i data-h="tl"></i><i data-h="t"></i><i data-h="tr"></i><i data-h="r"></i><i data-h="br"></i><i data-h="b"></i><i data-h="bl"></i><i data-h="l"></i></div></div></div>
       <div class="hf-pager"><button data-pp>${icon('chevronLeft')}</button><span data-pn></span><button data-np>${icon('chevronRight')}</button></div>
