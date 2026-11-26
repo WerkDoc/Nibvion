@@ -6,6 +6,7 @@ import { sheet, toast, busy, confirmDlg, promptDlg, esc, pickFiles, today, hapti
 import { pdfjsLib, loadPdf, closePdf, pageInfos, flatten, pagesOp, renderThumb, inkPath, normalizeImage, TEXT_ASC, LINE_H, FONT_CSS, pdfFontInfo } from './pdfcore.js';
 import { makeSymbol } from './sign.js';
 import { signatureSheet, stampSheet, freshStamp } from './assets.js';
+import { analyzeAll, blankReview, duplexOrder } from './pageorder.js';
 import { settings } from './settings.js';
 import { ocrEditItems, releaseEditOcr } from './ocr.js';
 
@@ -1009,7 +1010,7 @@ async function runAction(id) {
     catch { toast('Bild konnte nicht geladen werden', true); } finally { busy(false); }
   }
   if (id === 'signature') signatureSheet(a => { const W = 140; addCentered({ src: a.src, w: W, h: W * a.h / a.w, kindTag: 'sig' }); });
-  if (id === 'stamp') stampSheet(a => { const st = freshStamp(a); const W = a.image ? 130 : st.w * 0.55; addCentered({ src: st.src, w: W, h: W * st.h / st.w, opacity: a.image ? 1 : 0.95 }); });
+  if (id === 'stamp') stampSheet(a => { const st = freshStamp(a); const W = a.qr ? 100 : a.image ? 130 : st.w * 0.55; addCentered({ src: st.src, w: W, h: W * st.h / st.w, opacity: a.image || a.qr ? 1 : 0.95 }); });
 }
 
 // ======================= Mehr-Menü / Export =======================
@@ -1117,10 +1118,47 @@ async function pageManager() {
   let blank = false;
   sheet({
     title: 'Seiten verwalten',
-    html: `<div class="page-grid" data-grid></div>
+    html: `<div class="pm-tools"><button class="chip" data-findblank>${icon('pageBlank')} Leere Seiten finden</button><button class="chip" data-duplex>${icon('duplex')} Duplex sortieren</button></div>
+      <div class="page-grid" data-grid></div>
       <div class="btn-row"><button class="btn" data-blank>${icon('plus')} Leere Seite</button><button class="btn primary" data-ok>${icon('check')} Übernehmen</button></div>`,
     onMount(el, api) {
       const grid = el.querySelector('[data-grid]');
+      let analysis = null;
+      el.querySelector('[data-findblank]').onclick = async () => {
+        haptic();
+        if (!analysis) {
+          busy(true, 'Seiten werden geprüft …');
+          try { analysis = await analyzeAll(E.pdf, (i, n) => busy(true, `Seite ${i} von ${n} wird geprüft …`)); }
+          catch (e) { console.error(e); busy(false); return toast('Seiten konnten nicht geprüft werden', true); }
+          busy(false);
+        }
+        blankReview(order.map(p => analysis[p.i]), {
+          onApply(del) {
+            order = order.filter((_, k) => !del.has(k)); render();
+            toast(`${del.size} ${del.size === 1 ? 'Seite' : 'Seiten'} entfernt – zum Speichern „Übernehmen“`);
+          },
+        });
+      };
+      el.querySelector('[data-duplex]').onclick = () => {
+        haptic();
+        if (order.length < 2) return toast('Mindestens zwei Seiten nötig', true);
+        const ex = rev => duplexOrder(Math.min(order.length, 6), rev).map(p => p.i + 1).join(', ');
+        sheet({
+          title: 'Duplex sortieren',
+          html: `<p style="color:var(--text2);margin:0 2px 12px;font-size:14px;line-height:1.4">Die erste Hälfte sind die Vorderseiten, die zweite Hälfte die Rückseiten. Danach liegen sie abwechselnd: Vorderseite, Rückseite, …${order.length % 2 ? `<br><b style="color:var(--accent)">Achtung: ungerade Seitenzahl (${order.length}).</b>` : ''}</p>
+            <div class="menu">
+              <button class="row" data-rev="1"><span class="row-ic c-orange">${icon('pages')}</span><span class="row-main"><span class="row-title">Rückseiten rückwärts</span><span class="row-sub">Stapel umgedreht gescannt · ${ex(true)}</span></span>${icon('chevronRight')}</button>
+              <button class="row" data-rev="0"><span class="row-ic c-blue">${icon('pages')}</span><span class="row-main"><span class="row-title">Rückseiten in normaler Reihenfolge</span><span class="row-sub">${ex(false)}</span></span>${icon('chevronRight')}</button>
+            </div>`,
+          onMount(e2, a2) {
+            e2.querySelectorAll('[data-rev]').forEach(b => b.onclick = () => {
+              a2.close();
+              order = duplexOrder(order.length, b.dataset.rev === '1').map(p => order[p.i]); render();
+              toast('Neu sortiert – zum Speichern „Übernehmen“');
+            });
+          },
+        });
+      };
       const render = () => {
         grid.innerHTML = order.map((p, k) => `
           <div class="pg"><div class="pg-img" style="background-image:url(${thumbs[p.i]});transform:rotate(${p.rot}deg)"></div>
