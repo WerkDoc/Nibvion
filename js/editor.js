@@ -66,7 +66,9 @@ const kind = () => toolDef()?.kind || (E.mode === 'view' ? 'none' : 'select');
 export const GUARD = 'nibvion.openGuard';
 const guardSet = (docId, what) => { try { localStorage.setItem(GUARD, JSON.stringify({ id: docId, what, t: Date.now() })); } catch {} };
 const guardClear = () => { try { localStorage.removeItem(GUARD); } catch {} };
-const lowMem = () => !!settings.get('lowMem');
+const lowMem = () => !!settings.get('lowMem') || safeDoc();
+// Notfallmodus für einzelne PDFs, bei denen die App trotz Sparmodus abgestürzt ist
+const safeDoc = () => !!E.doc && (settings.get('safeDocs') || []).includes(E.doc.id);
 
 export async function openEditor(docId, mode = 'view', onClose, page = 0) {
   guardSet(docId, 'open');
@@ -95,7 +97,7 @@ export async function openEditor(docId, mode = 'view', onClose, page = 0) {
 
 async function loadDocument() {
   if (E.pdf) closePdf(E.pdf);
-  E.pdf = await loadPdf(E.bytes);
+  E.pdf = await loadPdf(E.bytes, { safe: safeDoc() });
   E.infos = await pageInfos(E.pdf);
   E.text = {}; E.ocr = {}; E.needOcr = {}; E.scanFx = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
@@ -286,7 +288,7 @@ function buildPages() {
       const i = +en.target.dataset.i;
       if (en.isIntersecting) renderPage(i); else freePage(i);
     });
-  }, { root: sc, rootMargin: '900px 0px' });
+  }, { root: sc, rootMargin: safeDoc() ? '150px 0px' : lowMem() ? '450px 0px' : '900px 0px' });
   E.pages = E.infos.map((info, i) => {
     const el = document.createElement('div');
     el.className = 'page'; el.dataset.i = i;
@@ -317,9 +319,9 @@ function layoutPages() {
 async function renderPage(i) {
   const p = E.pages[i], info = E.infos[i]; if (!p || !E.pdf) return;
   if (E.hidden) return;                                   // Editor liegt unter einer Vollbild-Ansicht
-  const dpr = Math.min(lowMem() ? 2 : 3, window.devicePixelRatio || 1);
+  const dpr = Math.min(safeDoc() ? 1.25 : lowMem() ? 2 : 3, window.devicePixelRatio || 1);
   let rs = scale() * dpr;
-  const maxPx = lowMem() ? 4e6 : 9e6;
+  const maxPx = safeDoc() ? 1.5e6 : lowMem() ? 4e6 : 9e6;
   if (info.w * info.h * rs * rs > maxPx) rs = Math.sqrt(maxPx / (info.w * info.h));
   if (Math.abs(p.rs - rs) < 0.01) return;
   p.task?.cancel?.();
@@ -337,13 +339,15 @@ async function renderPage(i) {
     old.width = old.height = 0;
     p.canvas = c; p.rs = rs;
     p.el.querySelector('.ph')?.remove();
+    page.cleanup();                                         // dekodierte Bilder sofort wieder freigeben
   } catch (err) { if (err?.name !== 'RenderingCancelledException') console.warn(err); }
 }
 function freePage(i) {
   const p = E.pages[i]; if (!p || !p.rs) return;
   // Nur weit entfernte Seiten freigeben
   const r = p.el.getBoundingClientRect(), sr = $('ed-scroll').getBoundingClientRect();
-  if (r.bottom < sr.top - 2500 || r.top > sr.bottom + 2500) { p.canvas.width = p.canvas.height = 0; p.rs = 0; }
+  const far = lowMem() ? 1200 : 2500;
+  if (r.bottom < sr.top - far || r.top > sr.bottom + far) { p.canvas.width = p.canvas.height = 0; p.rs = 0; }
 }
 let rerenderT;
 function rerenderVisible() {
