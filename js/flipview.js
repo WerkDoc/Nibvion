@@ -12,7 +12,7 @@ import { reducedMotion, springFrames } from './fx.js';
 export const VIEW_MODES = [['scroll', 'Endlos'], ['single', 'Einzelseite'], ['flip', 'Buch']];
 
 /** flipView({ pdf, start, title, mode }) → Promise<{ page, mode }> (mode = gewählter Modus beim Verlassen) */
-export function flipView({ pdf, start = 0, title = '', mode = 'flip' }) {
+export function flipView({ pdf, start = 0, title = '', mode = 'flip', lowMem = false, onReady }) {
   return new Promise(resolve => {
     const N = pdf.numPages;
     const V = { i: Math.max(0, Math.min(N - 1, start)), mode, cache: new Map(), dims: new Map(), W: 0, H: 0, flip: null, alive: true, ui: true };
@@ -49,35 +49,40 @@ export function flipView({ pdf, start = 0, title = '', mode = 'flip' }) {
     }
     // Seite i passend in W×H (eigene Größe, zentriert)
     const fitIn = (d, W, H) => { const k = Math.min(W / d.w, H / d.h); const w = d.w * k, h = d.h * k; return { w, h, x: (W - w) / 2, y: (H - h) / 2 }; };
+    // Seiten nacheinander rendern (nie mehrere große Canvas gleichzeitig im Speicher)
+    let queue = Promise.resolve();
     function render(i) {
       const key = `${i}@${V.W}x${V.H}`;
       if (V.cache.has(key)) return V.cache.get(key);
       const W = V.W, H = V.H;
-      const job = (async () => {
+      const job = (queue = queue.catch(() => {}).then(async () => {
+        if (!V.alive) return null;
         const page = await pdf.getPage(i + 1);
         const v = page.getViewport({ scale: 1 }); V.dims.set(i, { w: v.width, h: v.height });
         const f = fitIn({ w: v.width, h: v.height }, W, H);
-        let dpr = Math.min(3, devicePixelRatio || 1);
+        const cap = lowMem ? 2.5e6 : 5e6;
+        let dpr = Math.min(lowMem ? 1.5 : 2, devicePixelRatio || 1);
         const sc = f.w / v.width;
-        if (v.width * v.height * (sc * dpr) ** 2 > 12e6) dpr = Math.sqrt(12e6 / (v.width * v.height)) / sc;
+        if (v.width * v.height * (sc * dpr) ** 2 > cap) dpr = Math.sqrt(cap / (v.width * v.height)) / sc;
         const vp = page.getViewport({ scale: sc * dpr });
         const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
         const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
         await page.render({ canvasContext: g, viewport: vp }).promise;
-        const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+        const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
         c.width = c.height = 0;
+        page.cleanup?.();
         return blob ? URL.createObjectURL(blob) : null;
-      })();
+      }));
       V.cache.set(key, job);
       job.catch(() => V.cache.delete(key));
       // nur Seiten rund um die aktuelle behalten
       for (const k of [...V.cache.keys()]) {
         const [pi, sz] = k.split('@');
-        if (sz !== `${W}x${H}` || Math.abs(+pi - V.i) > 3) { V.cache.get(k).then(u => u && setTimeout(() => URL.revokeObjectURL(u), 1500)).catch(() => {}); V.cache.delete(k); }
+        if (sz !== `${W}x${H}` || Math.abs(+pi - V.i) > 2) { V.cache.get(k).then(u => u && setTimeout(() => URL.revokeObjectURL(u), 1500)).catch(() => {}); V.cache.delete(k); }
       }
       return job;
     }
-    const preload = () => [V.i + 1, V.i - 1, V.i + 2].forEach(k => { if (k >= 0 && k < N) render(k).catch(() => {}); });
+    const preload = () => [V.i + 1, V.i - 1].forEach(k => { if (k >= 0 && k < N) render(k).catch(() => {}); });
 
     /** Fläche für Seite i, Ausschnitt x0..x0+sw (für Streifen) */
     function face(i, x0 = 0, sw = V.W, W = V.W, H = V.H) {
@@ -206,7 +211,8 @@ export function flipView({ pdf, start = 0, title = '', mode = 'flip' }) {
     $('[data-x]').onclick = () => { haptic(); close(); };
 
     (async () => {
-      await layout(); setBase(V.i); count(); setMode(V.mode); preload();
+      await layout(); setBase(V.i); count(); setMode(V.mode);
+      render(V.i).then(() => { onReady && onReady(); preload(); }).catch(() => {});
       requestAnimationFrame(segInd);
     })();
   });

@@ -60,7 +60,16 @@ const toolDef = () => MODES[E.mode].tools.find(t => t.id === E.tool);
 const kind = () => toolDef()?.kind || (E.mode === 'view' ? 'none' : 'select');
 
 // ======================= Öffnen / Schließen =======================
+// Absturzschutz: iOS beendet die App, wenn eine PDF zu viel Speicher braucht. Vor dem Öffnen wird
+// eine Markierung gesetzt und nach erfolgreichem Anzeigen wieder entfernt. Steht sie beim nächsten
+// Start noch da, öffnet Nibvion danach sparsam (js/app.js → crashCheck).
+export const GUARD = 'nibvion.openGuard';
+const guardSet = (docId, what) => { try { localStorage.setItem(GUARD, JSON.stringify({ id: docId, what, t: Date.now() })); } catch {} };
+const guardClear = () => { try { localStorage.removeItem(GUARD); } catch {} };
+const lowMem = () => !!settings.get('lowMem');
+
 export async function openEditor(docId, mode = 'view', onClose, page = 0) {
+  guardSet(docId, 'open');
   busy(true, 'PDF wird geladen …');
   try {
     const meta = await db.get('docs', docId);
@@ -78,8 +87,9 @@ export async function openEditor(docId, mode = 'view', onClose, page = 0) {
     meta.opened = Date.now(); db.put('docs', meta);
     const vm = settings.get('viewMode');
     if (mode === 'view' && (vm === 'single' || vm === 'flip')) setTimeout(() => { if (E.open && E.doc?.id === docId) pageView(vm, true); }, 380);
+    else setTimeout(() => { if (E.doc?.id === docId) guardClear(); }, 5000);
   } catch (err) {
-    console.error(err); toast('PDF konnte nicht geöffnet werden', true);
+    console.error(err); guardClear(); toast('PDF konnte nicht geöffnet werden', true);
   } finally { busy(false); }
 }
 
@@ -306,9 +316,10 @@ function layoutPages() {
 
 async function renderPage(i) {
   const p = E.pages[i], info = E.infos[i]; if (!p || !E.pdf) return;
-  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  if (E.hidden) return;                                   // Editor liegt unter einer Vollbild-Ansicht
+  const dpr = Math.min(lowMem() ? 2 : 3, window.devicePixelRatio || 1);
   let rs = scale() * dpr;
-  const maxPx = 9e6;
+  const maxPx = lowMem() ? 4e6 : 9e6;
   if (info.w * info.h * rs * rs > maxPx) rs = Math.sqrt(maxPx / (info.w * info.h));
   if (Math.abs(p.rs - rs) < 0.01) return;
   p.task?.cancel?.();
@@ -1251,13 +1262,17 @@ async function pageView(mode, auto = false) {
   try {
     if (E.objects.length) { busy(true, 'Ansicht wird vorbereitet …'); temp = pdf = await loadPdf(await exportBytes()); busy(false); }
     const { flipView } = await import('./flipview.js');
-    const r = await flipView({ pdf, start: currentPage(), title: E.doc.name.replace(/\.pdf$/i, ''), mode });
+    guardSet(E.doc.id, 'view');
+    E.hidden = true;
+    const r = await flipView({ pdf, start: currentPage(), title: E.doc.name.replace(/\.pdf$/i, ''), mode, lowMem: lowMem(), onReady: () => setTimeout(guardClear, 4000) });
+    E.hidden = false; guardClear();
     settings.set('viewMode', r.mode);
     if (!E.open) return;
-    if (auto && r.mode !== 'scroll') return closeEditor();          // „Zurück“ aus der Ansicht → zur Dateiliste
+    if (auto && r.mode !== 'scroll') return closeEditor();
+    rerenderVisible();          // „Zurück“ aus der Ansicht → zur Dateiliste
     if (r.page !== currentPage()) { const p = E.pages[r.page]; if (p) $('ed-scroll').scrollTop = Math.max(0, p.el.offsetTop - 12); updPageChip(); rerenderVisible(); }
   } catch (e) { console.error(e); busy(false); toast('Ansicht konnte nicht geöffnet werden', true); }
-  finally { if (temp) setTimeout(() => closePdf(temp), 600); }
+  finally { E.hidden = false; if (E.open) rerenderVisible(); if (temp) setTimeout(() => closePdf(temp), 600); }
 }
 
 // ======================= Präsentieren =======================

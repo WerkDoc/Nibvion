@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.42.0';
+export const VERSION = '1.42.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1033,6 +1033,8 @@ async function renderSettings() {
     <div class="group-title">Speicher</div>
     <div class="group">
       <div class="row"><span class="row-ic c-teal">${icon('storage')}</span><span class="row-main"><span class="row-title">Belegt</span><span class="row-sub" style="display:block">${docs.length} Dokument(e)</span></span><span class="row-end">${usage}</span></div>
+      <div class="row"><span class="row-ic c-orange">${icon('gauge')}</span><span class="row-main"><span class="row-title">Sparsamer Speichermodus</span><span class="row-sub" style="display:block">Für sehr große PDFs – etwas weniger scharf, dafür stabil</span></span>
+        <div class="seg" data-lm><button data-v="1" class="${settings.get('lowMem') ? 'on' : ''}">An</button><button data-v="0" class="${settings.get('lowMem') ? '' : 'on'}">Aus</button></div></div>
       <button class="row" data-s="backup"><span class="row-ic c-blue">${icon('archive')}</span><span class="row-main"><span class="row-title">Backup erstellen</span><span class="row-sub" style="display:block">${settings.get('lastBackup') ? 'Zuletzt: ' + fmtDate(settings.get('lastBackup')) : 'Alle PDFs, Unterschriften & Stempel als ZIP sichern'}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
       <button class="row" data-s="restore"><span class="row-ic c-violet">${icon('restore')}</span><span class="row-main"><span class="row-title">Backup wiederherstellen</span><span class="row-sub" style="display:block">ZIP-Datei aus „Dateien“ oder iCloud wählen</span></span><span class="row-end">${icon('chevronRight')}</span></button>
       <button class="row" data-s="trash"><span class="row-ic c-orange">${icon('trash')}</span><span class="row-main"><span class="row-title">Papierkorb</span><span class="row-sub" style="display:block">${trashed ? `${trashed} PDF(s) · ${TRASH_DAYS} Tage wiederherstellbar` : `Gelöschte PDFs ${TRASH_DAYS} Tage wiederherstellen`}</span></span><span class="row-end">${trashed ? `<span class="soon">${trashed}</span>` : ''}${icon('chevronRight')}</span></button>
@@ -1049,6 +1051,7 @@ async function renderSettings() {
   const root = $('settings-list');
   root.querySelectorAll('[data-theme] button').forEach(b => b.onclick = () => { settings.set('theme', b.dataset.v); applyTheme(); renderSettings(); });
   root.querySelectorAll('[data-sd] button').forEach(b => b.onclick = () => { settings.set('stampDate', b.dataset.v === '1'); renderSettings(); });
+  root.querySelectorAll('[data-lm] button').forEach(b => b.onclick = () => { settings.set('lowMem', b.dataset.v === '1'); renderSettings(); });
   root.querySelector('[data-om]')?.addEventListener('change', e => { settings.set('onlineMode', e.target.value); savePrefs().catch(() => {}); toast('Modus gespeichert'); });
   root.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
     const s = b.dataset.s;
@@ -1195,11 +1198,24 @@ function switchTab(tab) {
 }
 
 // ======================= Start =======================
+// Wurde die App beim letzten Öffnen einer PDF von iOS beendet (Speicher), sparsam weitermachen
+// statt bei jedem Öffnen erneut abzustürzen.
+function crashCheck() {
+  let g = null;
+  try { g = JSON.parse(localStorage.getItem('nibvion.openGuard') || 'null'); localStorage.removeItem('nibvion.openGuard'); } catch {}
+  if (!g || Date.now() - g.t > 30 * 60 * 1000) return;
+  const msg = [];
+  if (g.what === 'view' && settings.get('viewMode') !== 'scroll') { settings.set('viewMode', 'scroll'); msg.push('Seitenansicht auf „Endlos“ zurückgesetzt'); }
+  if (!settings.get('lowMem')) { settings.set('lowMem', true); msg.push('sparsamer Speichermodus eingeschaltet'); }
+  if (msg.length) setTimeout(() => toast(g.what === 'view' ? 'PDF war zu groß – Ansicht „Endlos“, Sparmodus an' : 'PDF war zu groß – Sparmodus ist jetzt an'), 1600);
+}
+
 async function init() {
   measureGap();
   try { await purgeExpired(); } catch {}
   hydrateIcons(document);
   initEditor();
+  crashCheck();
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';
   document.body.classList.add('tab-home'); document.body.dataset.tab = 'home';
