@@ -187,15 +187,17 @@ body.in-editor .fab { transform: scale(0); }
 @keyframes toolIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .ed-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; background: var(--bg); position: relative; touch-action: pan-x pan-y; }
 .ed-pages { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px 0 110px; min-width: 100%; width: max-content; margin: 0 auto; }
-.page { position: relative; background: #fff; box-shadow: 0 4px 22px rgba(0,0,0,.28); border-radius: 3px; flex: none; animation: pageIn .45s var(--ease) backwards; margin: 0 12px; }
-/* Nur die ersten Seiten einblenden – sonst legt iOS für jede der (evtl. Hunderte) Seiten eine eigene Grafikebene an */
-.page:nth-child(n+6) { animation: none; }
+.page { position: relative; background: #fff; box-shadow: 0 4px 22px rgba(0,0,0,.28); border-radius: 3px; flex: none; margin: 0 12px; }
+/* Einblenden nur bei kurzen PDFs (Klasse .anim, js/editor.js) und nur die ersten Seiten: Solange eine
+   Seite animiert, legt Safari für JEDE folgende Seite eine eigene Grafikebene an (Überlappungs-Annahme) –
+   bei 280+ Seiten fast 2 GB → iOS beendet die App sofort beim Öffnen. */
+.ed-pages.anim .page:nth-child(-n+5) { animation: pageIn .45s var(--ease) backwards; }
 @keyframes pageIn { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: none; } }
 .page canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 3px; }
 .page .ph { position: absolute; inset: 0; display: grid; place-items: center; color: #b6bac4; font-size: 13px; }
 .page svg.layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; touch-action: pan-x pan-y; }
 .editor.drawing svg.layer { touch-action: none; }
-.page-num { position: absolute; bottom: -22px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--text3); }
+.page-num { position: absolute; bottom: -22px; left: 0; right: 0; text-align: center; font-size: 11px; color: var(--text3); pointer-events: none; }
 svg.layer .obj { touch-action: none; cursor: move; }
 svg.layer .titem { fill: rgba(64,150,255,.04); stroke: #4096ff; stroke-width: .6; stroke-dasharray: 2.5 1.5; vector-effect: non-scaling-stroke; cursor: text; }
 svg.layer .titem:active { fill: rgba(64,150,255,.18); }
