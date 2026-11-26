@@ -3,7 +3,8 @@
 // Schließen/Herunterwischen fragt „Verwerfen / Weiter bearbeiten“.
 import { icon } from './icons.js';
 import { sheet, toast, busy, haptic, pickFiles, spinRotate, imgLoaded } from './ui.js';
-import { render as renderScan, enhance, FILTERS, cropEditor, detectCorners, loadFileImage, FULL } from './scanner.js';
+import { render as renderScan, enhance, FILTERS, cropEditor, detectCorners, loadFileImage, FULL, NO_ADJ } from './scanner.js';
+import { scanLaser, springFrames, reducedMotion } from './fx.js';
 import { liveScanner, cameraSupported } from './camera.js';
 import { ensureAI, edgeCut, aiPref, setAiPref, aiLoaded } from './ai.js';
 import { ensureEnhance, enhReady, enhLoaded } from './aienhance.js';
@@ -53,6 +54,7 @@ export function scanReview(opts) {
       <div class="rv-tabs">
         <div class="seg" data-tabs><button data-p="filter" class="on">Filter</button><button data-p="adj">Anpassen</button></div>
         <div class="rv-chips">
+          <button class="rv-chip" data-cmp aria-label="Vorher/Nachher">${icon('compare')}<span>Vergleich</span></button>
           <button class="rv-chip" data-ai aria-label="KI-Glätten">${icon('sparkles')}<span>KI</span></button>
           ${kind === 'scan' ? `<button class="rv-chip" data-ocr>${icon('textScan')}<span>Text erkennen</span></button>` : ''}
         </div>
@@ -88,6 +90,7 @@ export function scanReview(opts) {
   const thumb = it => { const k = key(it); if (it._thKey !== k) { it._th = renderScan(it, filter, 320, adj).toDataURL('image/jpeg', 0.8); it._thKey = k; } return it._th; };
 
   const buildStage = () => {
+    cmpUnmount?.();
     stage.innerHTML = items.map((_, i) => `<div class="rv-page" data-i="${i}"><img alt=""><div class="rv-spin"></div></div>`).join('')
       || `<div class="rv-empty">${icon('scan')}<b>Keine Seiten</b>Tippe unten auf „Weitere“ oder „Fotos“.</div>`;
     stage.querySelectorAll('.rv-page').forEach(p => p.onclick = () => openCrop(+p.dataset.i));
@@ -140,6 +143,7 @@ export function scanReview(opts) {
         el.classList.add('busy'); await tick();
         img.src = preview(it); img.dataset.k = key(it);
         el.classList.remove('busy');
+        if (cmpOn && i === cur && !cmp) cmpMount();
         if (closed) return;
       }
     }, 40);
@@ -150,8 +154,89 @@ export function scanReview(opts) {
   };
   stage.addEventListener('scroll', () => {
     const i = Math.round(stage.scrollLeft / Math.max(1, stage.clientWidth));
-    if (i !== cur && i >= 0 && i < items.length) { cur = i; updCount(); drawVisible(); renderFilters(); }
+    if (i !== cur && i >= 0 && i < items.length) { cur = i; updCount(); drawVisible(); renderFilters(); if (cmpOn) cmpMount(); }
   }, { passive: true });
+
+  // ---------- Scan-Laser, solange eine Seite aufbereitet wird ----------
+  const lasers = new Map();
+  const laserSync = pg => {
+    const img = pg.querySelector('img[src]'), on = pg.classList.contains('busy') && !!img;
+    if (on && !lasers.has(pg)) { pg.classList.add('lasering'); lasers.set(pg, scanLaser(pg, img)); }
+    if (!on && lasers.has(pg)) { lasers.get(pg)(); lasers.delete(pg); pg.classList.remove('lasering'); }
+  };
+  new MutationObserver(ms => ms.forEach(m => { if (m.target.classList?.contains('rv-page')) laserSync(m.target); }))
+    .observe(stage, { subtree: true, attributes: true, attributeFilter: ['class', 'src'] });
+
+  // ---------- Vorher/Nachher-Vorhang ----------
+  // Links: zugeschnittenes Originalfoto (ohne Filter), rechts: aufbereiteter Scan. Der Trenner
+  // wird nur per transform verschoben (Clip-Ebene + gegenläufig verschobenes Bild).
+  let cmpOn = false, cmp = null;
+  const origOf = it => {
+    const k = JSON.stringify([it.rot, it.corners, aiReady(it)]);
+    if (it._origKey !== k) { it._orig = renderScan(it, '', BIG, NO_ADJ).toDataURL('image/jpeg', 0.85); it._origKey = k; }
+    return it._orig;
+  };
+  function cmpUnmount() { if (!cmp) return; cmp.ro?.disconnect(); cmp.el.remove(); cmp = null; }
+  function cmpMount(intro = false) {
+    cmpUnmount();
+    const it = items[cur], pg = stage.querySelector(`.rv-page[data-i="${cur}"]`), img = pg && pg.querySelector('img');
+    if (!it || !img) return;
+    const el = document.createElement('div'); el.className = 'rv-cmp';
+    el.innerHTML = `<div class="rv-cmp-clip"><img alt="" class="rv-cmp-img"></div>
+      <span class="rv-cmp-lbl l">Original</span><span class="rv-cmp-lbl r">Scan</span>
+      <div class="rv-cmp-bar"><span class="rv-cmp-grip">${icon('chevronLeft')}${icon('chevronRight')}</span></div>`;
+    pg.appendChild(el);
+    const clip = el.firstChild, oi = clip.firstChild, bar = el.querySelector('.rv-cmp-bar');
+    oi.src = origOf(it);
+    const C = cmp = { el, x: 0.5, W: 0, H: 0 };
+    const set = x => {
+      C.x = Math.max(0, Math.min(1, x));
+      const W = C.W;
+      clip.style.transform = `translate3d(${((C.x - 1) * W).toFixed(1)}px,0,0)`;
+      oi.style.transform = `translate3d(${((1 - C.x) * W).toFixed(1)}px,0,0)`;
+      bar.style.transform = `translate3d(${(C.x * W).toFixed(1)}px,0,0)`;
+      el.classList.toggle('lo', C.x < 0.18); el.classList.toggle('hi', C.x > 0.82);
+    };
+    const place = () => {
+      const pr = pg.getBoundingClientRect(), r = img.getBoundingClientRect();
+      if (!r.width) return;
+      C.W = r.width; C.H = r.height;
+      el.style.cssText = `left:${r.left - pr.left}px;top:${r.top - pr.top}px;width:${r.width}px;height:${r.height}px`;
+      oi.style.width = r.width + 'px'; oi.style.height = r.height + 'px';
+      set(C.x);
+    };
+    place();
+    C.ro = new ResizeObserver(place); C.ro.observe(img);
+    img.addEventListener('load', place);
+    // Ziehen am Trenner (oder irgendwo auf dem Bild)
+    let drag = null;
+    el.addEventListener('pointerdown', e => {
+      e.stopPropagation(); C.anim?.cancel(); drag = e.pointerId;
+      try { el.setPointerCapture(e.pointerId); } catch {}
+      const r = el.getBoundingClientRect(); set((e.clientX - r.left) / r.width); el.classList.add('drag'); haptic();
+    });
+    el.addEventListener('pointermove', e => { if (drag !== e.pointerId) return; const r = el.getBoundingClientRect(); set((e.clientX - r.left) / r.width); });
+    const up = e => { if (drag !== e.pointerId) return; drag = null; el.classList.remove('drag'); };
+    el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    el.addEventListener('click', e => e.stopPropagation());
+    // Einstieg: Trenner gleitet einmal mit Feder hin und her
+    if (intro && !reducedMotion()) {
+      const sp = springFrames({ stiffness: 120, damping: 11 }, v => ({ v }), 60);
+      const t0 = performance.now(), from = 0.12;
+      const step = now => {
+        if (cmp !== C || drag != null) return;
+        const t = (now - t0) / sp.ms; if (t >= 1) { set(0.5); return; }
+        const f = sp.frames[Math.min(sp.frames.length - 1, Math.round(t * (sp.frames.length - 1)))].v;
+        set(from + (0.5 - from) * f); requestAnimationFrame(step);
+      };
+      set(from); requestAnimationFrame(step);
+    }
+  }
+  const cmpBtn = wrap.querySelector('[data-cmp]');
+  cmpBtn.onclick = () => {
+    cmpOn = !cmpOn; haptic(); cmpBtn.classList.toggle('on', cmpOn);
+    if (cmpOn) cmpMount(true); else cmpUnmount();
+  };
   const goTo = i => { cur = Math.max(0, Math.min(items.length - 1, i)); stage.scrollTo({ left: cur * stage.clientWidth, behavior: 'instant' in document.documentElement.style ? 'instant' : 'auto' }); stage.scrollLeft = cur * stage.clientWidth; updCount(); drawVisible(); renderFilters(); };
 
   // ---------- Filter ----------
@@ -287,6 +372,7 @@ export function scanReview(opts) {
   // ---------- Schließen ----------
   const close = () => {
     if (closed) return; closed = true;
+    lasers.forEach(stop => stop()); lasers.clear(); cmpUnmount();
     wrap.classList.add('out'); setTimeout(() => wrap.remove(), 280);
   };
   const askClose = async () => {

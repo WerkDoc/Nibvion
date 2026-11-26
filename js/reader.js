@@ -11,6 +11,7 @@ import { icon } from './icons.js';
 import { haptic, esc } from './ui.js';
 import { pdfjsLib } from './pdfcore.js';
 import { settings } from './settings.js';
+import { createFlip } from './pageflip.js';
 
 const THEMES = { light: 'Hell', sepia: 'Sepia', dark: 'Dunkel' };
 const LINE_H = { 1.4: 'Eng', 1.6: 'Normal', 1.85: 'Weit' };
@@ -198,7 +199,7 @@ export function readerMode({ pdf, title = '', start = 0 }) {
     const S = {
       size: settings.get('rdSize') || 19, lh: settings.get('rdLh') || 1.6,
       theme: settings.get('rdTheme') || (document.documentElement.dataset.theme === 'dark' || matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
-      font: settings.get('rdFont') || 'serif', alive: true, panel: false,
+      font: settings.get('rdFont') || 'serif', alive: true, panel: false, paged: !!settings.get('rdPaged'), pg: 0,
     };
     const el = document.createElement('div');
     el.className = `reader th-${S.theme} f-${S.font}`;
@@ -213,6 +214,7 @@ export function readerMode({ pdf, title = '', start = 0 }) {
         <div class="rd-row"><button class="rd-sz" data-sz="-1" aria-label="Kleiner">A<small>−</small></button><span class="rd-szv" data-szv></span><button class="rd-sz big" data-sz="1" aria-label="Größer">A<small>+</small></button></div>
         <div class="rd-row"><span class="rd-lbl">Zeilenabstand</span><div class="rd-seg" data-lh>${Object.entries(LINE_H).map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div></div>
         <div class="rd-row"><span class="rd-lbl">Schrift</span><div class="rd-seg" data-font><button data-v="serif">Serif</button><button data-v="sans">Sans</button></div></div>
+        <div class="rd-row"><span class="rd-lbl">Blättern</span><div class="rd-seg" data-pm><button data-v="0">Scrollen</button><button data-v="1">Buch (3D)</button></div></div>
         <div class="rd-row rd-themes" data-th>${Object.entries(THEMES).map(([k, l]) => `<button data-v="${k}" class="t-${k}"><i>Aa</i><span>${l}</span></button>`).join('')}</div>
       </div>
       <div class="rd-scroll" data-scroll><article class="rd-art" data-art><div class="rd-load" data-load><span></span><span></span><span></span><p>Text wird aufbereitet …</p></div></article></div>`;
@@ -221,20 +223,26 @@ export function readerMode({ pdf, title = '', start = 0 }) {
     const $ = s => el.querySelector(s), art = $('[data-art]'), sc = $('[data-scroll]');
 
     const apply = () => {
-      el.className = `reader show th-${S.theme} f-${S.font}${S.panel ? ' panel-on' : ''}`;
+      el.className = `reader show th-${S.theme} f-${S.font}${S.panel ? ' panel-on' : ''}${S.paged ? ' paged' : ''}`;
       art.style.fontSize = S.size + 'px'; art.style.lineHeight = S.lh;
       $('[data-szv]').textContent = S.size + ' pt';
       el.querySelectorAll('[data-lh] button').forEach(b => b.classList.toggle('on', +b.dataset.v === +S.lh));
       el.querySelectorAll('[data-font] button').forEach(b => b.classList.toggle('on', b.dataset.v === S.font));
       el.querySelectorAll('[data-th] button').forEach(b => b.classList.toggle('on', b.dataset.v === S.theme));
+      el.querySelectorAll('[data-pm] button').forEach(b => b.classList.toggle('on', +b.dataset.v === +S.paged));
+      settings.set('rdPaged', S.paged);
       settings.set('rdSize', S.size); settings.set('rdLh', S.lh); settings.set('rdTheme', S.theme); settings.set('rdFont', S.font);
     };
     // Lesestelle beim Ändern der Schriftgröße halten
-    const keepPlace = fn => { const r = sc.scrollTop / Math.max(1, sc.scrollHeight - sc.clientHeight); fn(); apply(); sc.scrollTop = r * (sc.scrollHeight - sc.clientHeight); };
+    const keepPlace = fn => {
+      if (S.paged) { const r = S.pg / Math.max(1, pages() - 1); fn(); apply(); setPg(Math.round(r * Math.max(0, pages() - 1))); return; }
+      const r = sc.scrollTop / Math.max(1, sc.scrollHeight - sc.clientHeight); fn(); apply(); sc.scrollTop = r * (sc.scrollHeight - sc.clientHeight);
+    };
     el.querySelectorAll('[data-sz]').forEach(b => b.onclick = () => { haptic(); keepPlace(() => S.size = Math.max(13, Math.min(34, S.size + 2 * +b.dataset.sz))); });
     el.querySelectorAll('[data-lh] button').forEach(b => b.onclick = () => { haptic(); keepPlace(() => S.lh = +b.dataset.v); });
     el.querySelectorAll('[data-font] button').forEach(b => b.onclick = () => { haptic(); keepPlace(() => S.font = b.dataset.v); });
     el.querySelectorAll('[data-th] button').forEach(b => b.onclick = () => { haptic(); S.theme = b.dataset.v; apply(); });
+    el.querySelectorAll('[data-pm] button').forEach(b => b.onclick = () => { haptic(); setPaged(b.dataset.v === '1'); });
     $('[data-aa]').onclick = e => { e.stopPropagation(); haptic(); S.panel = !S.panel; apply(); };
     sc.addEventListener('pointerdown', () => { if (S.panel) { S.panel = false; apply(); } });
     apply();
@@ -274,7 +282,7 @@ export function readerMode({ pdf, title = '', start = 0 }) {
       sec.innerHTML = html;
       art.appendChild(sec); sections[i] = sec;
       sec.querySelectorAll('.rd-scan').forEach(n => io.observe(n));
-      if (i === start && start > 0) requestAnimationFrame(() => { sc.scrollTop = sec.offsetTop - 10; });
+      if (i === start && start > 0) requestAnimationFrame(() => { if (S.paged) setPg(pageOf(sec)); else sc.scrollTop = sec.offsetTop - 10; });
     };
     analyzeDoc(pdf, onPage, () => !S.alive).then(() => {
       if (!S.alive) return;
@@ -285,6 +293,7 @@ export function readerMode({ pdf, title = '', start = 0 }) {
     // ---------- Fortschritt & aktuelle Seite ----------
     let cur = start;
     const onScroll = () => {
+      if (S.paged) return onPaged();
       const max = sc.scrollHeight - sc.clientHeight;
       $('[data-prog]').style.transform = `scaleX(${max > 0 ? Math.min(1, sc.scrollTop / max) : 0})`;
       const y = sc.scrollTop + 80;
@@ -293,13 +302,60 @@ export function readerMode({ pdf, title = '', start = 0 }) {
     };
     sc.addEventListener('scroll', onScroll, { passive: true });
 
+    // ---------- Buch-Modus: Spalten-Seiten + 3D-Umblättern ----------
+    let flip = null;
+    const pw = () => sc.clientWidth;
+    const pages = () => Math.max(1, Math.round(art.scrollWidth / Math.max(1, pw())));
+    const pageOf = sec => { const a = art.getBoundingClientRect(), r = sec.getBoundingClientRect(); return Math.max(0, Math.floor((r.left - a.left + 4) / Math.max(1, pw()))); };
+    const setPg = i => { S.pg = Math.max(0, Math.min(pages() - 1, i)); art.style.transform = `translate3d(${-S.pg * pw()}px,0,0)`; onPaged(); };
+    function onPaged() {
+      const n = pages();
+      $('[data-prog]').style.transform = `scaleX(${n > 1 ? S.pg / (n - 1) : 1})`;
+      for (let k = sections.length - 1; k >= 0; k--) if (sections[k] && pageOf(sections[k]) <= S.pg) { cur = k; break; }
+      $('[data-pos]').textContent = `Seite ${cur + 1} von ${pdf.numPages} · ${S.pg + 1}/${n}`;
+    }
+    // Blatt-Fläche: Kopie des Texts, verschoben auf Seite i (Canvas-Scans werden mitkopiert)
+    const face = (i, x0, sw, W, H) => {
+      const f = document.createElement('div'); f.className = 'rd-leaf'; f.style.cssText = `width:${sw}px;height:${H}px`;
+      const c = art.cloneNode(true);
+      c.style.transform = `translate3d(${-(i * W + x0)}px,0,0)`; c.style.width = W + 'px'; c.style.animation = 'none';
+      c.querySelectorAll('.rd-page').forEach(n => n.style.animation = 'none');
+      const src = art.querySelectorAll('canvas'), dst = c.querySelectorAll('canvas');
+      dst.forEach((d, k) => { try { d.getContext('2d').drawImage(src[k], 0, 0); } catch {} });
+      f.appendChild(c); return f;
+    };
+    function setPaged(on) {
+      const r = S.paged ? S.pg / Math.max(1, pages() - 1) : sc.scrollTop / Math.max(1, sc.scrollHeight - sc.clientHeight);
+      S.paged = on; apply();
+      flip?.destroy(); flip = null;
+      if (on) {
+        sc.scrollTop = 0; sc.style.setProperty('--pw', pw() + 'px');
+        setPg(Math.round(r * (pages() - 1)));
+        flip = createFlip({
+          book: sc, surface: sc, strips: 3, face,
+          setBase: i => { art.style.transform = `translate3d(${-i * pw()}px,0,0)`; },
+          count: pages, index: () => S.pg, commit: i => { setPg(i); haptic(); },
+          onTap: x => { if (S.panel) { S.panel = false; apply(); return; } if (x > 0.7) flip.go(1); else if (x < 0.3) flip.go(-1); },
+        });
+      } else {
+        art.style.transform = '';
+        requestAnimationFrame(() => { sc.scrollTop = r * (sc.scrollHeight - sc.clientHeight); onScroll(); });
+      }
+    }
+    const onResize = () => { if (S.paged) { sc.style.setProperty('--pw', pw() + 'px'); setPg(S.pg); } };
+    window.addEventListener('resize', onResize);
+    if (S.paged) requestAnimationFrame(() => setPaged(true));
+
     const close = () => {
-      S.alive = false; io.disconnect();
+      S.alive = false; io.disconnect(); flip?.destroy(); window.removeEventListener('resize', onResize);
       el.classList.remove('show'); setTimeout(() => el.remove(), 300);
       document.removeEventListener('keydown', key);
       resolve(cur);
     };
-    const key = e => { if (e.key === 'Escape') close(); };
+    const key = e => {
+      if (e.key === 'Escape') close();
+      if (S.paged && flip) { if (e.key === 'ArrowRight' || e.key === ' ') flip.go(1); if (e.key === 'ArrowLeft') flip.go(-1); }
+    };
     document.addEventListener('keydown', key);
     $('[data-x]').onclick = () => { haptic(); close(); };
   });

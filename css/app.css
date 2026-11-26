@@ -178,7 +178,9 @@ body.in-editor .fab { transform: scale(0); }
 .tb-btn:active { transform: scale(.85); }
 .tb-btn:disabled { opacity: .3; }
 .tb-btn.on { color: var(--accent); background: var(--accent-soft); }
-.tool { flex: none; display: flex; align-items: center; gap: 7px; padding: 0 13px; height: 40px; border-radius: 12px; font-size: 14.5px; font-weight: 600; color: var(--text2); white-space: nowrap; transition: background .2s, color .2s, transform .2s var(--spring); animation: toolIn .35s var(--ease) both; }
+.tool { flex: none; display: flex; align-items: center; gap: 7px; padding: 0 13px; height: 40px; border-radius: 12px; font-size: 14.5px; font-weight: 600; color: var(--text2); white-space: nowrap; transition: background .2s, color .2s, transform .2s var(--spring); }
+.ed-tools.tb-anim .tool { animation: toolSpring var(--spring-pop-ms, .45s) var(--spring-pop, var(--spring)) both; }
+@keyframes toolSpring { from { opacity: 0; transform: translate3d(0,14px,0) scale(.82); } 35% { opacity: 1; } to { opacity: 1; transform: none; } }
 .tool .ico { width: 20px; height: 20px; }
 .tool:active { transform: scale(.92); }
 .tool.on { color: #fff; background: var(--grad); box-shadow: 0 4px 14px rgba(255,106,91,.35); }
@@ -211,7 +213,7 @@ svg.layer .eraser-dot { fill: rgba(255,106,91,.15); stroke: var(--accent); strok
 .ed-hint.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* Auswahl-Menü */
-.selmenu { position: absolute; z-index: 6; display: flex; background: #2b2f38; color: #fff; border-radius: 12px; box-shadow: 0 8px 26px rgba(0,0,0,.4); overflow: hidden; transform: translate(-50%, -100%) scale(.9); opacity: 0; pointer-events: none; transition: opacity .18s, transform .25s var(--spring); }
+.selmenu { position: absolute; z-index: 6; display: flex; background: #2b2f38; color: #fff; border-radius: 12px; box-shadow: 0 8px 26px rgba(0,0,0,.4); overflow: hidden; transform: translate(-50%, -100%) scale(.86); opacity: 0; pointer-events: none; transition: opacity .18s, transform var(--spring-pop-ms, .25s) var(--spring-pop, var(--spring)); }
 .selmenu.show { opacity: 1; transform: translate(-50%, -100%) scale(1); pointer-events: auto; }
 .selmenu button { padding: 11px 14px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; border-right: 1px solid rgba(255,255,255,.1); white-space: nowrap; }
 .selmenu button:last-child { border-right: 0; }
@@ -222,7 +224,7 @@ svg.layer .eraser-dot { fill: rgba(255,106,91,.15); stroke: var(--accent); strok
 /* ---------- Sheets ---------- */
 .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; opacity: 0; transition: opacity .3s; }
 .backdrop.show { opacity: 1; }
-.sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); z-index: 101; background: var(--bg2); border-radius: 26px 26px 0 0; padding: 8px 18px calc(var(--safe-bottom) + 18px); max-height: 88vh; overflow-y: auto; transform: translateY(105%); transition: transform .42s var(--ease), bottom .25s; box-shadow: 0 -10px 40px rgba(0,0,0,.35); }
+.sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); z-index: 101; background: var(--bg2); border-radius: 26px 26px 0 0; padding: 8px 18px calc(var(--safe-bottom) + 18px); max-height: 88vh; overflow-y: auto; transform: translateY(105%); transition: transform var(--spring-sheet-ms, .42s) var(--spring-sheet, var(--ease)), bottom .25s; will-change: transform; box-shadow: 0 -10px 40px rgba(0,0,0,.35); }
 .sheet.show { transform: none; }
 .sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line2); margin: 2px auto 10px; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
@@ -1456,3 +1458,114 @@ svg.layer .handle-ic { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linec
 .pf-note.good { color: #30d158; font-weight: 600; }
 .pf-note .ico { width: 15px; height: 15px; }
 .pf-dot.mid { background: #ff9f0a; }
+
+
+/* ================= v1.41 – Animationen & Micro-Interactions ================= */
+/* --- Sheets: Feder beim Öffnen, zügig beim Schließen; Inhalt „morpht“ leicht mit --- */
+.sheet.closing { transition: transform .32s cubic-bezier(.32,0,.67,0), bottom .25s; }
+.sheet > .menu, .sheet > .menu-grid, .sheet > .asset-grid, .sheet > .page-grid, .sheet > .btn-row { transition: opacity .25s ease .05s, transform var(--spring-sheet-ms, .42s) var(--spring-sheet, var(--ease)); }
+.sheet:not(.show) > :is(.menu, .menu-grid, .asset-grid, .page-grid, .btn-row) { opacity: .4; transform: translate3d(0, 22px, 0) scale(.985); }
+.sheet.closing > :is(.menu, .menu-grid, .asset-grid, .page-grid, .btn-row) { transition: opacity .2s, transform .3s ease-in; }
+
+/* --- Seitenansicht: Einzelseite / Buch (3D) --- */
+.fv { position: fixed; inset: 0; z-index: 370; background: var(--bg); display: flex; flex-direction: column; opacity: 0; transform: scale(.985); transition: opacity .28s ease, transform .35s var(--ease); overscroll-behavior: none; }
+.fv.show { opacity: 1; transform: none; }
+.fv-top { display: flex; align-items: center; gap: 8px; padding: calc(var(--safe-top) + 8px) 12px 8px; transition: opacity .25s, transform .3s var(--ease); }
+.fv-btn { flex: none; width: 40px; height: 40px; border-radius: 20px; display: grid; place-items: center; background: var(--card); border: 1px solid var(--line); transition: transform .2s var(--spring); }
+.fv-btn:active { transform: scale(.88); }
+.fv-btn .ico { width: 22px; height: 22px; }
+.fv-title { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-seg { position: relative; flex: none; display: flex; padding: 3px; border-radius: 12px; background: var(--card2); }
+.fv-seg button { position: relative; z-index: 1; padding: 7px 10px; border-radius: 9px; font-size: 12.5px; font-weight: 650; color: var(--text2); transition: color .2s; }
+.fv-seg button.on { color: var(--text); }
+.fv-seg-ind { position: absolute; top: 3px; bottom: 3px; left: 0; border-radius: 9px; background: var(--bg2); box-shadow: 0 1px 5px rgba(0,0,0,.2); transition: transform var(--spring-pop-ms, .35s) var(--spring-pop, var(--spring)), width .25s var(--ease); }
+.fv-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; }
+.fv-bottom { display: flex; justify-content: center; padding: 6px 0 calc(var(--safe-bottom) + 10px); transition: opacity .25s, transform .3s var(--ease); }
+.fv-count { padding: 7px 14px; border-radius: 14px; background: var(--card2); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.fv.ui-off .fv-top { opacity: 0; transform: translate3d(0,-14px,0); pointer-events: none; }
+.fv.ui-off .fv-bottom { opacity: 0; transform: translate3d(0,14px,0); pointer-events: none; }
+.pf-book { position: relative; perspective: 2400px; perspective-origin: 50% 50%; --pf-lift: 0; }
+.pf-base, .pf-neigh { position: absolute; inset: 0; will-change: transform; }
+.pf-base { box-shadow: 0 10px 34px rgba(0,0,0,.35); background: #fff; }
+.pf-neigh { box-shadow: 0 10px 34px rgba(0,0,0,.35); }
+.pf-neigh:empty { display: none; }
+.pf-img { position: relative; background: #fff no-repeat; }
+.m-flip .pf-base { border-radius: 0 4px 4px 0; }
+.m-flip .pf-base::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 22px; background: linear-gradient(90deg, rgba(0,0,0,.16), rgba(0,0,0,0)); pointer-events: none; }
+.pf-leafhost { position: absolute; left: 0; top: 0; width: 0; height: 100%; transform-style: preserve-3d; -webkit-transform-style: preserve-3d; pointer-events: none; display: none; z-index: 3; }
+.pf-leafhost.on { display: block; }
+.pf-strip { position: absolute; top: 0; transform-origin: 0 50%; transform-style: preserve-3d; -webkit-transform-style: preserve-3d; will-change: transform; }
+.pf-face { position: absolute; inset: 0; overflow: hidden; background: #fff; }
+.pf-face > .pf-img, .pf-face > .rd-leaf { position: absolute; left: 0; top: 0; }
+.pf-dark, .pf-paper { position: absolute; inset: 0; opacity: 0; pointer-events: none; will-change: opacity; }
+.pf-dark { background: #000; }
+.pf-paper { background: #f6f3ec; }
+[data-theme="dark"] .fv .pf-paper { background: #e9e6df; }
+.pf-cast { position: absolute; top: 0; bottom: 0; left: 0; width: 70px; z-index: 2; pointer-events: none; opacity: 0; transform-origin: 0 50%; background: linear-gradient(90deg, rgba(0,0,0,.42), rgba(0,0,0,.12) 40%, rgba(0,0,0,0)); will-change: transform, opacity; }
+
+/* Lesemodus im Buch-Modus: Spalten = Seiten, Blättern in 3D */
+.reader.paged .rd-scroll { position: relative; overflow: hidden; touch-action: none; perspective: 2200px; -webkit-user-select: none; user-select: none; }
+.reader.paged .rd-art { max-width: none; width: var(--pw, 100vw); height: 100%; margin: 0; box-sizing: border-box; padding: 22px 22px 34px; column-width: calc(var(--pw, 100vw) - 44px); column-gap: 44px; column-fill: auto; will-change: transform; transition: none; }
+.reader.paged .rd-page { animation: none; }
+.reader.paged .rd-img { max-height: 62vh; width: auto; max-width: 100%; break-inside: avoid; }
+.reader.paged .rd-art h2, .reader.paged .rd-art h3, .reader.paged .rd-art h4 { break-after: avoid; }
+.rd-leaf { position: absolute; left: 0; top: 0; overflow: hidden; background: var(--rbg); color: var(--rtx); }
+.rd-leaf > .rd-art { position: absolute; left: 0; top: 0; }
+.reader .pf-face { background: var(--rbg); }
+.reader .pf-paper { background: var(--rbg); }
+.reader.th-dark .pf-dark { background: #000; }
+.reader .pf-cast { width: 54px; }
+
+/* --- Stempel: Feder + Tinten-Ring --- */
+.fx-stamp { position: absolute; z-index: 5; pointer-events: none; }
+.fx-stamp img { position: absolute; inset: 0; width: 100%; height: 100%; will-change: transform, opacity; transform-origin: 50% 60%; }
+.fx-stamp-shadow { position: absolute; inset: 8% 4% -6%; border-radius: 12px; background: radial-gradient(closest-side, rgba(0,0,0,.28), rgba(0,0,0,0)); opacity: 0; will-change: transform, opacity; }
+.fx-ripple { position: absolute; z-index: 4; border-radius: 50%; pointer-events: none; border: 2.5px solid var(--c); box-shadow: 0 0 14px color-mix(in srgb, var(--c) 55%, transparent), inset 0 0 10px color-mix(in srgb, var(--c) 35%, transparent); will-change: transform, opacity; }
+
+/* --- Unterschrift: Lichtglanz beim Speichern --- */
+.fx-shine { position: absolute; top: -10%; bottom: -10%; left: 0; width: 45%; z-index: 3; pointer-events: none; background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.75) 45%, rgba(255,215,190,.55) 55%, rgba(255,255,255,0)); mix-blend-mode: screen; will-change: transform, opacity; }
+.pad.saved canvas { filter: none; }
+.pad.saved { box-shadow: var(--shadow), 0 0 0 2px rgba(255,106,91,.5); transition: box-shadow .3s; }
+
+/* --- Scan-Laser --- */
+.fx-laser { position: absolute; z-index: 4; pointer-events: none; overflow: hidden; border-radius: 4px; opacity: 0; transition: opacity .3s ease; }
+.fx-laser.on { opacity: 1; }
+.fx-laser.out { opacity: 0; }
+.fx-laser-tint { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,106,91,.06), rgba(255,179,71,.04)); }
+.fx-laser-beam { position: absolute; left: 0; top: 0; width: 100%; height: 64px; will-change: transform; }
+.fx-laser-beam canvas { display: block; }
+.fx-laser.still .fx-laser-beam { animation: laserPulse 1.4s ease-in-out infinite; }
+@keyframes laserPulse { 50% { opacity: .45; } }
+.rv-page.lasering .rv-spin { opacity: 0 !important; }
+.rv-page.lasering img { opacity: .9 !important; }
+.busy-card.scanning { padding: 18px 22px 20px; gap: 12px; animation: busyPop var(--spring-pop-ms, .4s) var(--spring-pop, var(--spring)) both; }
+.busy-scan { position: relative; width: 150px; max-height: 210px; border-radius: 6px; overflow: hidden; background: #fff; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
+.busy-scan img { display: block; width: 100%; height: auto; max-height: 210px; object-fit: cover; object-position: top; }
+.busy.out { opacity: 0; transition: opacity .2s; }
+@keyframes busyPop { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }
+
+/* --- Vorher/Nachher-Vorhang (Scan-Ansicht) --- */
+.rv-cmp { position: absolute; z-index: 3; overflow: hidden; border-radius: 4px; touch-action: none; cursor: ew-resize; }
+.rv-cmp-clip { position: absolute; inset: 0; overflow: hidden; will-change: transform; }
+.rv-cmp-img { position: absolute; left: 0; top: 0; object-fit: fill; background: #fff; will-change: transform; }
+.rv-cmp-bar { position: absolute; top: 0; bottom: 0; left: -1.5px; width: 3px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.12), 0 0 12px rgba(0,0,0,.35); will-change: transform; }
+.rv-cmp-grip { position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; background: var(--grad); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 14px rgba(0,0,0,.35), 0 0 0 3px #fff; transition: transform .25s var(--spring); }
+.rv-cmp-grip .ico { width: 15px; height: 15px; stroke-width: 2.6; margin: 0 -2px; }
+.rv-cmp.drag .rv-cmp-grip { transform: scale(1.12); }
+.rv-cmp-lbl { position: absolute; top: 10px; padding: 4px 9px; border-radius: 9px; background: rgba(20,22,28,.7); color: #fff; font-size: 11.5px; font-weight: 700; letter-spacing: .02em; pointer-events: none; transition: opacity .2s; }
+.rv-cmp-lbl.l { left: 10px; } .rv-cmp-lbl.r { right: 10px; }
+.rv-cmp.lo .rv-cmp-lbl.l, .rv-cmp.hi .rv-cmp-lbl.r { opacity: 0; }
+
+/* --- Seiten verwalten: anheben & wegschnippen --- */
+.pm-tip { color: var(--text3); font-size: 12.5px; margin: -4px 2px 10px; }
+.pg { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; will-change: transform; }
+.pg .pg-img { will-change: transform, opacity; }
+.pg.lift .pg-img { box-shadow: 0 14px 30px rgba(0,0,0,.4); transition: transform .3s var(--spring), box-shadow .3s; }
+.fx-puff { position: fixed; z-index: 500; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet.closing, .sheet > * { transition: opacity .15s !important; }
+  .sheet:not(.show) > * { transform: none !important; opacity: 1 !important; }
+  .ed-tools.tb-anim .tool, .busy-card.scanning { animation: none; }
+  .fv, .fv-top, .fv-bottom, .fv-seg-ind { transition: opacity .15s !important; transform: none !important; }
+}

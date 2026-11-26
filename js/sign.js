@@ -1,6 +1,7 @@
 // Unterschriften-Pad, Stempel-Generator, Symbole
 import { icon, hydrateIcons } from './icons.js';
 import { esc, today } from './ui.js';
+import { shine } from './fx.js';
 
 export const INK_COLORS = ['#111318', '#1d3fae', '#c62828'];
 
@@ -43,27 +44,47 @@ export function signaturePad(title = 'Neue Unterschrift') {
       }
     };
     const redraw = () => { ctx.clearRect(0, 0, cv.width, cv.height); strokes.forEach(drawStroke); ph.style.opacity = strokes.length ? 0 : 1; };
+    // Nur die neuen Segmente zeichnen (60 FPS auch bei langen Unterschriften)
+    const drawTail = (s, from) => {
+      ctx.strokeStyle = s.color; const p = s.pts;
+      for (let i = Math.max(1, from); i < p.length; i++) {
+        const a = p[i - 1], b = p[i];
+        ctx.lineWidth = b.w; ctx.beginPath();
+        if (i > 1) { const z = p[i - 2]; ctx.moveTo((z.x + a.x) / 2, (z.y + a.y) / 2); ctx.quadraticCurveTo(a.x, a.y, (a.x + b.x) / 2, (a.y + b.y) / 2); }
+        else { ctx.moveTo(a.x, a.y); ctx.lineTo((a.x + b.x) / 2, (a.y + b.y) / 2); }
+        ctx.stroke();
+      }
+    };
     const pos = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top, t: performance.now() }; };
     cv.addEventListener('pointerdown', e => {
       cv.setPointerCapture(e.pointerId);
-      const p = pos(e); p.w = 3.2;
-      cur = { color, pts: [p] }; strokes.push(cur); redraw();
+      const p = pos(e); p.w = 2.6;
+      cur = { color, pts: [p], v: 0 }; strokes.push(cur); ph.style.opacity = 0;
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(p.x, p.y, 1.1, 0, 7); ctx.fill();
     });
     cv.addEventListener('pointermove', e => {
       if (!cur) return;
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      const from = cur.pts.length;
       for (const ev of evs) {
         const p = pos(ev), l = cur.pts[cur.pts.length - 1];
         const d = Math.hypot(p.x - l.x, p.y - l.y); if (d < 1.2) continue;
-        const v = d / Math.max(1, p.t - l.t);
+        // Füller-Effekt: geglättete Geschwindigkeit → langsam = satter, schnell = feiner Strich
+        cur.v = cur.v * 0.7 + (d / Math.max(1, p.t - l.t)) * 0.3;
         const pr = ev.pressure && ev.pointerType === 'pen' ? ev.pressure : null;
-        const target = pr ? 1.2 + pr * 4 : Math.max(1.3, Math.min(4.2, 4.4 - v * 1.6));
-        p.w = l.w * 0.6 + target * 0.4;
+        const speed = Math.max(1.15, Math.min(4.6, 4.9 - cur.v * 1.75));
+        const target = pr ? (1 + pr * 3.6) * (0.75 + 0.25 * speed / 4.6) : speed;
+        const ramp = Math.min(1, cur.pts.length / 6);                   // weicher Ansatz am Strichbeginn
+        p.w = l.w * 0.72 + target * (0.6 + 0.4 * ramp) * 0.28;
         cur.pts.push(p);
       }
-      redraw();
+      if (cur.pts.length > from) drawTail(cur, from);
     });
-    const end = () => { cur = null; };
+    // Strichende verjüngt auslaufen lassen
+    const end = () => {
+      if (cur && cur.pts.length > 3) { const p = cur.pts, n = p.length; for (let k = 1; k <= Math.min(4, n - 1); k++) p[n - k].w *= 0.55 + 0.11 * k; redraw(); }
+      cur = null;
+    };
     cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
     wrap.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
       wrap.querySelectorAll('[data-c]').forEach(x => x.classList.remove('on')); b.classList.add('on');
@@ -82,7 +103,10 @@ export function signaturePad(title = 'Neue Unterschrift') {
       const out = document.createElement('canvas'); out.width = Math.ceil(w * sc); out.height = Math.ceil(h * sc);
       const o = out.getContext('2d'); o.scale(sc, sc); o.translate(-x0 + pad2, -y0 + pad2); o.lineCap = 'round'; o.lineJoin = 'round';
       const keep = ctx; ctx = o; strokes.forEach(drawStroke); ctx = keep;
-      close({ src: out.toDataURL('image/png'), w, h });
+      const res = { src: out.toDataURL('image/png'), w, h };
+      // kurzer Lichtglanz über die fertige Unterschrift, dann schließen
+      wrap.querySelector('[data-save]').disabled = true; pad.classList.add('saved');
+      shine(pad).then(() => close(res));
     };
     requestAnimationFrame(size);
     window.addEventListener('resize', size);
