@@ -5,7 +5,7 @@
 // rollt sie schräg über die Ecke. Rückseite: weißes Papier, Text schimmert gespiegelt durch.
 // Schatten unter der Rolle, Licht auf der Wölbung – alles pro Pixel, ohne Streifen-Kanten.
 //
-// createCurl({ book, surface, image(i) → {img, fit:[x,y,w,h] (0..1)} | Promise, setBase(i),
+// createCurl({ book, surface, paper() → [r,g,b] 0..1, spine (px, Bundsteg-Schatten), image(i) → {img, fit:[x,y,w,h] (0..1)} | Promise, setBase(i),
 //              count(), index(), commit(i), onTap(x, y), onEdge() }) → { go(dir), busy(), destroy() } | null
 import { reducedMotion } from './fx.js';
 
@@ -32,21 +32,22 @@ precision mediump float;
 uniform sampler2D uTex;
 uniform vec4 uFit;
 uniform float uHas, uSpine;
+uniform vec3 uPaper;
 varying vec2 vUv;
 varying float vTh;
 void main() {
   vec2 t = (vUv - uFit.xy) / uFit.zw;
-  vec3 c = vec3(1.0);
+  vec3 c = uPaper;
   if (uHas > 0.5 && t.x >= 0.0 && t.y >= 0.0 && t.x <= 1.0 && t.y <= 1.0) c = texture2D(uTex, t).rgb;
   vec3 col;
   if (vTh < 1.5707963) {
     // Vorderseite: wird zur Wölbung hin etwas dunkler, links leichter Bundsteg-Schatten
     float sh = 1.0 - 0.30 * (1.0 - cos(vTh));
-    sh *= 1.0 - 0.16 * (1.0 - smoothstep(0.0, uSpine, vUv.x));
+    if (uSpine > 0.0) sh *= 1.0 - 0.16 * (1.0 - smoothstep(0.0, uSpine, vUv.x));
     col = c * sh;
   } else {
     // Rückseite: Papier, Schrift scheint gespiegelt und blass durch
-    vec3 p = mix(vec3(1.0), c, 0.2);
+    vec3 p = mix(uPaper, c, 0.2);
     float k = clamp(-cos(vTh), 0.0, 1.0);
     float sh = 0.76 + 0.24 * sqrt(k);
     sh += 0.07 * exp(-pow((vTh - 1.9) / 0.22, 2.0));
@@ -77,13 +78,14 @@ function program(gl, vs, fs) {
   gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
   gl.bindAttribLocation(p, 0, 'aPos'); gl.linkProgram(p);
   if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-  const u = {}; for (const n of ['uSize', 'uC', 'uN', 'uR', 'uTex', 'uFit', 'uHas', 'uSpine', 'uA']) u[n] = gl.getUniformLocation(p, n);
+  const u = {}; for (const n of ['uSize', 'uC', 'uN', 'uR', 'uTex', 'uFit', 'uHas', 'uSpine', 'uA', 'uPaper']) u[n] = gl.getUniformLocation(p, n);
   return { p, u };
 }
 
 export function createCurl(o) {
   if (typeof WebGLRenderingContext === 'undefined') return null;
-  const { book, surface = book } = o;
+  const { book, surface = book, spine = 22 } = o;
+  let paper = [1, 1, 1];
   const cv = document.createElement('canvas'); cv.className = 'pc-canvas';
   let gl = null, P, Sh, meshBuf, idxBuf, quadBuf, tex, nIdx = 0, meshKey = '';
   try {
@@ -105,7 +107,7 @@ export function createCurl(o) {
   // ---------- Größe, Netz ----------
   function size() {
     W = book.clientWidth; H = book.clientHeight;
-    const dpr = Math.min(2, devicePixelRatio || 1);
+    const dpr = Math.min(3, devicePixelRatio || 1);
     const cw = Math.round(W * dpr), ch = Math.round(H * dpr);
     if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
     R = Math.max(16, Math.min(W, H) * 0.1);
@@ -190,7 +192,8 @@ export function createCurl(o) {
     gl.useProgram(P.p);
     gl.uniform2f(P.u.uSize, W, H); gl.uniform2f(P.u.uC, C.x, C.y); gl.uniform2f(P.u.uN, N.x, N.y);
     gl.uniform1f(P.u.uR, R); gl.uniform4f(P.u.uFit, fit[0], fit[1], fit[2], fit[3]);
-    gl.uniform1f(P.u.uHas, hasTex); gl.uniform1f(P.u.uSpine, 22 / W);
+    gl.uniform1f(P.u.uHas, hasTex); gl.uniform1f(P.u.uSpine, spine / W);
+    gl.uniform3f(P.u.uPaper, paper[0], paper[1], paper[2]);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(P.u.uTex, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, meshBuf); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
@@ -211,6 +214,7 @@ export function createCurl(o) {
     const show = r => {
       if (tok !== token || lost) return;
       upload(r); ready = true;
+      try { paper = (o.paper && o.paper()) || [1, 1, 1]; } catch {}
       if (d > 0) o.setBase(i + 1);
       draw(); cv.classList.add('on');
     };
