@@ -19,10 +19,11 @@ import { initMerge, mergeFlow } from './merge.js';
 import { initTranslate, translateFlow } from './translate.js';
 import { initPageTools, headerFooterSheet, cropSheet } from './pagetools.js';
 import { initIncoming } from './incoming.js';
+import { initPageOrder, duplexSheet, blankTool } from './pageorder.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.35.0';
+export const VERSION = '1.36.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -182,7 +183,7 @@ function docMenu(d) {
         ['redact', 'Schwärzen', 'redact', 'c-gray'],
         ['ocr', 'Text erkennen (OCR)', 'scan', 'c-teal'],
         ['text', 'Text extrahieren', 'textScan', 'c-blue'],
-        ['hf', 'Kopf- & Fußzeile', 'text', 'c-orange'], ['crop', 'Zuschneiden / A4', 'fit', 'c-blue'],
+        ['hf', 'Kopf- & Fußzeile', 'text', 'c-orange'], ['crop', 'Zuschneiden / A4', 'fit', 'c-blue'], ['blankpages', 'Leere Seiten entfernen', 'pageBlank', 'c-violet'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
         ['word', 'Als Word exportieren', 'word', 'c-blue'], ['excel', 'Als Excel exportieren', 'excel', 'c-green'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
@@ -198,6 +199,7 @@ function docMenu(d) {
         if (a === 'wm') return watermarkSheet(d);
         if (a === 'hf') return headerFooterSheet(d);
         if (a === 'crop') return cropSheet(d);
+        if (a === 'blankpages') return blankTool(d);
         if (a === 'compress') return compressSheet(d);
         if (a === 'ocr') return ocrDoc(d);
         if (a === 'text') return textFromDoc(d);
@@ -249,6 +251,8 @@ const TOOL_GROUPS = [
     { id: 'pages', label: 'Seiten verwalten', sub: 'Drehen, sortieren, löschen', icon: 'pages', c: 'c-teal' },
     { id: 'hf', label: 'Kopf- & Fußzeile', sub: 'Seitenzahlen, Datum oder eigener Text', icon: 'text', c: 'c-orange' },
     { id: 'crop', label: 'Seiten zuschneiden', sub: 'Ränder entfernen · auf DIN A4 vereinheitlichen', icon: 'fit', c: 'c-blue' },
+    { id: 'duplex', label: 'Duplex sortieren', sub: 'Vorder- & Rückseiten in die richtige Reihenfolge', icon: 'duplex', c: 'c-orange' },
+    { id: 'blankpages', label: 'Leere Seiten entfernen', sub: 'Leere Rückseiten automatisch erkennen', icon: 'pageBlank', c: 'c-violet' },
   ] },
   { title: 'Erstellen', items: [
     { id: 'scan', label: 'Scannen', sub: 'Mit der Kamera zu PDF', icon: 'scan', c: 'c-violet' },
@@ -315,6 +319,8 @@ function runTool(id) {
     case 'ocr': return docPicker('Text erkennen (OCR)', 'Gescannte Seiten werden gelesen – danach kannst du den Text suchen, markieren und kopieren. Alles passiert auf dem iPhone.', ocrDoc);
     case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
     case 'hf': return docPicker('Kopf- & Fußzeile', 'Seitenzahlen (1 / 10, Seite 1 von 10 …), Datum oder eigenen Text oben und unten einfügen.', headerFooterSheet);
+    case 'duplex': return duplexSheet();
+    case 'blankpages': return docPicker('Leere Seiten entfernen', 'Alle Seiten werden geprüft – auch gescannte leere Rückseiten mit Papier-Rauschen.', blankTool);
     case 'crop': return docPicker('Seiten zuschneiden', 'Ränder abschneiden oder alle Seiten auf DIN A4 bringen.', cropSheet);
     case 'wm': return docPicker('Wasserzeichen', 'Text quer über alle Seiten, z. B. VERTRAULICH oder KOPIE.', watermarkSheet);
     case 'protect': return docPicker('Mit Passwort schützen', 'Die PDF lässt sich danach nur mit Passwort öffnen.', protectSheet);
@@ -1170,6 +1176,15 @@ async function init() {
   initIdView({ saveNewDoc, refresh: async () => { await renderRecents(); if (document.body.dataset.tab === 'files') renderFiles(); }, openPdf: id => openEditor(id, 'view', renderRecents) });
   initTranslate({ imagesToPdf, saveNewDoc, openDoc });
   initPageTools({ docBytes, storeResult, copyRow, bindCopy, renderRecents, openDoc });
+  initPageOrder({
+    docBytes, storeResult, saveNewDoc, copyRow, bindCopy, renderRecents, openDoc, allDocs,
+    async importPdfs() {
+      const files = await pickFiles('file-pdf'); if (!files.length) return [];
+      busy(true, 'Import …'); const ids = [];
+      for (const f of files) { try { const id = await importFile(f); if (id) ids.push(id); } catch (e) { console.warn(e); } busy(true, 'Import …'); }
+      busy(false); renderRecents(); return ids;
+    },
+  });
   initMerge({
     docBytes, saveNewDoc, openDoc,
     async importPdfs() {

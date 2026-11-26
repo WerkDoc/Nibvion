@@ -94,6 +94,8 @@ const P = {
   redact: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><rect x="7" y="11" width="10" height="3" rx=".6" fill="currentColor"/><path d="M7 17.5h5"/>',
   split: '<rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/><path d="M12 2v20" stroke-dasharray="2 2.4"/>',
   compare: '<rect x="2.5" y="4" width="8" height="16" rx="1.5"/><rect x="13.5" y="4" width="8" height="16" rx="1.5"/><path d="M5 9h3M5 12h3M16 9h3M16 12h1.5"/><path d="M15.5 15.5h4"/>',
+  duplex: '<path d="M6 3h8l4 4v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 17v3a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10"/><path d="M8.5 9.5h6M8.5 12.5h4"/>',
+  pageBlank: '<path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4"/><path d="m9.5 12.5 4 4m0-4-4 4"/>',
   swap: '<path d="M7 4 3 8l4 4M3 8h13"/><path d="m17 12 4 4-4 4M21 16H8"/>',
   toc: '<path d="M8 6h13M8 12h13M11 18h10"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="7" cy="18" r="1"/>',
   form: '<rect x="3" y="3" width="18" height="18" rx="3"/><rect x="6.5" y="7" width="11" height="3.2" rx=".8"/><rect x="6.5" y="13.5" width="3.5" height="3.5" rx=".8"/><path d="m7.3 15.2 1 1 1.6-2M12.5 15.3h5"/>',
