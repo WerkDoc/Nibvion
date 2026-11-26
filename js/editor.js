@@ -1142,6 +1142,7 @@ function moreSheet() {
         ${E.outline ? `<button data-a="toc"><span class="qt-ic c-orange">${icon('toc')}</span>Inhalt</button>` : ''}
       </div>
       <div class="menu" style="margin-bottom:12px">
+        <button class="row" data-a="reader"><span class="row-ic c-teal">${icon('book')}</span><span class="row-main"><span class="row-title">Lesemodus</span><span class="row-sub">Fließtext fürs Handy · Schriftgröße & Farben</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="present"><span class="row-ic c-violet">${icon('present')}</span><span class="row-main"><span class="row-title">Präsentieren</span><span class="row-sub">Vollbild mit Laserpointer</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="fix"><span class="row-ic c-red">${icon('lock')}</span><span class="row-main"><span class="row-title">Als schreibgeschütztes PDF fixieren</span><span class="row-sub">Flatten: Felder, Stempel, Unterschriften fest einbrennen</span></span>${icon('chevronRight')}</button>
       </div>
@@ -1156,6 +1157,7 @@ function moreSheet() {
         const a = b.dataset.a; api.close();
         if (a === 'toc') return tocSheet();
         if (a === 'present') return present();
+        if (a === 'reader') return reader();
         if (a === 'fix') return fixSheet();
         try {
           if (a === 'share' || a === 'download') {
@@ -1212,6 +1214,15 @@ async function present() {
     if (E.open && last !== currentPage()) { const p = E.pages[last]; if (p) $('ed-scroll').scrollTop = Math.max(0, p.el.offsetTop - 12); updPageChip(); rerenderVisible(); }
   } catch (e) { console.error(e); busy(false); toast('Präsentation konnte nicht gestartet werden', true); }
   finally { if (temp) setTimeout(() => closePdf(temp), 400); }
+}
+
+// ======================= Lesemodus =======================
+async function reader() {
+  try {
+    const { readerMode } = await import('./reader.js');
+    const last = await readerMode({ pdf: E.pdf, start: currentPage(), title: E.doc.name.replace(/\.pdf$/i, '') });
+    if (E.open && last !== currentPage()) { const p = E.pages[last]; if (p) $('ed-scroll').scrollTop = Math.max(0, p.el.offsetTop - 12); updPageChip(); rerenderVisible(); }
+  } catch (e) { console.error(e); toast('Lesemodus konnte nicht geöffnet werden', true); }
 }
 
 // ======================= Fixieren (Flatten) =======================

@@ -20,10 +20,11 @@ import { initTranslate, translateFlow } from './translate.js';
 import { initPageTools, headerFooterSheet, cropSheet } from './pagetools.js';
 import { initIncoming } from './incoming.js';
 import { initPageOrder, duplexSheet, blankTool } from './pageorder.js';
+import { initLayout, spreadSheet, posterSheet } from './layout.js';
 import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS } from './files.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.38.0';
+export const VERSION = '1.39.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -183,7 +184,7 @@ function docMenu(d) {
         ['redact', 'Schwärzen', 'redact', 'c-gray'],
         ['ocr', 'Text erkennen (OCR)', 'scan', 'c-teal'],
         ['text', 'Text extrahieren', 'textScan', 'c-blue'],
-        ['hf', 'Kopf- & Fußzeile', 'text', 'c-orange'], ['crop', 'Zuschneiden / A4', 'fit', 'c-blue'], ['blankpages', 'Leere Seiten entfernen', 'pageBlank', 'c-violet'],
+        ['hf', 'Kopf- & Fußzeile', 'text', 'c-orange'], ['crop', 'Zuschneiden / A4', 'fit', 'c-blue'], ['blankpages', 'Leere Seiten entfernen', 'pageBlank', 'c-violet'], ['spreads', 'Doppelseiten teilen', 'spread', 'c-teal'], ['poster', 'Poster-Druck', 'grid', 'c-violet'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
         ['word', 'Als Word exportieren', 'word', 'c-blue'], ['excel', 'Als Excel exportieren', 'excel', 'c-green'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
@@ -200,6 +201,8 @@ function docMenu(d) {
         if (a === 'hf') return headerFooterSheet(d);
         if (a === 'crop') return cropSheet(d);
         if (a === 'blankpages') return blankTool(d);
+        if (a === 'spreads') return spreadSheet(d);
+        if (a === 'poster') return posterSheet(d);
         if (a === 'compress') return compressSheet(d);
         if (a === 'ocr') return ocrDoc(d);
         if (a === 'text') return textFromDoc(d);
@@ -252,6 +255,8 @@ const TOOL_GROUPS = [
     { id: 'hf', label: 'Kopf- & Fußzeile', sub: 'Seitenzahlen, Datum oder eigener Text', icon: 'text', c: 'c-orange' },
     { id: 'crop', label: 'Seiten zuschneiden', sub: 'Ränder entfernen · auf DIN A4 vereinheitlichen', icon: 'fit', c: 'c-blue' },
     { id: 'duplex', label: 'Duplex sortieren', sub: 'Vorder- & Rückseiten in die richtige Reihenfolge', icon: 'duplex', c: 'c-orange' },
+    { id: 'spreads', label: 'Doppelseiten teilen', sub: 'Buch- & Heft-Scans in Einzelseiten', icon: 'spread', c: 'c-teal' },
+    { id: 'poster', label: 'Poster-Druck (Kacheln)', sub: 'Große Seite auf mehrere A4-Blätter', icon: 'grid', c: 'c-violet' },
     { id: 'blankpages', label: 'Leere Seiten entfernen', sub: 'Leere Rückseiten automatisch erkennen', icon: 'pageBlank', c: 'c-violet' },
   ] },
   { title: 'Erstellen', items: [
@@ -320,6 +325,8 @@ function runTool(id) {
     case 'compress': return docPicker('Komprimieren', 'Bilder in der PDF werden verkleinert – Text bleibt scharf.', compressSheet);
     case 'hf': return docPicker('Kopf- & Fußzeile', 'Seitenzahlen (1 / 10, Seite 1 von 10 …), Datum oder eigenen Text oben und unten einfügen.', headerFooterSheet);
     case 'duplex': return duplexSheet();
+    case 'spreads': return docPicker('Doppelseiten teilen', 'Gescannte Doppelseiten (Bücher, Hefte) werden in der Mitte geteilt.', spreadSheet);
+    case 'poster': return docPicker('Poster-Druck (Kacheln)', 'Wähle das PDF mit dem Plan, Schnittmuster oder Plakat.', posterSheet);
     case 'blankpages': return docPicker('Leere Seiten entfernen', 'Alle Seiten werden geprüft – auch gescannte leere Rückseiten mit Papier-Rauschen.', blankTool);
     case 'crop': return docPicker('Seiten zuschneiden', 'Ränder abschneiden oder alle Seiten auf DIN A4 bringen.', cropSheet);
     case 'wm': return docPicker('Wasserzeichen', 'Text quer über alle Seiten, z. B. VERTRAULICH oder KOPIE.', watermarkSheet);
@@ -1176,6 +1183,7 @@ async function init() {
   initIdView({ saveNewDoc, refresh: async () => { await renderRecents(); if (document.body.dataset.tab === 'files') renderFiles(); }, openPdf: id => openEditor(id, 'view', renderRecents) });
   initTranslate({ imagesToPdf, saveNewDoc, openDoc });
   initPageTools({ docBytes, storeResult, copyRow, bindCopy, renderRecents, openDoc });
+  initLayout({ docBytes, storeResult, saveNewDoc, copyRow, bindCopy, renderRecents, openDoc });
   initPageOrder({
     docBytes, storeResult, saveNewDoc, copyRow, bindCopy, renderRecents, openDoc, allDocs,
     async importPdfs() {
