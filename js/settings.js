@@ -14,6 +14,8 @@ const DEFAULTS = {
   sort: 'new',
   scanOcr: true,
   favOnly: false,
+  smartShapes: true,     // Stift: grobe Formen einrasten lassen
+  recentView: 'list',    // Startseite „Zuletzt“: list | flow
 };
 let cache;
 function load() { if (!cache) { try { cache = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch { cache = { ...DEFAULTS }; } } return cache; }

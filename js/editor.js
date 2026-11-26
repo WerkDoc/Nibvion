@@ -11,6 +11,7 @@ import { initScrubber, toggleScrubber, scrubberReset, scrubberSync } from './scr
 import { settings } from './settings.js';
 import { ocrEditItems, releaseEditOcr } from './ocr.js';
 import { stampDrop, poof, flipCapture, flipPlay, reducedMotion as noMotion } from './fx.js';
+import { recognize, morph, pathLen } from './shapes.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
@@ -112,6 +113,7 @@ async function loadDocument() {
   crumb('Seitenmaße werden gelesen');
   E.infos = await pageInfos(E.pdf);
   crumb('Seiten werden aufgebaut');
+  E.tsel = null; hideTselBar(); E.words = {};
   E.text = {}; E.ocr = {}; E.needOcr = {}; E.scanFx = {}; E.ocrGen = (E.ocrGen || 0) + 1; ocrQueue = [];
   buildPages();
   crumb('Seiten aufgebaut');
@@ -248,7 +250,7 @@ async function closeEditor() {
   toggleScrubber(false);
   $('editor').classList.remove('open'); $('editor').setAttribute('aria-hidden', 'true');
   document.body.classList.remove('in-editor');
-  hideSelMenu();
+  hideSelMenu(); E.tsel = null; hideTselBar(); try { window.speechSynthesis?.cancel(); speaking = false; } catch {}
   setTimeout(() => { if (!E.open) { $('ed-pages').innerHTML = ''; closePdf(E.pdf); E.pdf = null; } }, 500);
   E.onClose && E.onClose();
 }
@@ -431,7 +433,7 @@ function setMode(mode, first) {
   E.mode = mode; E.tool = DEFAULT_TOOL[mode];
   if (E.tool === 'textedit') E.scanFx = {};
   $('mode-label').textContent = MODES[mode].label;
-  E.sel = null; hideSelMenu();
+  E.sel = null; hideSelMenu(); clearTsel(true); try { window.speechSynthesis?.cancel(); speaking = false; } catch {}
   renderToolbar();
   if (mode === 'edit' || mode === 'comment') E.pages.forEach((_, i) => loadText(i));
   E.pages.forEach((_, i) => renderLayer(i));
@@ -677,7 +679,7 @@ function drawObj(o, parent) {
     }
     case 'image': el('image', { href: o.src, x: o.x, y: o.y, width: o.w, height: o.h, preserveAspectRatio: 'none', opacity: o.opacity ?? 1 }, g); break;
     case 'ink': {
-      const d = inkPath(o.points);
+      const d = inkPath(o.points, o.sharp);
       el('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(o.width, 12 / scale()), 'stroke-linecap': 'round' }, g);
       el('path', { d, fill: 'none', stroke: o.color, 'stroke-width': o.width, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-opacity': o.opacity ?? 1, style: (o.opacity ?? 1) < 1 ? 'mix-blend-mode:multiply' : null }, g);
       break;
@@ -727,6 +729,7 @@ function renderLayer(i) {
     }
   } else p.el.querySelector('.scan-fx')?.remove();
   E.objects.filter(o => o.page === i).forEach(o => drawObj(o, svg));
+  drawTsel(svg, i);
   const s = E.sel && byId(E.sel);
   if (s && s.page === i) {
     const b = bbox(s), pad = 4 / scale(), r = 9 / scale();
@@ -756,8 +759,21 @@ function onDown(e, i) {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   activePointers.add(e.pointerId);
   if (activePointers.size > 1) { cancelGesture(); return; }
-  const k = kind(); if (k === 'none') return;
+  const k = kind();
   const [x, y] = svgPt(e, i);
+  if (k === 'none') {
+    if (E.mode !== 'view') return;
+    const svg0 = E.pages[i].svg, h = e.target.closest?.('[data-tsh]')?.dataset.tsh;
+    if (h && E.tsel?.page === i) {          // Griff ziehen: anderes Ende bleibt fest
+      const lo = Math.min(E.tsel.a, E.tsel.b), hi = Math.max(E.tsel.a, E.tsel.b);
+      G = { type: 'tsel', page: i, pid: e.pointerId, sx: x, sy: y, moved: false, anchor: h === 'lo' ? hi : lo };
+      hideTselBar(); try { svg0.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault(); return;
+    }
+    G = { type: 'press', page: i, pid: e.pointerId, sx: x, sy: y, cx: e.clientX, cy: e.clientY, moved: false, t0: performance.now() };
+    tselStart(i, x, y);
+    return;
+  }
   const target = e.target;
   const svg = E.pages[i].svg;
   const begin = (g) => { G = { ...g, page: i, pid: e.pointerId, sx: x, sy: y, moved: false }; try { svg.setPointerCapture(e.pointerId); } catch {} };
@@ -777,7 +793,9 @@ function onDown(e, i) {
     E.objects.push(o);
     const g = drawObj(o, svg);
     e.preventDefault();
-    return begin({ type: 'ink', obj: o, paths: g.querySelectorAll('path') });
+    begin({ type: 'ink', obj: o, paths: g.querySelectorAll('path') });
+    holdArm(e);
+    return;
   }
   if (k === 'eraser') {
     snapshot();
@@ -817,8 +835,11 @@ function onMove(e) {
       const pts = G.obj.points, minD = 0.8 / scale();
       for (const ev of evs) { const p = svgPt(ev, G.page); const l = pts[pts.length - 1]; if (Math.hypot(p[0] - l[0], p[1] - l[1]) >= minD) pts.push(p); }
       const d = inkPath(pts); G.paths.forEach(p => p.setAttribute('d', d));
+      if (Math.hypot(e.clientX - G.hold.x, e.clientY - G.hold.y) > 5) holdArm(e);
       break;
     }
+    case 'press': if (Math.hypot(e.clientX - G.cx, e.clientY - G.cy) > 8) { clearTimeout(G.timer); G = null; } break;
+    case 'tsel': tselMove(x, y); e.preventDefault(); break;
     case 'erase': G.dot.setAttribute('cx', x); G.dot.setAttribute('cy', y); eraseAt(G.page, x, y); break;
     case 'drag': {
       G.draft.setAttribute('x', Math.min(x, G.sx)); G.draft.setAttribute('y', Math.min(y, G.sy));
@@ -839,7 +860,9 @@ function onUp(e) {
   activePointers.delete(e.pointerId);
   if (!G || e.pointerId !== G.pid) return;
   const g = G; G = null;
+  clearTimeout(g.hold?.timer);
   switch (g.type) {
+    case 'shaped': g.anim.then(() => { E.dirtyThumb = true; changed([g.page]); }); break;
     case 'ink':
       if (g.obj.points.length < 2 && !g.moved) g.obj.points.push([g.obj.points[0][0] + 0.3, g.obj.points[0][1]]);
       E.dirtyThumb = true; changed([g.page]); break;
@@ -853,20 +876,61 @@ function onUp(e) {
     case 'resize': changed([g.page]); placeSelMenu(); break;
     case 'transform': hideRotTip(); if (!g.moved) E.undo.pop(); changed([g.page]); placeSelMenu(); break;
     case 'tap': if (!g.moved) g.fn(); break;
+    case 'press': clearTimeout(g.timer); if (E.tsel) clearTsel(); break;
+    case 'tsel': showTselBar(); break;
   }
 }
 function cancelGesture() {
   if (!G) return;
   const g = G; G = null;
+  clearTimeout(g.hold?.timer);
+  if (g.type === 'shaped') g.anim.then(() => { E.dirtyThumb = true; changed([g.page]); });
   if (g.type === 'ink') { E.objects = E.objects.filter(o => o !== g.obj); E.undo.pop(); renderLayer(g.page); }
   if (g.type === 'drag') g.draft.remove();
   if (g.type === 'erase') g.dot.remove();
   if (g.type === 'move' && g.snap) { Object.assign(g.obj, g.orig); E.undo.pop(); renderLayer(g.page); }
   if (g.type === 'transform') { hideRotTip(); Object.assign(g.obj, g.orig); E.undo.pop(); renderLayer(g.page); placeSelMenu(); }
 }
+
+// ---------- Smart Shapes: Finger am Ende ~400 ms ruhig halten → Form erkennen und einrasten ----------
+const HOLD_MS = 400;
+function holdArm(e) {
+  if (!G || G.type !== 'ink') return;
+  clearTimeout(G.hold?.timer);
+  const g = G;
+  g.hold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => smartShape(g), HOLD_MS) };
+}
+function smartShape(g) {
+  if (G !== g || g.type !== 'ink' || settings.get('smartShapes') === false) return;
+  const o = g.obj, sc = scale();
+  if (pathLen(o.points) * sc < 40) return;                        // zu kurz (Punkt, Tippen)
+  const shape = recognize(o.points, 18 / sc);
+  if (!shape) return;
+  // Undo: erst zurück zum freien Strich, dann ganz weg
+  E.undo.push(JSON.stringify(E.objects)); if (E.undo.length > 80) E.undo.shift(); E.redo = [];
+  const from = o.points.slice();
+  o.points = shape.pts; o.sharp = true; o.shape = shape.kind;
+  g.type = 'shaped';
+  haptic();
+  const paths = [...g.paths];
+  g.anim = morph(from, shape, pts => { const d = inkPath(pts, true); paths.forEach(p => p.setAttribute('d', d)); }, { reduced: reduceMotion() });
+  hint(`${shape.label} erkannt`);
+  updUndoBtns();
+}
+// Treffer auf eine Zeichnung (auch zwischen weit auseinanderliegenden Eckpunkten der Formen)
+function inkHit(o, x, y, r) {
+  const P = o.points;
+  if (P.length === 1) return Math.hypot(P[0][0] - x, P[0][1] - y) < r;
+  for (let k = 1; k < P.length; k++) {
+    const [ax, ay] = P[k - 1], [bx, by] = P[k], dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+    if (Math.hypot(x - ax - t * dx, y - ay - t * dy) < r) return true;
+  }
+  return false;
+}
 window.addEventListener('pointermove', onMove, { passive: false });
 window.addEventListener('pointerup', onUp);
-window.addEventListener('pointercancel', e => { activePointers.delete(e.pointerId); if (G && G.pid === e.pointerId) { if (G.type === 'tap') G = null; else onUp(e); } });
+window.addEventListener('pointercancel', e => { activePointers.delete(e.pointerId); if (G && G.pid === e.pointerId) { if (G.type === 'tap') G = null; else if (G.type === 'press') { clearTimeout(G.timer); G = null; } else onUp(e); } });
 
 function moveObj(o, orig, dx, dy) {
   if (o.type === 'ink') o.points = orig.points.map(([x, y]) => [x + dx, y + dy]);
@@ -912,7 +976,7 @@ function transformObj(g, x, y, e) {
 function eraseAt(i, x, y) {
   const r = 10 / scale();
   const before = E.objects.length;
-  E.objects = E.objects.filter(o => !(o.page === i && o.type === 'ink' && o.points.some(([px, py]) => Math.hypot(px - x, py - y) < r + o.width / 2)));
+  E.objects = E.objects.filter(o => !(o.page === i && o.type === 'ink' && inkHit(o, x, y, r + o.width / 2)));
   if (E.objects.length !== before) {
     G.removed += before - E.objects.length;
     const dot = G.dot; renderLayer(i); E.pages[i].svg.appendChild(dot); E.dirtyThumb = true;
@@ -951,6 +1015,233 @@ function finishDrag(g) {
   const color = settings.get(E.tool === 'highlight' ? 'hlColor' : 'lineColor');
   rects.forEach(r => E.objects.push({ id: uid(), type: E.tool, page: i, ...r, color }));
   E.dirtyThumb = true; haptic(); changed([i]);
+}
+
+// ======================= Text auswählen im Ansehen-Modus =======================
+// Lange drücken (≈ 380 ms) auf ein Wort → Auswahl, Ziehen erweitert sie (auch an den Griffen).
+// Danach schwebt eine Aktionsleiste darüber (Feder-Animation): Markieren, Unterstreichen,
+// Schwärzen, Vorlesen, Kopieren. Markieren/Unterstreichen wischen sich wie ein Filzstift ein.
+const TS_PRESS = 380;
+function pageWords(i) {
+  E.words ||= {};
+  if (E.words[i]) return E.words[i];
+  const items = textItems(i); if (!items.length) return [];
+  const out = [];
+  items.forEach(t => {
+    mctx.font = `${t.italic ? 'italic ' : ''}${t.bold ? '700' : '400'} 100px ${FONT_CSS[t.font] || FONT_CSS.sans}`;
+    const f = t.w / (mctx.measureText(t.str).width || 1);
+    const re = /\S+/g; let m;
+    while ((m = re.exec(t.str))) {
+      const x = t.x + mctx.measureText(t.str.slice(0, m.index)).width * f;
+      out.push({ s: m[0], x, w: Math.max(1, mctx.measureText(m[0]).width * f), top: t.top, h: t.h, k: out.length });
+    }
+  });
+  return (E.words[i] = out);
+}
+const sameLine = (a, b) => Math.abs((a.top + a.h / 2) - (b.top + b.h / 2)) < Math.min(a.h, b.h) * 0.5;
+function wordAt(i, x, y, loose) {
+  let best = null, bd = 1e9;
+  for (const w of pageWords(i)) {
+    const dx = x < w.x ? w.x - x : x > w.x + w.w ? x - w.x - w.w : 0;
+    const dy = y < w.top ? w.top - y : y > w.top + w.h ? y - w.top - w.h : 0;
+    const d = dx + dy * 3; if (d < bd) { bd = d; best = w; }
+  }
+  return best && (loose || bd < 14 / scale()) ? best : null;
+}
+function tselWords() {
+  const t = E.tsel; if (!t) return [];
+  const W = pageWords(t.page), lo = Math.min(t.a, t.b), hi = Math.max(t.a, t.b);
+  return W.slice(lo, hi + 1);
+}
+// Wörter zu Zeilen-Rechtecken zusammenfassen
+function tselRects() {
+  const rects = [];
+  for (const w of tselWords()) {
+    const r = rects[rects.length - 1];
+    if (r && sameLine(r, w) && w.x >= r.x - 1 && w.x - (r.x + r.w) < w.h * 1.5) {
+      const top = Math.min(r.top, w.top), bot = Math.max(r.top + r.h, w.top + w.h);
+      r.w = w.x + w.w - r.x; r.top = top; r.h = bot - top;
+    } else rects.push({ x: w.x, top: w.top, w: w.w, h: w.h });
+  }
+  return rects.map(r => ({ x: r.x, y: r.top, w: r.w, h: r.h }));
+}
+function tselText() {
+  let s = '', prev = null;
+  for (const w of tselWords()) { s += prev ? (sameLine(prev, w) ? ' ' : '\n') : ''; s += w.s; prev = w; }
+  return s.replace(/-\n(?=\p{Ll})/gu, '');                      // Silbentrennung am Zeilenende auflösen
+}
+function drawTsel(svg, i) {
+  const t = E.tsel; if (!t || t.page !== i) return;
+  const W = pageWords(i); if (!W.length) return;
+  const g = el('g', { class: 'tsel' }, svg);
+  tselRects().forEach(r => el('rect', { x: r.x - 0.6, y: r.y - 0.6, width: r.w + 1.2, height: r.h + 1.2, rx: 1.2 }, g));
+  const lo = W[Math.min(t.a, t.b)], hi = W[Math.max(t.a, t.b)], s = scale(), hr = 4.5 / s;
+  [['lo', lo.x - 0.6, lo.top - 0.6, lo.top + lo.h + 0.6, true], ['hi', hi.x + hi.w + 0.6, hi.top - 0.6, hi.top + hi.h + 0.6, false]].forEach(([k, x, y0, y1, up]) => {
+    const hg = el('g', { class: 'tsel-h', 'data-tsh': k }, g);
+    el('line', { x1: x, x2: x, y1: y0, y2: y1 }, hg);
+    el('circle', { cx: x, cy: up ? y0 - hr * 0.9 : y1 + hr * 0.9, r: hr }, hg);
+    el('circle', { class: 'tsel-hit', cx: x, cy: up ? y0 - hr : y1 + hr, r: 16 / s, 'data-tsh': k }, hg);
+  });
+}
+function clearTsel(silent) {
+  if (!E.tsel) return;
+  const i = E.tsel.page; E.tsel = null; hideTselBar();
+  if (!silent) renderLayer(i);
+}
+function tselStart(i, x, y) {
+  const go = () => {
+    if (!G || G.type !== 'press' || G.page !== i) return;
+    const w = wordAt(i, x, y);
+    if (!w) { if (!pageWords(i).length && E.needOcr[i]) hint('Diese Seite hat keinen Text – erst „Text erkennen (OCR)“'); G = null; return; }
+    if (E.tsel && E.tsel.page !== i) clearTsel();
+    E.tsel = { page: i, a: w.k, b: w.k };
+    G.type = 'tsel'; G.anchor = w.k; hideTselBar(); haptic(); renderLayer(i);
+  };
+  loadText(i).then(() => { G && G.type === 'press' && (G.timer = setTimeout(go, Math.max(0, TS_PRESS - (performance.now() - G.t0)))); });
+}
+function tselMove(x, y) {
+  const w = wordAt(G.page, x, y, true); if (!w) return;
+  const b = w.k; if (b === E.tsel.b) return;
+  E.tsel.a = G.anchor; E.tsel.b = b; renderLayer(G.page);
+}
+
+// ---- schwebende Aktionsleiste mit Feder ----
+let tbar = null, speaking = false;
+const springKeys = (from, base, n = 22) => {
+  // gedämpfte Feder ζ≈0.42: kräftiges, kurzes Überschwingen (≈ iOS „bouncy“)
+  const z = 0.42, w = 26, wd = w * Math.sqrt(1 - z * z), T = 0.5, out = [];
+  for (let k = 0; k <= n; k++) {
+    const t = k / n * T, e = k === n ? 1 : 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + z * w / wd * Math.sin(wd * t));
+    const sc = from + (1 - from) * e;
+    out.push({ transform: `${base} scale(${sc.toFixed(4)})`, opacity: Math.min(1, k / 4) });
+  }
+  return out;
+};
+function showTselBar() {
+  const t = E.tsel; if (!t) return;
+  const rects = tselRects(); if (!rects.length) return;
+  if (!tbar) {
+    tbar = document.createElement('div'); tbar.className = 'tselbar'; tbar.setAttribute('role', 'toolbar');
+    $('editor').appendChild(tbar);
+    tbar.addEventListener('pointerdown', e => e.stopPropagation());
+    tbar.addEventListener('click', e => { const b = e.target.closest('[data-ta]'); if (b) { haptic(); tselAction(b.dataset.ta); } });
+  }
+  const acts = [['hl', 'Markieren', 'highlight'], ['ul', 'Unterstreichen', 'underline'], ['rd', 'Schwärzen', 'redact'], ['tts', speaking ? 'Stopp' : 'Vorlesen', 'speaker'], ['cp', 'Kopieren', 'copy']];
+  tbar.innerHTML = acts.map(([a, l, ic]) => `<button data-ta="${a}">${icon(ic)}<span>${l}</span></button>`).join('');
+  placeTselBar(true);
+}
+function placeTselBar(pop) {
+  const t = E.tsel; if (!t || !tbar) return;
+  const rects = tselRects(); if (!rects.length) return hideTselBar();
+  const x0 = Math.min(...rects.map(r => r.x)), x1 = Math.max(...rects.map(r => r.x + r.w));
+  const y0 = Math.min(...rects.map(r => r.y)), y1 = Math.max(...rects.map(r => r.y + r.h));
+  const ctm = E.pages[t.page].svg.getScreenCTM(), er = $('editor').getBoundingClientRect();
+  const a = new DOMPoint((x0 + x1) / 2, y0).matrixTransform(ctm), b = new DOMPoint((x0 + x1) / 2, y1).matrixTransform(ctm);
+  const sr = $('ed-scroll').getBoundingClientRect();
+  const below = a.y - 20 - 56 < sr.top + 8;
+  const top = below ? Math.min(b.y + 22, sr.bottom - 64) : a.y - 20;
+  const mw = tbar.offsetWidth || 320;
+  tbar.style.left = Math.min(er.width - mw / 2 - 8, Math.max(mw / 2 + 8, a.x - er.left)) + 'px';
+  tbar.style.top = (top - er.top) + 'px';
+  const base = below ? 'translate(-50%, 0)' : 'translate(-50%, -100%)';
+  tbar.style.transformOrigin = below ? '50% 0' : '50% 100%';
+  tbar.style.transform = base;
+  tbar.classList.toggle('below', below);
+  if (pop) {
+    tbar.classList.add('show');
+    tbar.getAnimations?.().forEach(x => x.cancel());
+    if (reduceMotion() || !tbar.animate) tbar.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 120 });
+    else tbar.animate(springKeys(0.55, base), { duration: 500, easing: 'linear' });
+  }
+}
+function hideTselBar() { tbar?.classList.remove('show'); }
+
+async function tselAction(a) {
+  const t = E.tsel; if (!t) return;
+  const i = t.page, rects = tselRects();
+  if (a === 'tts') return speak(tselText());
+  if (a === 'cp') { try { await navigator.clipboard.writeText(tselText()); toast('Kopiert'); } catch { toast('Kopieren nicht möglich', true); } clearTsel(); return; }
+  if (a === 'hl' || a === 'ul') {
+    snapshot();
+    const type = a === 'hl' ? 'highlight' : 'underline', color = settings.get(a === 'hl' ? 'hlColor' : 'lineColor');
+    const objs = rects.map(r => ({ id: uid(), type, page: i, ...r, color }));
+    E.objects.push(...objs); E.dirtyThumb = true;
+    clearTsel(true); changed([i]);
+    feltSweep(i, objs);
+    return;
+  }
+  if (a === 'rd') {
+    clearTsel();
+    const ok = await confirmDlg('Endgültig schwärzen?', `Der markierte Text wird aus der PDF entfernt – nicht nur abgedeckt. Seite ${i + 1} wird dafür als Bild neu aufgebaut; Text lässt sich auf dieser Seite danach nicht mehr markieren. Das lässt sich nicht rückgängig machen.`, 'Schwärzen');
+    if (!ok) return;
+    busy(true, 'Wird geschwärzt …');
+    try {
+      const { applyRedactions } = await import('./redact.js');
+      const { w, h } = E.infos[i], pad = 0.8;
+      const boxes = rects.map(r => ({ page: i, x: (r.x - pad) / w, y: (r.y - pad) / h, w: (r.w + 2 * pad) / w, h: (r.h + 2 * pad) / h }));
+      const out = await applyRedactions(new Uint8Array(E.bytes), boxes);
+      E.bytes = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+      await db.put('files', { id: E.doc.id, data: E.bytes });
+      E.doc.size = E.bytes.byteLength; await saveNow();
+      const top = $('ed-scroll').scrollTop;
+      await loadDocument(); setMode(E.mode, true); $('ed-scroll').scrollTop = top;
+      await updateThumb(); E.dirtyThumb = false;
+      toast('Geschwärzt – Inhalt entfernt'); haptic();
+    } catch (err) { console.error(err); toast('Schwärzen fehlgeschlagen', true); }
+    finally { busy(false); }
+  }
+}
+function speak(text) {
+  const ss = window.speechSynthesis;
+  if (!ss) return toast('Vorlesen wird hier nicht unterstützt', true);
+  if (speaking) { ss.cancel(); speaking = false; showTselBar(); return; }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'de-DE';
+  const v = ss.getVoices().find(x => /^de(-|_|$)/i.test(x.lang)); if (v) u.voice = v;
+  u.onend = u.onerror = () => { speaking = false; if (E.tsel) showTselBar(); };
+  ss.cancel(); ss.speak(u); speaking = true; showTselBar();
+}
+
+// ---- Filzstift: Markierung wischt sich Zeile für Zeile von links nach rechts ein ----
+function feltSweep(i, objs) {
+  const svg = E.pages[i]?.svg; if (!svg || reduceMotion() || !objs.length) return;
+  const s = scale();
+  const segs = objs.map(o => {
+    const g = svg.querySelector(`.obj[data-id="${o.id}"]`); if (!g) return null;
+    const id = 'fs-' + o.id, pad = o.h * 0.55;
+    const cp = el('clipPath', { id }, svg);
+    const r = el('rect', { x: o.x - pad, y: o.y - o.h * 0.12, width: 0, height: o.h * 1.24, rx: pad, ry: o.h * 0.62 }, cp);
+    g.setAttribute('clip-path', `url(#${id})`);
+    // Strichlänge in Bildschirm-Pixeln → Dauer (schnell wie ein echter Zug: ~1.3 px/ms)
+    return { o, g, cp, r, pad, dur: Math.max(110, Math.min(420, o.w * s / 1.3)) };
+  }).filter(Boolean);
+  if (!segs.length) return;
+  const tip = el('ellipse', { class: 'felt-tip', rx: 0, ry: 0, fill: objs[0].color }, svg);
+  const GAP = 45;                                           // Stift absetzen zwischen den Zeilen
+  const total = segs.reduce((q, x) => q + x.dur + GAP, 0);
+  const ease = p => p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+  const t0 = performance.now();
+  const done = () => { segs.forEach(x => { x.g.removeAttribute('clip-path'); x.cp.remove(); }); tip.remove(); };
+  const frame = now => {
+    if (!svg.isConnected || !tip.isConnected) return done();
+    let el0 = now - t0;
+    if (el0 >= total) return done();
+    for (const x of segs) {
+      const full = x.o.w + 2 * x.pad;
+      if (el0 >= x.dur + GAP) { x.r.setAttribute('width', full); el0 -= x.dur + GAP; continue; }
+      const p = Math.min(1, el0 / x.dur), e = ease(p), wNow = full * e;
+      x.r.setAttribute('width', wNow);
+      const o = x.o, under = o.type === 'underline';
+      const cx = o.x - x.pad + wNow - x.pad * 0.5, cy = under ? o.y + o.h - 0.5 : o.y + o.h / 2 + Math.sin(p * 9) * o.h * 0.03;
+      tip.setAttribute('cx', cx); tip.setAttribute('cy', cy);
+      tip.setAttribute('rx', under ? 1.6 : o.h * 0.22); tip.setAttribute('ry', under ? 1.6 : o.h * 0.5);
+      tip.setAttribute('fill', o.color);
+      tip.setAttribute('opacity', p < 1 ? 0.55 : 0);
+      break;
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
 }
 
 // ======================= Auswahl =======================
@@ -1133,8 +1424,8 @@ const HL_COLORS = ['#ffd60a', '#7ee081', '#6ec6ff', '#ff8fb1', '#ffab5e'];
 function optionsSheet() {
   const t = E.tool;
   const cfg = {
-    pen: { title: 'Stift', key: 'penColor', cols: PEN_COLORS, w: 'penWidth', min: 0.5, max: 8, step: 0.5 },
-    marker: { title: 'Marker', key: 'markerColor', cols: HL_COLORS, w: 'markerWidth', min: 4, max: 30, step: 1 },
+    pen: { title: 'Stift', key: 'penColor', cols: PEN_COLORS, w: 'penWidth', min: 0.5, max: 8, step: 0.5, shapes: true },
+    marker: { title: 'Marker', key: 'markerColor', cols: HL_COLORS, w: 'markerWidth', min: 4, max: 30, step: 1, shapes: true },
     highlight: { title: 'Markieren', key: 'hlColor', cols: HL_COLORS },
     underline: { title: 'Unterstreichen', key: 'lineColor', cols: PEN_COLORS },
     strike: { title: 'Durchstreichen', key: 'lineColor', cols: PEN_COLORS },
@@ -1149,10 +1440,13 @@ function optionsSheet() {
       <div class="lbl" style="margin-top:0">Farbe</div>
       <div class="colors">${cfg.cols.map(c => `<button class="color ${c === settings.get(cfg.key) ? 'on' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
       ${cfg.w ? `<div class="lbl">Stärke <span data-wv>${settings.get(cfg.w)}</span></div><input type="range" class="range" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="${settings.get(cfg.w)}" data-w>` : ''}
+      ${cfg.shapes ? `<div class="row" style="padding:14px 2px 2px;border:0"><span class="row-main"><span class="row-title">Smart Shapes</span><span class="row-sub" style="display:block">Form zeichnen und am Ende kurz halten → Linie, Pfeil, Rechteck, Dreieck oder Kreis rasten sauber ein</span></span>
+        <div class="seg" data-shapes><button data-v="1" class="${settings.get('smartShapes') !== false ? 'on' : ''}">An</button><button data-v="0" class="${settings.get('smartShapes') === false ? 'on' : ''}">Aus</button></div></div>` : ''}
       ${cfg.size ? `<div class="lbl">Schriftgröße <span data-wv>${settings.get('textSize')}</span> pt</div><input type="range" class="range" min="6" max="36" step="0.5" value="${settings.get('textSize')}" data-sz>` : ''}`,
     onMount(el) {
       el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { el.querySelectorAll('[data-c]').forEach(x => x.classList.remove('on')); b.classList.add('on'); settings.set(cfg.key, b.dataset.c); });
       const w = el.querySelector('[data-w]'); if (w) w.oninput = () => { settings.set(cfg.w, +w.value); el.querySelector('[data-wv]').textContent = w.value; };
+      el.querySelectorAll('[data-shapes] button').forEach(b => b.onclick = () => { el.querySelectorAll('[data-shapes] button').forEach(x => x.classList.toggle('on', x === b)); settings.set('smartShapes', b.dataset.v === '1'); haptic(); });
       const sz = el.querySelector('[data-sz]'); if (sz) sz.oninput = () => { settings.set('textSize', +sz.value); el.querySelector('[data-wv]').textContent = sz.value; };
     },
   });
@@ -1551,7 +1845,8 @@ export function initEditor() {
     jump: i => { const p = E.pages[i]; if (p) sc.scrollTop = Math.max(0, p.el.offsetTop - 12); $('page-chip').textContent = `${i + 1} / ${E.pages.length}`; },
     done: () => { rerenderVisible(); updPageChip(); },
   });
-  sc.addEventListener('scroll', () => { updPageChip(); if (E.sel) placeSelMenu(); }, { passive: true });
+  sc.addEventListener('scroll', () => { updPageChip(); if (E.sel) placeSelMenu(); if (E.tsel && tbar?.classList.contains('show')) placeTselBar(); }, { passive: true });
+  sc.addEventListener('contextmenu', e => { if (E.mode === 'view') e.preventDefault(); });
   // Pinch-Zoom
   let pinch = null;
   sc.addEventListener('touchstart', e => {
@@ -1562,6 +1857,7 @@ export function initEditor() {
     }
   }, { passive: true });
   sc.addEventListener('touchmove', e => {
+    if (G && G.type === 'tsel') { e.preventDefault(); return; }   // Auswahl ziehen statt scrollen
     if (pinch && e.touches.length === 2) {
       e.preventDefault();
       const [a, b] = e.touches;

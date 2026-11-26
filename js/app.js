@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.42.10';
+export const VERSION = '1.43.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -142,6 +142,7 @@ async function allDocs() {
     : docs.sort((a, b) => (b.updated || 0) - (a.updated || 0));
 }
 
+let recentFlow = null;
 async function renderRecents() {
   renderFiles();
   const all = await allDocs();
@@ -151,10 +152,28 @@ async function renderRecents() {
   $('btn-fav').innerHTML = icon(favOnly ? 'heartFill' : 'heart');
   $('btn-fav').classList.toggle('on', !!favOnly);
   const list = $('recent-list');
+  const flowOn = settings.get('recentView') === 'flow';
+  const vb = $('btn-view'); if (vb) { vb.innerHTML = icon(flowOn ? 'list' : 'coverflow'); vb.setAttribute('aria-label', flowOn ? 'Als Liste zeigen' : 'Als Cover-Flow zeigen'); vb.classList.toggle('on', flowOn); }
+  recentFlow?.destroy(); recentFlow = null;
+  list.classList.toggle('flow', flowOn && docs.length > 0);
   if (!docs.length) {
     list.innerHTML = favOnly && all.length
       ? `<div class="empty">${icon('heart')}<b>Noch keine Favoriten</b>Tippe bei einer PDF auf ⋯ → „Zu Favoriten hinzufügen“.</div>`
       : `<div class="empty">${icon('file')}<b>Noch keine PDFs</b>Tippe auf „PDF öffnen“ oder das <b style="display:inline;color:var(--accent)">+</b>, um loszulegen.</div>`;
+    return;
+  }
+  if (flowOn) {
+    const { coverFlow } = await import('./coverflow.js');
+    recentFlow?.destroy();                                   // parallel gestartetes renderRecents()
+    const prev = list.dataset.flowId, start = Math.max(0, docs.findIndex(d => d.id === prev));
+    recentFlow = coverFlow(list, docs, {
+      label: 'Zuletzt geöffnete PDFs', start,
+      cover: d => `<span class="cf-img" style="background-image:url('${d.thumb || ''}')"></span>${d.fav ? `<span class="cf-fav">${icon('heartFill')}</span>` : ''}`,
+      caption: d => `<button class="cf-name" data-cf-open>${esc(d.name)}</button><span class="cf-meta">${fmtDate(d.updated)} · ${d.pages || 1} S.${d.objects?.length ? ' · bearbeitet' : ''}</span><button class="doc-more cf-more" data-cf-more aria-label="Mehr">${icon('more')}</button>`,
+      onFocus: i => { list.dataset.flowId = docs[i].id; },
+      onOpen: i => openDoc(docs[i].id),
+      onMore: i => docMenu(docs[i]),
+    });
     return;
   }
   list.innerHTML = docs.map((d, i) => `
@@ -1288,6 +1307,7 @@ async function init() {
     if (a === 'go-settings') switchTab('settings');
     if (a === 'search') searchSheet(openDoc);
     if (a === 'toggle-sort') { settings.set('sort', settings.get('sort') === 'name' ? 'new' : 'name'); renderRecents(); }
+    if (a === 'toggle-view') { settings.set('recentView', settings.get('recentView') === 'flow' ? 'list' : 'flow'); haptic(); renderRecents(); }
     if (a === 'toggle-fav') { settings.set('favOnly', !settings.get('favOnly')); haptic(); renderRecents(); }
   });
   await renderRecents();
