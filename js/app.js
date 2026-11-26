@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.40.1';
+export const VERSION = '1.41.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -431,7 +431,8 @@ async function imageSheet(kind, camOpts = {}) {
       return scanText(list, filter === 'invert' ? 'doc' : filter, adj);
     },
     onSave: async (list, filter, adj, ocrOn) => {
-      busy(true, 'PDF wird erstellt …');
+      let prev = null; try { prev = list[0] && renderScan(list[0], filter, 420, adj).toDataURL('image/jpeg', 0.8); } catch {}
+      busy(true, 'PDF wird erstellt …', { scan: prev });
       try {
         const urls = [];
         for (const it of list) { urls.push(renderScan(it, filter, 2200, adj).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
@@ -452,7 +453,8 @@ const nowHM = () => new Date().toLocaleTimeString('de-DE', { hour: '2-digit', mi
 
 // Text aus gescannten Seiten lesen und anzeigen
 async function scanText(list, filter = 'color', adj) {
-  busy(true, 'Texterkennung wird geladen …');
+  let prev = null; try { prev = list[0] && renderScan(list[0], filter, 420, adj).toDataURL('image/jpeg', 0.8); } catch {}
+  busy(true, 'Texterkennung wird geladen …', { scan: prev });
   try {
     const { recognizeCanvases } = await import('./ocr.js');
     const pages = await recognizeCanvases(list.map(it => () => renderScan(it, filter, 2400, adj)),
@@ -477,7 +479,7 @@ function idCapture(folder, cat) { return imageSheet('scan', { mode: 'id', idType
 // ----- Text extrahieren (aus einer PDF) -----
 async function textFromDoc(d) {
   if (!d) return;
-  busy(true, 'Text wird gelesen …');
+  busy(true, 'Text wird gelesen …', { scan: d.thumb });
   try {
     const { extractPdfText } = await import('./ocr.js');
     const f = await db.get('files', d.id);
@@ -774,7 +776,7 @@ async function watermarkSheet(d) {
 // ----- Texterkennung (OCR) -----
 async function ocrDoc(d, { quiet = false } = {}) {
   if (!d) return;
-  busy(true, 'Seiten werden geprüft …');
+  busy(true, 'Seiten werden geprüft …', { scan: d.thumb });
   try {
     const { ocrPdf } = await import('./ocr.js');
     const f = await db.get('files', d.id);

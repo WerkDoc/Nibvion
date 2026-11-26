@@ -10,6 +10,7 @@ import { analyzeAll, blankReview, duplexOrder } from './pageorder.js';
 import { initScrubber, toggleScrubber, scrubberReset, scrubberSync } from './scrubber.js';
 import { settings } from './settings.js';
 import { ocrEditItems, releaseEditOcr } from './ocr.js';
+import { stampDrop, poof, flipCapture, flipPlay, reducedMotion as noMotion } from './fx.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const $ = id => document.getElementById(id);
@@ -75,6 +76,8 @@ export async function openEditor(docId, mode = 'view', onClose, page = 0) {
     if (mode === 'pages') pageManager();
     if (page > 0 && E.pages[page]) requestAnimationFrame(() => { const sc = $('ed-scroll'); sc.scrollTop = E.pages[page].el.offsetTop - 12; updPageChip(); });
     meta.opened = Date.now(); db.put('docs', meta);
+    const vm = settings.get('viewMode');
+    if (mode === 'view' && (vm === 'single' || vm === 'flip')) setTimeout(() => { if (E.open && E.doc?.id === docId) pageView(vm, true); }, 380);
   } catch (err) {
     console.error(err); toast('PDF konnte nicht geöffnet werden', true);
   } finally { busy(false); }
@@ -387,6 +390,8 @@ function setTool(id) {
 function renderToolbar() {
   const tools = MODES[E.mode].tools;
   $('ed-toolbar').classList.toggle('hidden', !tools.length);
+  const pop = E.tbMode !== E.mode; E.tbMode = E.mode;
+  $('ed-tools').classList.toggle('tb-anim', pop);
   $('ed-tools').innerHTML = tools.map((t, i) => `<button class="tool ${t.id === E.tool ? 'on' : ''}" data-tool="${t.id}" style="animation-delay:${i * 35}ms">${icon(t.icon)}<span>${t.label}</span></button>`).join('');
   $('ed-tools').querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
   $('btn-options').style.display = OPT_TOOLS.includes(E.tool) ? '' : 'none';
@@ -938,7 +943,7 @@ function visibleCenter(i) {
   const q = new DOMPoint(cx, cy).matrixTransform(m);
   return [q.x, q.y];
 }
-function addCentered(base) {
+function addCentered(base, fx) {
   const i = currentPage(); const [cx, cy] = visibleCenter(i);
   const info = E.infos[i];
   let w = base.w, h = base.h;
@@ -947,8 +952,26 @@ function addCentered(base) {
   const o = { id: uid(), page: i, type: 'image', ...base, w, h, x: cx - w / 2, y: cy - h / 2 };
   E.objects.push(o); E.dirtyThumb = true;
   if (E.tool !== 'select') { E.tool = 'select'; renderToolbar(); }
+  if (fx === 'stamp' && !noMotion()) { dropStamp(o); return; }
   select(o.id); changed([i]); haptic();
   hint('Verschieben – am Eck-Punkt skalieren & drehen');
+}
+
+// Stempel „fällt“ mit Federphysik auf die Seite, Tinten-Ring beim Aufsetzen, dann Auswahl
+function dropStamp(o) {
+  const i = o.page, p = E.pages[i], s = scale();
+  changed([i]);
+  const g = () => p.svg.querySelector(`[data-id="${o.id}"]`);
+  stampDrop(p.el, { x: o.x * s, y: o.y * s, w: o.w * s, h: o.h * s }, o.src, {
+    hide: () => { const n = g(); if (n) n.style.opacity = 0; },
+    show: () => { const n = g(); if (n) n.style.opacity = ''; },
+    onImpact: () => haptic(),
+    color: '#ff6a5b',
+  }).then(() => {
+    if (!E.open || !byId(o.id)) return;
+    select(o.id); changed([i]);
+    hint('Verschieben – am Eck-Punkt skalieren & drehen');
+  });
 }
 
 function placeAt(i, x, y) {
@@ -1092,7 +1115,7 @@ async function runAction(id) {
     catch { toast('Bild konnte nicht geladen werden', true); } finally { busy(false); }
   }
   if (id === 'signature') signatureSheet(a => { const W = 140; addCentered({ src: a.src, w: W, h: W * a.h / a.w, kindTag: 'sig' }); });
-  if (id === 'stamp') stampSheet(a => { const st = freshStamp(a); const W = a.qr ? 100 : a.image ? 130 : st.w * 0.55; addCentered({ src: st.src, w: W, h: W * st.h / st.w, opacity: a.image || a.qr ? 1 : 0.95 }); });
+  if (id === 'stamp') stampSheet(a => { const st = freshStamp(a); const W = a.qr ? 100 : a.image ? 130 : st.w * 0.55; addCentered({ src: st.src, w: W, h: W * st.h / st.w, opacity: a.image || a.qr ? 1 : 0.95 }, 'stamp'); });
 }
 
 // ======================= Mehr-Menü / Export =======================
@@ -1142,6 +1165,7 @@ function moreSheet() {
         ${E.outline ? `<button data-a="toc"><span class="qt-ic c-orange">${icon('toc')}</span>Inhalt</button>` : ''}
       </div>
       <div class="menu" style="margin-bottom:12px">
+        <button class="row" data-a="view"><span class="row-ic c-orange">${icon('pages')}</span><span class="row-main"><span class="row-title">Seitenansicht</span><span class="row-sub">${{ single: 'Einzelseite', flip: 'Buch-Umblättern (3D)' }[settings.get('viewMode')] || 'Endlos-Scrollen'} · umschalten</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="reader"><span class="row-ic c-teal">${icon('book')}</span><span class="row-main"><span class="row-title">Lesemodus</span><span class="row-sub">Fließtext fürs Handy · Schriftgröße & Farben</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="present"><span class="row-ic c-violet">${icon('present')}</span><span class="row-main"><span class="row-title">Präsentieren</span><span class="row-sub">Vollbild mit Laserpointer</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="info"><span class="row-ic c-blue">${icon('gauge')}</span><span class="row-main"><span class="row-title">Dokument-Info & Qualitäts-Check</span><span class="row-sub">Format, Schriften, Bildauflösung, Formularfelder</span></span>${icon('chevronRight')}</button>
@@ -1157,6 +1181,7 @@ function moreSheet() {
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         const a = b.dataset.a; api.close();
         if (a === 'toc') return tocSheet();
+        if (a === 'view') return viewSheet();
         if (a === 'present') return present();
         if (a === 'reader') return reader();
         if (a === 'info') return docInfo();
@@ -1201,6 +1226,38 @@ function moreSheet() {
       });
     },
   });
+}
+
+// ======================= Seitenansicht (Einzelseite / Buch 3D) =======================
+function viewSheet() {
+  const cur = settings.get('viewMode') || 'scroll';
+  const opts = [['scroll', 'Endlos-Scrollen', 'Alle Seiten untereinander – zum Bearbeiten', 'c-blue', 'pages'],
+    ['single', 'Einzelseite', 'Seite für Seite wischen', 'c-teal', 'file'],
+    ['flip', 'Buch-Umblättern (3D)', 'Seiten biegen sich beim Wischen wie in einem Buch', 'c-orange', 'book']];
+  sheet({
+    title: 'Seitenansicht',
+    html: `<div class="menu">${opts.map(([k, t, sub, c, ic]) => `<button class="row ${k === cur ? 'sel' : ''}" data-v="${k}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title">${t}</span><span class="row-sub">${sub}</span></span><span class="radio"></span></button>`).join('')}</div>
+      <p style="color:var(--text3);font-size:12.5px;margin:12px 2px 0">Die Wahl gilt auch beim nächsten Öffnen einer PDF zum Ansehen.</p>`,
+    onMount(el, api) {
+      el.querySelectorAll('[data-v]').forEach(b => b.onclick = () => {
+        haptic(); const v = b.dataset.v; settings.set('viewMode', v); api.close();
+        if (v !== 'scroll') setTimeout(() => pageView(v), 200);
+      });
+    },
+  });
+}
+async function pageView(mode, auto = false) {
+  let pdf = E.pdf, temp = null;
+  try {
+    if (E.objects.length) { busy(true, 'Ansicht wird vorbereitet …'); temp = pdf = await loadPdf(await exportBytes()); busy(false); }
+    const { flipView } = await import('./flipview.js');
+    const r = await flipView({ pdf, start: currentPage(), title: E.doc.name.replace(/\.pdf$/i, ''), mode });
+    settings.set('viewMode', r.mode);
+    if (!E.open) return;
+    if (auto && r.mode !== 'scroll') return closeEditor();          // „Zurück“ aus der Ansicht → zur Dateiliste
+    if (r.page !== currentPage()) { const p = E.pages[r.page]; if (p) $('ed-scroll').scrollTop = Math.max(0, p.el.offsetTop - 12); updPageChip(); rerenderVisible(); }
+  } catch (e) { console.error(e); busy(false); toast('Ansicht konnte nicht geöffnet werden', true); }
+  finally { if (temp) setTimeout(() => closePdf(temp), 600); }
 }
 
 // ======================= Präsentieren =======================
@@ -1294,6 +1351,7 @@ async function fixSheet() {
 }
 
 // ======================= Seiten verwalten =======================
+let pgKey = 0;
 async function pageManager() {
   let order = E.infos.map((_, i) => ({ i, rot: 0 }));
   const thumbs = [];
@@ -1301,8 +1359,8 @@ async function pageManager() {
   let blank = false;
   sheet({
     title: 'Seiten verwalten',
-    html: `<div class="pm-tools"><button class="chip" data-findblank>${icon('pageBlank')} Leere Seiten finden</button><button class="chip" data-duplex>${icon('duplex')} Duplex sortieren</button></div>
-      <div class="page-grid" data-grid></div>
+    html: `<p class="pm-tip">Tipp: Seite kurz halten und nach oben wegschnippen zum Löschen.</p><div class="pm-tools"><button class="chip" data-findblank>${icon('pageBlank')} Leere Seiten finden</button><button class="chip" data-duplex>${icon('duplex')} Duplex sortieren</button></div>
+      <div class="page-grid no-swipe" data-grid></div>
       <div class="btn-row"><button class="btn" data-blank>${icon('plus')} Leere Seite</button><button class="btn primary" data-ok>${icon('check')} Übernehmen</button></div>`,
     onMount(el, api) {
       const grid = el.querySelector('[data-grid]');
@@ -1344,7 +1402,7 @@ async function pageManager() {
       };
       const render = () => {
         grid.innerHTML = order.map((p, k) => `
-          <div class="pg"><div class="pg-img" style="background-image:url(${thumbs[p.i]});transform:rotate(${p.rot}deg)"></div>
+          <div class="pg" data-flip="${p.key ??= ++pgKey}" data-k="${k}"><div class="pg-img" style="background-image:url(${thumbs[p.i]});transform:rotate(${p.rot}deg)"></div>
           <div class="pg-n">${k + 1}</div>
           <div class="pg-acts"><button data-l="${k}" ${k ? '' : 'disabled style="opacity:.3"'}>${icon('chevronLeft')}</button><button data-r="${k}">${icon('rotate')}</button><button data-d="${k}">${icon('trash')}</button></div></div>`).join('')
           + (blank ? `<div class="pg"><div class="pg-img"></div><div class="pg-n">Neu</div></div>` : '');
@@ -1355,7 +1413,50 @@ async function pageManager() {
           // sanft weiterdrehen (Winkel läuft weiter, 270° → 360° statt zurück auf 0°)
           im.dataset.v = (+(im.dataset.v ?? (p.rot + 270) % 360)) + 90; im.style.transform = `rotate(${im.dataset.v}deg)`;
         });
-        grid.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { if (order.length <= 1) return toast('Mindestens eine Seite muss bleiben', true); order.splice(+b.dataset.d, 1); render(); });
+        grid.querySelectorAll('[data-d]').forEach(b => b.onclick = () => removeAt(+b.dataset.d, b.closest('.pg')));
+        grid.querySelectorAll('.pg[data-k]').forEach(pg => flickToDelete(pg));
+      };
+      // Seite entfernen: wegschnippen/verpuffen, übrige Seiten rücken mit Feder nach
+      const removeAt = async (k, pg, v) => {
+        if (order.length <= 1) { pg && pg.querySelector('.pg-img').animate?.([{ transform: 'translateX(0)' }, { transform: 'translateX(-6px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(0)' }], { duration: 300 }); return toast('Mindestens eine Seite muss bleiben', true); }
+        haptic();
+        if (pg) { pg.style.pointerEvents = 'none'; await poof(pg.querySelector('.pg-img'), v); pg.style.visibility = 'hidden'; }
+        const before = flipCapture([...grid.querySelectorAll('[data-flip]')]);
+        order.splice(k, 1); render();
+        flipPlay(grid, before);
+      };
+      // Anheben (kurz halten) → nach oben wegschnippen. Schnelles Wischen scrollt weiterhin.
+      const flickToDelete = pg => {
+        const im = pg.querySelector('.pg-img');
+        let st = null;
+        const reset = () => { if (!st) return; clearTimeout(st.hold); pg.classList.remove('lift'); st = null; };
+        pg.addEventListener('touchstart', e => {
+          if (e.touches.length > 1 || e.target.closest('.pg-acts')) return;
+          const t = e.touches[0];
+          st = { x: t.clientX, y: t.clientY, armed: false, dy: 0, dx: 0, lt: performance.now(), ly: t.clientY, v: 0 };
+          st.hold = setTimeout(() => { if (!st) return; st.armed = true; pg.classList.add('lift'); im.style.transform = `rotate(${order[+pg.dataset.k]?.rot || 0}deg) scale(1.06)`; haptic(); }, 220);
+        }, { passive: true });
+        pg.addEventListener('touchmove', e => {
+          if (!st) return;
+          const t = e.touches[0], dx = t.clientX - st.x, dy = t.clientY - st.y;
+          if (!st.armed) { if (Math.hypot(dx, dy) > 8) reset(); return; }
+          e.preventDefault();
+          const now = performance.now(); st.v = (t.clientY - st.ly) / Math.max(1, now - st.lt); st.ly = t.clientY; st.lt = now;
+          st.dy = Math.min(dy, dy * 0.2); st.dx = dx * 0.35;
+          const k = Math.min(1, Math.max(0, -st.dy / 140));
+          im.style.transition = 'none';
+          im.style.transform = `translate3d(${st.dx}px,${st.dy}px,0) rotate(${((order[+pg.dataset.k]?.rot || 0) + st.dx * 0.08).toFixed(2)}deg) scale(${1.06 - k * 0.12})`;
+          im.style.opacity = 1 - k * 0.45;
+        }, { passive: false });
+        const end = () => {
+          if (!st) return;
+          const g = st; reset();
+          if (!g.armed) return;
+          if (g.dy < -70 || (g.v < -0.55 && g.dy < -20)) { removeAt(+pg.dataset.k, pg, { vy: g.v, dx: g.dx }); return; }
+          im.style.transition = ''; im.style.opacity = '';
+          im.style.transform = `rotate(${order[+pg.dataset.k]?.rot || 0}deg)`; delete im.dataset.v;
+        };
+        pg.addEventListener('touchend', end); pg.addEventListener('touchcancel', end);
       };
       render();
       el.querySelector('[data-blank]').onclick = () => { blank = true; render(); };

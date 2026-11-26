@@ -1,4 +1,7 @@
 import { icon, hydrateIcons } from './icons.js';
+import { installSprings, scanLaser } from './fx.js';
+
+installSprings();
 
 // ---------- Toast ----------
 let toastTimer;
@@ -12,15 +15,32 @@ export function toast(msg, err = false) {
 }
 
 // ---------- Busy ----------
-let busyEl;
-export function busy(on, text = 'Einen Moment …') {
+// busy(true, text, { scan: bildUrl }) zeigt statt des Spinners eine Seitenvorschau mit Scan-Laser
+// (Texterkennung / Aufbereitung). Folgeaufrufe ohne scan tauschen nur den Text.
+let busyEl, busyStop = null;
+export function busy(on, text = 'Einen Moment …', opts = {}) {
   if (on) {
     if (!busyEl) {
       busyEl = document.createElement('div'); busyEl.className = 'busy'; document.body.appendChild(busyEl);
       busyEl.innerHTML = `<div class="busy-card"><div class="spinner"></div><div class="busy-text"></div></div>`;
     }
-    busyEl.querySelector('.busy-text').textContent = text;   // nur Text tauschen – Spinner läuft weiter
-  } else if (busyEl) { busyEl.remove(); busyEl = null; }
+    if (opts.scan && !busyEl.querySelector('.busy-scan')) {
+      const card = busyEl.querySelector('.busy-card');
+      card.classList.add('scanning');
+      card.querySelector('.spinner').remove();
+      const box = document.createElement('div'); box.className = 'busy-scan';
+      box.innerHTML = `<img alt="">`;
+      card.prepend(box);
+      const img = box.firstChild;
+      img.onload = () => { if (busyEl && !busyStop) busyStop = scanLaser(box, img); };
+      img.src = opts.scan;
+    }
+    busyEl.querySelector('.busy-text').textContent = text;   // nur Text tauschen – Spinner/Laser läuft weiter
+  } else if (busyEl) {
+    busyStop?.(); busyStop = null;
+    const b = busyEl; busyEl = null;
+    if (b.querySelector('.busy-scan')) { b.classList.add('out'); setTimeout(() => b.remove(), 220); } else b.remove();
+  }
 }
 
 // ---------- Bottom Sheet ----------
@@ -37,7 +57,8 @@ export function sheet({ title = '', html = '', onMount, onClose, noHead = false 
     el: sh,
     close() {
       if (api.closed) return; api.closed = true;
-      sh.classList.remove('show'); bd.classList.remove('show');
+      sh.style.transition = ''; sh.style.transform = '';
+      sh.classList.add('closing'); sh.classList.remove('show'); bd.classList.remove('show');
       setTimeout(() => { sh.remove(); bd.remove(); }, 420);
       const i = stack.indexOf(api); if (i >= 0) stack.splice(i, 1);
       onClose && onClose();
@@ -45,11 +66,24 @@ export function sheet({ title = '', html = '', onMount, onClose, noHead = false 
   };
   bd.onclick = () => api.close();
   sh.querySelectorAll('[data-close]').forEach(b => b.onclick = () => api.close());
-  // Wischen nach unten zum Schließen
-  let sy = null, dy = 0;
-  sh.addEventListener('touchstart', e => { if (sh.scrollTop <= 0 && !e.target.closest('textarea,input,canvas,.no-swipe')) { sy = e.touches[0].clientY; dy = 0; } }, { passive: true });
-  sh.addEventListener('touchmove', e => { if (sy == null) return; dy = Math.max(0, e.touches[0].clientY - sy); sh.style.transition = 'none'; sh.style.transform = dy ? `translateY(${dy}px)` : ''; }, { passive: true });
-  sh.addEventListener('touchend', () => { if (sy == null) return; sh.style.transition = ''; sh.style.transform = ''; if (dy > 110) api.close(); sy = null; });
+  // Wischen nach unten zum Schließen – folgt dem Finger (mit Gummiband nach oben),
+  // Loslassen: schneller Wisch oder > 110 px schließt, sonst federt das Sheet zurück
+  let sy = null, dy = 0, vy = 0, lt = 0, ly = 0;
+  const base = () => matchMedia('(min-width: 700px)').matches ? 'translateX(-50%) ' : '';
+  sh.addEventListener('touchstart', e => { if (sh.scrollTop <= 0 && !e.target.closest('textarea,input,canvas,.no-swipe')) { sy = ly = e.touches[0].clientY; dy = 0; vy = 0; lt = performance.now(); } }, { passive: true });
+  sh.addEventListener('touchmove', e => {
+    if (sy == null) return;
+    const y = e.touches[0].clientY, raw = y - sy, now = performance.now();
+    vy = vy * 0.5 + ((y - ly) / Math.max(1, now - lt)) * 0.5; ly = y; lt = now;
+    dy = raw > 0 ? raw : -Math.sqrt(-raw) * 2.2;                     // nach oben nur leicht (Gummiband)
+    if (raw > 0 && sh.scrollTop > 0) return;
+    sh.style.transition = 'none'; sh.style.transform = dy ? `${base()}translate3d(0,${dy.toFixed(1)}px,0)` : '';
+  }, { passive: true });
+  sh.addEventListener('touchend', () => {
+    if (sy == null) return; sy = null;
+    if (dy > 110 || (vy > 0.7 && dy > 24)) return api.close();
+    sh.style.transition = ''; sh.style.transform = '';
+  });
   stack.push(api);
   requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('show'); sh.classList.add('show'); }));
   onMount && onMount(sh, api);
