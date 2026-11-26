@@ -1600,3 +1600,5 @@ svg.layer .handle-ic { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linec
 .gif-pages { flex: 1; min-width: 0; padding: 9px 12px; font-size: 15px; }
 .gif-of { flex: none; color: var(--text3); font-size: 13px; }
 .gif-opts .adj-row { grid-template-columns: 82px 1fr 56px; padding: 0 2px; }
+.pc-canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; visibility: hidden; }
+.pc-canvas.on { visibility: visible; }
