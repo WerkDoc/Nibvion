@@ -10,8 +10,45 @@ const L = () => window.PDFLib;
 // iPhone/iPad: OffscreenCanvas & ImageDecoder in pdf.js führen in WebKit bei bildlastigen PDFs
 // (Buchcover, Fotos) zu extremem Speicherverbrauch → iOS beendet die App. Deshalb dort aus.
 export const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+// Type3-Schriften (z. B. calibre/Chrome-PDFs: OTF-Schriften werden dort als Type3 gespeichert):
+// pdf.js setzt pro Buchstabe einen Clip auf die d1-Box. Bei 4000+ Buchstaben pro Seite sprengt
+// das auf iOS (CoreGraphics-Clipmasken) den Speicher – und schneidet Kanten dünner Glyphen ab.
+// Für reine Vektor-Glyphen (ohne Bilder) ist der Clip überflüssig → entfernen.
+const O = pdfjsLib.OPS;
+const IMG_OPS = new Set([O.paintImageMaskXObject, O.paintImageMaskXObjectGroup, O.paintImageMaskXObjectRepeat,
+  O.paintImageXObject, O.paintImageXObjectRepeat, O.paintInlineImageXObject, O.paintInlineImageXObjectGroup,
+  O.paintSolidColorImageMask]);
+function stripType3Clips(font) {
+  const cp = font?.charProcOperatorList;
+  if (!cp || typeof cp !== 'object') return;
+  for (const g of Object.values(cp)) {
+    const fn = g?.fnArray, args = g?.argsArray;
+    if (!fn || fn[0] !== O.setCharWidthAndBounds || fn.some(f => IMG_OPS.has(f))) continue;
+    fn.shift(); args?.shift?.();
+  }
+}
+let objsPatched = false;
+async function patchObjs(pdf) {
+  if (objsPatched || !pdf.numPages) return;
+  try {
+    const proto = Object.getPrototypeOf((await pdf.getPage(1)).commonObjs);
+    if (objsPatched || typeof proto?.resolve !== 'function') return;
+    const resolve = proto.resolve;
+    proto.resolve = function (id, data) {
+      if (data?.charProcOperatorList) { try { stripType3Clips(data); } catch {} }
+      return resolve.call(this, id, data);
+    };
+    objsPatched = true;
+  } catch {}
+}
+
 /** loadPdf(bytes, { safe }) – safe: Notfallmodus für PDFs, die schon einmal abgestürzt sind */
-export function loadPdf(bytes, { safe = false } = {}) {
+export async function loadPdf(bytes, opts) {
+  const pdf = await openPdf(bytes, opts);
+  await patchObjs(pdf);
+  return pdf;
+}
+function openPdf(bytes, { safe = false } = {}) {
   return pdfjsLib.getDocument({
     data: new Uint8Array(bytes.slice(0)), isEvalSupported: false, useSystemFonts: true,
     isOffscreenCanvasSupported: !IOS, isImageDecoderSupported: !IOS,

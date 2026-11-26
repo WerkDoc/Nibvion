@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.42.6';
+export const VERSION = '1.42.7';
 const $ = id => document.getElementById(id);
 
 applyTheme();

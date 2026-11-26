@@ -3,7 +3,7 @@ import { aiScan } from './aifx.js';
 import { db, uid } from './db.js';
 import { icon, hydrateIcons } from './icons.js';
 import { sheet, toast, busy, confirmDlg, promptDlg, esc, pickFiles, today, haptic } from './ui.js';
-import { pdfjsLib, loadPdf, closePdf, pageInfos, flatten, pagesOp, renderThumb, inkPath, normalizeImage, TEXT_ASC, LINE_H, FONT_CSS, pdfFontInfo } from './pdfcore.js';
+import { pdfjsLib, IOS, loadPdf, closePdf, pageInfos, flatten, pagesOp, renderThumb, inkPath, normalizeImage, TEXT_ASC, LINE_H, FONT_CSS, pdfFontInfo } from './pdfcore.js';
 import { makeSymbol } from './sign.js';
 import { signatureSheet, stampSheet, freshStamp } from './assets.js';
 import { analyzeAll, blankReview, duplexOrder } from './pageorder.js';
@@ -368,7 +368,8 @@ async function renderPageNow(i) {
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     let chunk = 0;
     p.task = page.render({ canvasContext: ctx, viewport: vp });
-    p.task.onContinue = cont => { crumb(`${S}: zeichnen, Abschnitt ${++chunk}`); cont(); };
+    // iOS: zwischen den Abschnitten kurz an Safari zurückgeben (Aufräumen/GC statt Speicherstau)
+    p.task.onContinue = cont => { crumb(`${S}: zeichnen, Abschnitt ${++chunk}`); IOS ? setTimeout(cont, 0) : cont(); };
     crumb(`${S}: zeichnen beginnt`);
     await p.task.promise;
     crumb(`${S}: gezeichnet, wird angezeigt`);
