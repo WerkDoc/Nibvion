@@ -15,6 +15,10 @@ export function loadPdf(bytes, { safe = false } = {}) {
   return pdfjsLib.getDocument({
     data: new Uint8Array(bytes.slice(0)), isEvalSupported: false, useSystemFonts: true,
     isOffscreenCanvasSupported: !IOS, isImageDecoderSupported: !IOS,
+    // iOS: eingebettete Schriften NICHT als Web-Fonts (FontFace) in Safari laden, sondern als
+    // Vektorpfade zeichnen. WebKit stürzt bei manchen eingebetteten Schriften (z. B. InDesign-PDFs
+    // mit Palatino/CFF-Fonts) ab – Rechnungen mit Standardschriften waren nie betroffen.
+    disableFontFace: IOS,
     // Riesige Einzelbilder (> Pixel) werden übersprungen statt den Speicher zu sprengen
     maxImageSize: safe ? 1.6e7 : IOS ? 6e7 : -1,
     canvasMaxAreaInBytes: IOS ? (safe ? 32 : 96) * 1024 * 1024 : -1,
