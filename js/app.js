@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.41.0';
+export const VERSION = '1.42.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -190,6 +190,7 @@ function docMenu(d) {
         ['text', 'Text extrahieren', 'textScan', 'c-blue'],
         ['hf', 'Kopf- & Fußzeile', 'text', 'c-orange'], ['crop', 'Zuschneiden / A4', 'fit', 'c-blue'], ['blankpages', 'Leere Seiten entfernen', 'pageBlank', 'c-violet'], ['spreads', 'Doppelseiten teilen', 'spread', 'c-teal'], ['poster', 'Poster-Druck', 'grid', 'c-violet'],
         ['wm', 'Wasserzeichen', 'drop', 'c-violet'], ['compress', 'Komprimieren', 'compress', 'c-green'], ['protect', 'Mit Passwort schützen', 'shieldLock', 'c-orange'],
+        ['flipbook', 'Als 3D-Flipbook (.html)', 'book', 'c-orange'], ['gif', 'Als animiertes GIF', 'gif', 'c-violet'],
         ['word', 'Als Word exportieren', 'word', 'c-blue'], ['excel', 'Als Excel exportieren', 'excel', 'c-green'], ['rename', 'Umbenennen', 'rename', 'c-gray'], ['del', 'Löschen', 'trash', 'c-red']]
         .map(([a, l, ic, c]) => `<button class="row" data-a="${a}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title" ${a === 'del' ? 'style="color:var(--danger)"' : ''}>${l}</span></span></button>`).join('')}
     </div>`,
@@ -198,6 +199,8 @@ function docMenu(d) {
         const a = b.dataset.a; api.close();
         if (['view', 'edit', 'sign'].includes(a)) return openDoc(d.id, a);
         if (a === 'word') return exportWord(d);
+        if (a === 'flipbook') return flipbookDoc(d);
+        if (a === 'gif') return gifDoc(d);
         if (a === 'excel') return exportExcel(d);
         if (a === 'fav') { d.fav = !d.fav; await db.put('docs', d); haptic(); renderRecents(); return toast(d.fav ? 'Zu Favoriten hinzugefügt' : 'Aus Favoriten entfernt'); }
         if (a === 'move') return moveDocSheet(d, renderRecents);
@@ -282,6 +285,8 @@ const TOOL_GROUPS = [
     { id: 'word', label: 'Word → PDF', sub: 'DOCX als PDF speichern', icon: 'word', c: 'c-blue' },
     { id: 'excel', label: 'Excel → PDF', sub: 'XLSX, XLS oder CSV als PDF', icon: 'excel', c: 'c-green' },
     { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
+    { id: 'flipbook', label: 'Als 3D-Flipbook (.html) exportieren', sub: 'Zum Durchblättern im Browser – wie ein Magazin', icon: 'book', c: 'c-orange' },
+    { id: 'gif', label: 'PDF → Animiertes GIF', sub: 'Seiten als Slideshow mit Übergängen', icon: 'gif', c: 'c-violet' },
     { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern – auch Scans', icon: 'word', c: 'c-blue' },
     { id: 'translate', label: 'Übersetzen', sub: 'Foto oder Kamera – Text in eine andere Sprache', icon: 'translate', c: 'c-violet' },
     { id: 'pdf2excel', label: 'PDF / Scan → Excel', sub: 'Tabellen als bearbeitbare XLSX', icon: 'excel', c: 'c-green' },
@@ -325,6 +330,8 @@ function runTool(id) {
     case 'translate': return translateTool();
     case 'blank': return newBlank();
     case 'pdf2img': return pdfToImages();
+    case 'flipbook': return docPicker('Als 3D-Flipbook exportieren', 'Die PDF wird zu einer einzigen .html-Datei, die man im Browser wie ein Magazin durchblättert – mit 3D-Umblättern, Zoom und Blättersound.', flipbookDoc);
+    case 'gif': return docPicker('PDF → Animiertes GIF', 'Ausgewählte Seiten werden zu einer animierten Slideshow mit Übergängen – mit Live-Vorschau.', gifDoc);
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
     case 'pdf2word': return pdfToWordSheet();
@@ -794,6 +801,14 @@ async function ocrDoc(d, { quiet = false } = {}) {
     console.error(e); if (!quiet) busy(false);
     toast(e?.message?.includes('geladen') ? e.message : 'Texterkennung fehlgeschlagen', true);
   }
+}
+
+// ----- 3D-Flipbook / Animiertes GIF (werden erst bei Bedarf geladen) -----
+async function flipbookDoc(d) {
+  try { (await import('./flipbook.js')).flipbookSheet(d); } catch (e) { console.error(e); toast('Funktion konnte nicht geladen werden', true); }
+}
+async function gifDoc(d) {
+  try { await (await import('./gifexport.js')).gifSheet(d); } catch (e) { console.error(e); toast('Funktion konnte nicht geladen werden', true); }
 }
 
 // ----- Komprimieren -----
