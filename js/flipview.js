@@ -7,6 +7,7 @@
 import { icon } from './icons.js';
 import { haptic } from './ui.js';
 import { createFlip } from './pageflip.js';
+import { createCurl } from './pagecurl.js';
 import { reducedMotion, springFrames } from './fx.js';
 
 export const VIEW_MODES = [['scroll', 'Endlos'], ['single', 'Einzelseite'], ['flip', 'Buch']];
@@ -82,7 +83,26 @@ export function flipView({ pdf, start = 0, title = '', mode = 'flip', lowMem = f
       }
       return job;
     }
-    const preload = () => [V.i + 1, V.i - 1].forEach(k => { if (k >= 0 && k < N) render(k).catch(() => {}); });
+    const preload = () => [V.i + 1, V.i - 1].forEach(k => { if (k >= 0 && k < N) Promise.resolve(V.mode === 'flip' ? image(k) : render(k)).catch(() => {}); });
+
+    // Fertig dekodiertes Seitenbild für das WebGL-Umblättern (sofort, wenn schon geladen – sonst Promise)
+    const imgs = new Map();
+    function image(i) {
+      const W = V.W, H = V.H, key = `${i}@${W}x${H}`, hit = imgs.get(key);
+      if (hit) return 'v' in hit ? hit.v : hit.p;
+      const e = {};
+      e.p = render(i).then(async u => {
+        if (!u) return null;
+        const img = new Image(); img.src = u;
+        await img.decode();
+        const r = fitIn(await dims(i), W, H);
+        return { img, fit: [r.x / W, r.y / H, r.w / W, r.h / H] };
+      });
+      e.p.then(v => { e.v = v; }, () => imgs.delete(key));
+      imgs.set(key, e);
+      for (const k of [...imgs.keys()]) { const [pi, sz] = k.split('@'); if (sz !== `${W}x${H}` || Math.abs(+pi - V.i) > 2) imgs.delete(k); }
+      return e.p;
+    }
 
     /** Fläche für Seite i, Ausschnitt x0..x0+sw (für Streifen) */
     function face(i, x0 = 0, sw = V.W, W = V.W, H = V.H) {
@@ -112,12 +132,15 @@ export function flipView({ pdf, start = 0, title = '', mode = 'flip', lowMem = f
       V.flip?.destroy(); V.flip = null;
       el.classList.toggle('m-flip', m === 'flip'); el.classList.toggle('m-single', m === 'single');
       if (m === 'flip') {
-        V.flip = createFlip({
-          book, surface: stage, strips: 16, face, setBase,
+        const opts = {
+          book, surface: stage, strips: 16, face, setBase, image,
           count: () => N, index: () => V.i, commit,
           onTap: x => { if (x > 0.72) V.flip.go(1); else if (x < 0.28) V.flip.go(-1); else toggleUi(); },
           onEdge: () => nudge(),
-        });
+        };
+        // echtes Rollen per WebGL; ohne WebGL die bisherige Streifen-Biegung
+        V.flip = createCurl(opts) || createFlip(opts);
+        preload();
       }
     }
     el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
