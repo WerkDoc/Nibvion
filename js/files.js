@@ -17,6 +17,14 @@ export const ID_CATS = [
 ];
 export const idCat = id => ID_CATS.find(c => c.id === id) || ID_CATS[ID_CATS.length - 1];
 
+// Farb-Tags: Dokumente merken sich meta.tags = ['red', …], Ordner meta.color = 'blue'
+export const TAGS = [
+  { id: 'red', label: 'Rot', c: '#ff453a' }, { id: 'orange', label: 'Orange', c: '#ff9f0a' }, { id: 'yellow', label: 'Gelb', c: '#ffd60a' },
+  { id: 'green', label: 'Grün', c: '#30d158' }, { id: 'blue', label: 'Blau', c: '#0a84ff' }, { id: 'purple', label: 'Lila', c: '#bf5af2' },
+];
+const tagC = id => TAGS.find(t => t.id === id)?.c;
+let filt = null;       // Filter: null = alle, 'fav' oder Tag-ID
+
 let ctx = {};
 let cur = null;        // offener Ordner (id) oder null = Übersicht
 let curCat = null;     // offene Kategorie im ID-Ordner
@@ -65,9 +73,26 @@ export async function renderFiles() {
   if (!folder) {
     head.innerHTML = sel ? selHead() : `<h1 class="page-title">Dateien</h1><div class="fl-hbtns"><button class="icon-btn" data-sel aria-label="Auswählen">${icon('checkSquare')}</button><button class="icon-btn" data-action="search" aria-label="Suchen">${icon('search')}</button></div>`;
     const ids = new Set(fs.map(f => f.id));
-    const loose = sortDocs(docs.filter(d => !d.folder || !ids.has(d.folder)));
     const count = id => docs.filter(d => d.folder === id).length;
-    list.innerHTML = `
+    if (filt) {
+      // Filter aktiv: passende Dokumente aus allen Ordnern + Ordner mit dieser Farbe
+      const hit = sortDocs(docs.filter(matchFilt));
+      const hitF = filt === 'fav' ? [] : fs.filter(f => f.color === filt);
+      const t = TAGS.find(x => x.id === filt);
+      list.innerHTML = `${filterBar(docs, fs)}
+        <div class="section-row"><h2 class="section-title">${t ? `<i class="ff-dot" style="background:${t.c}"></i>${t.label}` : 'Favoriten'} <span class="fl-count">(${hit.length})</span></h2></div>
+        <div class="recent-list">
+          ${hitF.map(f => folderRow(f, count(f.id), 0)).join('')}
+          ${docRows(hit, hitF.length)}
+        </div>
+        ${!hit.length && !hitF.length ? `<div class="empty">${icon('tag')}<b>Nichts markiert</b>Tippe bei einer Datei auf ⋯ → „Farb-Tags“.</div>` : ''}
+        <div class="bottom-space"></div>`;
+      bindFolderRows(list, fs); bindFilter(list);
+      shown = hit; bindDocRows(list, hit); bindHead(head);
+      return;
+    }
+    const loose = sortDocs(docs.filter(d => !d.folder || !ids.has(d.folder)));
+    list.innerHTML = `${filterBar(docs, fs)}
       <div class="fl-cards">
         <button class="fl-card" data-c="docs"><span class="qt-ic c-blue">${icon('filePlus')}</span><span>Dokumente importieren</span></button>
         <button class="fl-card" data-c="imgs"><span class="qt-ic c-teal">${icon('images')}</span><span>Bilder importieren</span></button>
@@ -75,10 +100,7 @@ export async function renderFiles() {
       </div>
       <div class="section-row"><h2 class="section-title">Alle <span class="fl-count">(${docs.length})</span></h2></div>
       <div class="recent-list">
-        ${fs.map((f, i) => `<div class="doc-row fl-row${sel ? ' off' : ''}" data-f="${f.id}" style="animation-delay:${Math.min(i, 8) * 40}ms">
-          <span class="fl-ic ${f.type === 'id' ? 'id' : ''}">${icon(f.type === 'id' ? 'idFolder' : 'folder')}</span>
-          <button class="doc-info" data-open><div class="doc-name">${esc(f.name)}</div><div class="doc-meta">${f.type === 'id' ? 'ID-Ordner · ' : ''}${count(f.id)} ${count(f.id) === 1 ? 'Dokument' : 'Dokumente'}</div></button>
-          <button class="doc-more" data-fmore aria-label="Mehr">${icon('more')}</button></div>`).join('')}
+        ${fs.map((f, i) => folderRow(f, count(f.id), i)).join('')}
         ${docRows(loose, fs.length)}
       </div>
       ${!fs.length && !loose.length ? `<div class="empty">${icon('folder')}<b>Noch nichts hier</b>Importiere Dokumente oder erstelle einen Ordner.</div>` : ''}
@@ -86,12 +108,7 @@ export async function renderFiles() {
     list.querySelector('[data-c="docs"]').onclick = () => ctx.importDocs();
     list.querySelector('[data-c="imgs"]').onclick = () => ctx.importImages();
     list.querySelector('[data-c="new"]').onclick = () => newFolderSheet();
-    list.querySelectorAll('[data-f]').forEach(r => {
-      const f = fs.find(x => x.id === r.dataset.f);
-      r.querySelector('[data-open]').onclick = () => { haptic(); openFolder(f.id); };
-      r.querySelector('.fl-ic').onclick = () => { haptic(); openFolder(f.id); };
-      r.querySelector('[data-fmore]').onclick = () => folderMenu(f);
-    });
+    bindFolderRows(list, fs); bindFilter(list);
     shown = loose; bindDocRows(list, loose); bindHead(head);
     return;
   }
@@ -106,7 +123,7 @@ export async function renderFiles() {
     ${canSel ? `<button class="icon-btn" data-sel aria-label="Auswählen">${icon('checkSquare')}</button>` : ''}
     <button class="icon-btn" data-fm aria-label="Mehr">${icon('more')}</button>`;
   if (!sel) {
-    head.querySelector('[data-back]').onclick = () => { haptic(); if (curCat) curCat = null; else cur = null; renderFiles(); };
+    head.querySelector('[data-back]').onclick = () => { haptic(); filt = null; if (curCat) curCat = null; else cur = null; renderFiles(); };
     head.querySelector('[data-fm]').onclick = () => cat ? catAdd(folder, cat) : folderMenu(folder);
   }
   bindHead(head);
@@ -128,20 +145,54 @@ export async function renderFiles() {
     return;
   }
 
-  shown = sortDocs(cat ? inF.filter(d => (d.idCat || 'other') === cat.id) : inF);
-  list.innerHTML = `
+  shown = sortDocs((cat ? inF.filter(d => (d.idCat || 'other') === cat.id) : inF).filter(matchFilt));
+  list.innerHTML = `${inF.some(d => d.tags?.length || d.fav) || filt ? filterBar(inF, []) : ''}
     <div class="fl-actions">
       ${cat ? `<button class="btn primary" data-add>${icon('plus')} ${esc(cat.label)} hinzufügen</button>`
       : `<button class="btn" data-scan>${icon('scan')} Scannen</button><button class="btn" data-imp>${icon('filePlus')} Importieren</button>`}
     </div>
     <div class="recent-list">${docRows(shown, 0)}</div>
-    ${!shown.length ? `<div class="empty">${icon('folder')}<b>Ordner ist leer</b>Scanne oder importiere Dokumente – sie landen direkt hier.</div>` : ''}
+    ${!shown.length ? (filt ? `<div class="empty">${icon('tag')}<b>Keine passenden Dateien</b>In diesem Ordner hat keine Datei diesen Filter.</div>` : `<div class="empty">${icon('folder')}<b>Ordner ist leer</b>Scanne oder importiere Dokumente – sie landen direkt hier.</div>`) : ''}
     <div class="bottom-space"></div>`;
+  bindFilter(list);
   list.querySelector('[data-scan]')?.addEventListener('click', () => ctx.scan());
   list.querySelector('[data-imp]')?.addEventListener('click', () => ctx.importDocs());
   list.querySelector('[data-add]')?.addEventListener('click', () => ctx.captureId(folder, cat));
   bindDocRows(list, shown);
 }
+
+function folderRow(f, n, i) {
+  return `<div class="doc-row fl-row${sel ? ' off' : ''}" data-f="${f.id}" style="animation-delay:${Math.min(i, 8) * 40}ms">
+    <span class="fl-ic ${f.type === 'id' ? 'id' : ''}" ${f.color && tagC(f.color) ? `style="--fc:${tagC(f.color)}"` : ''}>${icon(f.type === 'id' ? 'idFolder' : 'folder')}</span>
+    <button class="doc-info" data-open><div class="doc-name">${esc(f.name)}</div><div class="doc-meta">${f.type === 'id' ? 'ID-Ordner · ' : ''}${n} ${n === 1 ? 'Dokument' : 'Dokumente'}</div></button>
+    <button class="doc-more" data-fmore aria-label="Mehr">${icon('more')}</button></div>`;
+}
+function bindFolderRows(list, fs) {
+  list.querySelectorAll('[data-f]').forEach(r => {
+    const f = fs.find(x => x.id === r.dataset.f); if (!f) return;
+    r.querySelector('[data-open]').onclick = () => { haptic(); filt = null; openFolder(f.id); };
+    r.querySelector('.fl-ic').onclick = () => { haptic(); filt = null; openFolder(f.id); };
+    r.querySelector('[data-fmore]').onclick = () => folderMenu(f);
+  });
+}
+
+function filterBar(docs, fs) {
+  const n = id => id === 'fav' ? docs.filter(d => d.fav).length : docs.filter(d => d.tags?.includes(id)).length + fs.filter(f => f.color === id).length;
+  const anyFav = docs.some(d => d.fav);
+  return `<div class="fl-filter" data-filter>
+    <button class="ff-chip${!filt ? ' on' : ''}" data-ft="">Alle</button>
+    ${anyFav || filt === 'fav' ? `<button class="ff-chip${filt === 'fav' ? ' on' : ''}" data-ft="fav">${icon('heartFill')}Favoriten</button>` : ''}
+    ${TAGS.map(t => { const c = n(t.id); return `<button class="ff-chip ff-tag${filt === t.id ? ' on' : ''}${c ? '' : ' empty'}" data-ft="${t.id}" style="--tc:${t.c}" aria-label="${t.label}"><i></i><span>${t.label}</span>${c ? `<small>${c}</small>` : ''}</button>`; }).join('')}
+  </div>`;
+}
+function bindFilter(list) {
+  list.querySelectorAll('[data-ft]').forEach(b => b.onclick = () => {
+    const v = b.dataset.ft || null; haptic();
+    filt = filt === v ? null : v; renderFiles();
+    requestAnimationFrame(() => document.querySelector('[data-filter] .ff-chip.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }));
+  });
+}
+const matchFilt = d => !filt || (filt === 'fav' ? d.fav : d.tags?.includes(filt));
 
 function docRows(docs, offset) {
   return docs.map((d, i) => `
@@ -149,7 +200,7 @@ function docRows(docs, offset) {
       <div class="doc-thumb" style="background-image:url('${d.thumb || ''}')"></div>
       <button class="doc-info" data-open>
         <div class="doc-name">${d.fav ? `<span class="doc-fav">${icon('heartFill')}</span>` : ''}${esc(d.name)}</div>
-        <div class="doc-meta">${fmtDate(d.updated)} · ${fmtSize(d.size || 0)} · ${d.pages || 1} S.</div>
+        <div class="doc-meta">${d.tags?.length ? `<span class="doc-tags">${d.tags.map(t => tagC(t) ? `<i style="background:${tagC(t)}"></i>` : '').join('')}</span>` : ''}${fmtDate(d.updated)} · ${fmtSize(d.size || 0)} · ${d.pages || 1} S.</div>
       </button>
       ${sel ? `<span class="sel-ck">${icon('check')}</span>` : `<button class="doc-more" data-more aria-label="Mehr">${icon('more')}</button>`}
     </div>`).join('');
@@ -238,8 +289,10 @@ async function selAction(a) {
     const allFav = docs.every(d => d.fav);
     sheet({
       title: `${docs.length} ausgewählt`,
-      html: `<div class="menu"><button class="row" data-m="fav"><span class="row-ic c-red">${icon(allFav ? 'heartFill' : 'heart')}</span><span class="row-main"><span class="row-title">${allFav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}</span></span></button></div>`,
+      html: `<div class="menu"><button class="row" data-m="fav"><span class="row-ic c-red">${icon(allFav ? 'heartFill' : 'heart')}</span><span class="row-main"><span class="row-title">${allFav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}</span></span></button>
+        <button class="row" data-m="tags"><span class="row-ic c-orange">${icon('tag')}</span><span class="row-main"><span class="row-title">Farb-Tags</span></span></button></div>`,
       onMount(el, api) {
+        el.querySelector('[data-m="tags"]').onclick = () => { api.close(); tagSheet(docs, () => { endSel(); ctx.renderRecents?.(); }); };
         el.querySelector('[data-m="fav"]').onclick = async () => {
           api.close();
           for (const d of docs) { d.fav = !allFav; await db.put('docs', d); }
@@ -282,6 +335,7 @@ function folderMenu(f) {
     html: `<div class="menu">
       <button class="row" data-a="open"><span class="row-ic c-blue">${icon('folder')}</span><span class="row-main"><span class="row-title">Öffnen</span></span></button>
       <button class="row" data-a="rename"><span class="row-ic c-gray">${icon('rename')}</span><span class="row-main"><span class="row-title">Umbenennen</span></span></button>
+      <button class="row" data-a="color"><span class="row-ic c-orange">${icon('tag')}</span><span class="row-main"><span class="row-title">Farbe</span></span>${f.color ? `<i class="ff-dot" style="background:${tagC(f.color)}"></i>` : ''}</button>
       <button class="row" data-a="del"><span class="row-ic c-red">${icon('trash')}</span><span class="row-main"><span class="row-title" style="color:var(--danger)">Ordner löschen</span><span class="row-sub">Die Dokumente bleiben erhalten</span></span></button>
     </div>`,
     onMount(el, api) {
@@ -289,6 +343,7 @@ function folderMenu(f) {
         api.close();
         const a = b.dataset.a;
         if (a === 'open') return openFolder(f.id);
+        if (a === 'color') return folderColorSheet(f);
         if (a === 'rename') {
           const n = await promptDlg('Ordner umbenennen', f.name);
           if (n) { f.name = n.trim(); await db.put('assets', f); renderFiles(); }
@@ -338,6 +393,53 @@ export async function moveDocSheet(d, onDone) {
         });
       });
       el.querySelector('[data-new]').onclick = async () => { api.close(); const f = await createFolder('normal'); if (f) put(f.id, null); };
+    },
+  });
+}
+
+// ---------- Farb-Tags ----------
+/** Tags für ein oder mehrere Dokumente setzen (Mehrfachauswahl: an = alle haben den Tag) */
+export function tagSheet(docs, onDone) {
+  docs = Array.isArray(docs) ? docs : [docs];
+  const state = t => { const n = docs.filter(d => d.tags?.includes(t)).length; return n === docs.length ? 'on' : n ? 'some' : ''; };
+  sheet({
+    title: docs.length === 1 ? 'Farb-Tags' : `Farb-Tags für ${docs.length} Dateien`,
+    html: `<div class="tg-grid" data-grid></div>
+      <p class="tg-note">Tags erscheinen als Punkte neben dem Dateinamen. Unter „Dateien“ kannst du oben danach filtern.</p>
+      <div class="btn-row"><button class="btn" data-clear>${icon('x')} Alle entfernen</button><button class="btn primary" data-ok>${icon('check')} Fertig</button></div>`,
+    onMount(el, api) {
+      const grid = el.querySelector('[data-grid]');
+      const render = () => {
+        grid.innerHTML = TAGS.map(t => `<button class="tg-b ${state(t.id)}" data-t="${t.id}" style="--tc:${t.c}"><i>${icon('check')}</i><span>${t.label}</span></button>`).join('');
+        grid.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
+          const t = b.dataset.t, add = state(t) !== 'on'; haptic();
+          for (const d of docs) {
+            const set = new Set(d.tags || []); add ? set.add(t) : set.delete(t);
+            d.tags = TAGS.map(x => x.id).filter(x => set.has(x));
+            if (!d.tags.length) delete d.tags;
+            await db.put('docs', d);
+          }
+          render(); renderFiles();
+        });
+      };
+      el.querySelector('[data-clear]').onclick = async () => { for (const d of docs) if (d.tags) { delete d.tags; await db.put('docs', d); } haptic(); render(); renderFiles(); };
+      el.querySelector('[data-ok]').onclick = () => api.close();
+      render();
+    },
+    onClose: () => onDone?.(),
+  });
+}
+
+function folderColorSheet(f) {
+  sheet({
+    title: `Farbe für „${f.name}“`,
+    html: `<div class="tg-grid">${TAGS.map(t => `<button class="tg-b ${f.color === t.id ? 'on' : ''}" data-t="${t.id}" style="--tc:${t.c}"><i>${icon('check')}</i><span>${t.label}</span></button>`).join('')}
+      <button class="tg-b none ${!f.color ? 'on' : ''}" data-t="" style="--tc:var(--text3)"><i>${icon('check')}</i><span>Keine</span></button></div>`,
+    onMount(el, api) {
+      el.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
+        haptic(); if (b.dataset.t) f.color = b.dataset.t; else delete f.color;
+        await db.put('assets', f); api.close(); renderFiles();
+      });
     },
   });
 }

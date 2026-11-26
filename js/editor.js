@@ -1144,6 +1144,7 @@ function moreSheet() {
       <div class="menu" style="margin-bottom:12px">
         <button class="row" data-a="reader"><span class="row-ic c-teal">${icon('book')}</span><span class="row-main"><span class="row-title">Lesemodus</span><span class="row-sub">Fließtext fürs Handy · Schriftgröße & Farben</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="present"><span class="row-ic c-violet">${icon('present')}</span><span class="row-main"><span class="row-title">Präsentieren</span><span class="row-sub">Vollbild mit Laserpointer</span></span>${icon('chevronRight')}</button>
+        <button class="row" data-a="info"><span class="row-ic c-blue">${icon('gauge')}</span><span class="row-main"><span class="row-title">Dokument-Info & Qualitäts-Check</span><span class="row-sub">Format, Schriften, Bildauflösung, Formularfelder</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="fix"><span class="row-ic c-red">${icon('lock')}</span><span class="row-main"><span class="row-title">Als schreibgeschütztes PDF fixieren</span><span class="row-sub">Flatten: Felder, Stempel, Unterschriften fest einbrennen</span></span>${icon('chevronRight')}</button>
       </div>
       <div class="menu">
@@ -1158,6 +1159,7 @@ function moreSheet() {
         if (a === 'toc') return tocSheet();
         if (a === 'present') return present();
         if (a === 'reader') return reader();
+        if (a === 'info') return docInfo();
         if (a === 'fix') return fixSheet();
         try {
           if (a === 'share' || a === 'download') {
@@ -1183,7 +1185,8 @@ function moreSheet() {
             busy(false); toast('Kopie gespeichert');
           }
           if (a === 'rename') {
-            const n = await promptDlg('Umbenennen', E.doc.name.replace(/\.pdf$/i, ''));
+            const { renameSheet } = await import('./titles.js');
+            const n = await renameSheet(E.doc.name.replace(/\.pdf$/i, ''), async () => ({ pdf: E.pdf }));
             if (n) { E.doc.name = n + '.pdf'; await saveNow(); toast('Umbenannt'); }
           }
           if (a === 'delete') {
@@ -1214,6 +1217,17 @@ async function present() {
     if (E.open && last !== currentPage()) { const p = E.pages[last]; if (p) $('ed-scroll').scrollTop = Math.max(0, p.el.offsetTop - 12); updPageChip(); rerenderVisible(); }
   } catch (e) { console.error(e); busy(false); toast('Präsentation konnte nicht gestartet werden', true); }
   finally { if (temp) setTimeout(() => closePdf(temp), 400); }
+}
+
+// ======================= Dokument-Info & Qualitäts-Check =======================
+async function docInfo() {
+  busy(true, 'Dokument wird geprüft …');
+  try {
+    const { analyze, preflightSheet } = await import('./preflight.js');
+    const R = await analyze(E.pdf, E.bytes, (i, n) => busy(true, n > 3 ? `Seite ${i} von ${n} wird geprüft …` : 'Dokument wird geprüft …'));
+    busy(false);
+    preflightSheet(R, E.doc.name);
+  } catch (e) { console.error(e); busy(false); toast('Prüfung fehlgeschlagen', true); }
 }
 
 // ======================= Lesemodus =======================
