@@ -12,6 +12,7 @@ import { haptic, esc } from './ui.js';
 import { pdfjsLib } from './pdfcore.js';
 import { settings } from './settings.js';
 import { createFlip } from './pageflip.js';
+import { createCurl } from './pagecurl.js';
 
 const THEMES = { light: 'Hell', sepia: 'Sepia', dark: 'Dunkel' };
 const LINE_H = { 1.4: 'Eng', 1.6: 'Normal', 1.85: 'Weit' };
@@ -324,6 +325,62 @@ export function readerMode({ pdf, title = '', start = 0 }) {
       dst.forEach((d, k) => { try { d.getContext('2d').drawImage(src[k], 0, 0); } catch {} });
       f.appendChild(c); return f;
     };
+    // Seite i als Bild für das WebGL-Rollen: Text wird Wort für Wort an genau die Stelle gemalt,
+    // an der ihn der Browser gesetzt hat (inkl. Silbentrennung) – schnell, ohne html2canvas.
+    const css = n => getComputedStyle(n);
+    const rgb = col => { const m = col.match(/[\d.]+/g) || [255, 255, 255]; return [m[0] / 255, m[1] / 255, m[2] / 255]; };
+    function rasterPage(i) {
+      const W = pw(), H = sc.clientHeight, dpr = Math.min(3, devicePixelRatio || 1);
+      const c = document.createElement('canvas'); c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+      const g = c.getContext('2d'); g.scale(dpr, dpr);
+      const st = css(el), bg = st.getPropertyValue('--rbg').trim() || '#fff', line = st.getPropertyValue('--rline').trim();
+      g.fillStyle = bg; g.fillRect(0, 0, W, H);
+      const sr = sc.getBoundingClientRect(), ox = art.getBoundingClientRect().left + i * W, oy = sr.top;
+      const onPage = r => r.width > 0 && r.right > ox + 1 && r.left < ox + W - 1;
+      // Zierlinien der Seitenmarken, Platzhalter für Scans, Bilder
+      art.querySelectorAll('.rd-pno').forEach(n => {
+        const r = n.getBoundingClientRect(); if (!onPage(r)) return;
+        const t = n.firstElementChild?.getBoundingClientRect(); if (!t) return;
+        g.fillStyle = line; const y = Math.round(r.top + r.height / 2 - oy);
+        g.fillRect(r.left - ox, y, t.left - 10 - r.left, 1); g.fillRect(t.right + 10 - ox, y, r.right - t.right - 10, 1);
+      });
+      art.querySelectorAll('.rd-scan').forEach(n => {
+        const r = n.getBoundingClientRect(); if (!onPage(r) || n.querySelector('canvas')) return;
+        g.fillStyle = line; g.beginPath(); g.roundRect ? g.roundRect(r.left - ox, r.top - oy, r.width, r.height, 10) : g.rect(r.left - ox, r.top - oy, r.width, r.height); g.fill();
+      });
+      art.querySelectorAll('canvas').forEach(n => { const r = n.getBoundingClientRect(); if (onPage(r)) try { g.drawImage(n, r.left - ox, r.top - oy, r.width, r.height); } catch {} });
+      // Text
+      const rng = document.createRange(), tw = document.createTreeWalker(art, NodeFilter.SHOW_TEXT);
+      let lastEl = null, asc = 0, desc = 0;
+      for (let tn = tw.nextNode(); tn; tn = tw.nextNode()) {
+        const pe = tn.parentElement; if (!pe || !tn.data.trim()) continue;
+        rng.selectNodeContents(tn);
+        if (![...rng.getClientRects()].some(onPage)) continue;
+        if (pe !== lastEl) {
+          lastEl = pe; const s = css(pe);
+          g.font = `${s.fontStyle} ${s.fontWeight} ${s.fontSize} ${s.fontFamily}`; g.fillStyle = s.color; g.textBaseline = 'alphabetic';
+          const m = g.measureText('Hg'), fs = parseFloat(s.fontSize);
+          asc = m.fontBoundingBoxAscent || fs * 0.8; desc = m.fontBoundingBoxDescent || fs * 0.2;
+          try { g.letterSpacing = s.letterSpacing === 'normal' ? '0px' : s.letterSpacing; } catch {}
+        }
+        const up = css(pe).textTransform === 'uppercase';
+        const put = (txt, r) => { if (onPage(r)) g.fillText(up ? txt.toUpperCase() : txt, r.left - ox, r.top - oy + (r.height - asc - desc) / 2 + asc); };
+        for (const w of tn.data.matchAll(/\S+/g)) {
+          const a = w.index, b = a + w[0].length;
+          rng.setStart(tn, a); rng.setEnd(tn, b);
+          const rs = rng.getClientRects();
+          if (rs.length <= 1) { if (rs[0]) put(w[0], rs[0]); continue; }
+          // Wort über zwei Zeilen (Silbentrennung): Trennstelle suchen
+          let k = a + 1;
+          for (; k < b; k++) { rng.setEnd(tn, k + 1); if (rng.getClientRects().length > 1) break; }
+          const p1 = tn.data.slice(a, k), p2 = tn.data.slice(k, b);
+          put(/[-‐–]$/.test(p1) ? p1 : p1 + '-', rs[0]);
+          rng.setStart(tn, k); rng.setEnd(tn, b); const r2 = rng.getClientRects()[0];
+          if (r2) put(p2, r2);
+        }
+      }
+      return { img: c, fit: [0, 0, 1, 1] };
+    }
     function setPaged(on) {
       const r = S.paged ? S.pg / Math.max(1, pages() - 1) : sc.scrollTop / Math.max(1, sc.scrollHeight - sc.clientHeight);
       S.paged = on; apply();
@@ -331,12 +388,15 @@ export function readerMode({ pdf, title = '', start = 0 }) {
       if (on) {
         sc.scrollTop = 0; sc.style.setProperty('--pw', pw() + 'px');
         setPg(Math.round(r * (pages() - 1)));
-        flip = createFlip({
-          book: sc, surface: sc, strips: 3, face,
+        const opts = {
+          book: sc, surface: sc, strips: 3, face, spine: 0,
+          image: rasterPage, paper: () => rgb(css(el).backgroundColor),
           setBase: i => { art.style.transform = `translate3d(${-i * pw()}px,0,0)`; },
           count: pages, index: () => S.pg, commit: i => { setPg(i); haptic(); },
           onTap: x => { if (S.panel) { S.panel = false; apply(); return; } if (x > 0.7) flip.go(1); else if (x < 0.3) flip.go(-1); },
-        });
+        };
+        // echtes Rollen per WebGL; ohne WebGL die bisherige Biegung
+        flip = createCurl(opts) || createFlip(opts);
       } else {
         art.style.transform = '';
         requestAnimationFrame(() => { sc.scrollTop = r * (sc.scrollHeight - sc.clientHeight); onScroll(); });
