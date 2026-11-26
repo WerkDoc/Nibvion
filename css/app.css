@@ -374,7 +374,8 @@ html.splashing, html.splashing body { background: var(--bg); }
 
 /* Symbol-Kacheln mit Glanz von oben und Schatten */
 .qt-ic, .row-ic, .menu-grid .qt-ic { background-image: var(--ic-shine); box-shadow: var(--ic-depth); }
-.qt-ic .ico, .row-ic .ico { filter: drop-shadow(0 1px 1px rgba(0,0,0,.12)); }
+/* kein filter auf SVG: iOS-Safari malt gefilterte SVGs in scrollenden Sheets nach dem Scrollen nicht neu (Icons verschwinden) */
+.qt-ic, .row-ic { -webkit-transform: translateZ(0); transform: translateZ(0); }
 
 /* Großer Button „PDF öffnen“ */
 .hero { box-shadow: inset 0 1px 0 rgba(255,255,255,.4), inset 0 -3px 0 rgba(0,0,0,.10), 0 4px 8px rgba(255,106,91,.22), 0 16px 30px -10px rgba(255,106,91,.6); }
