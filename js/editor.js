@@ -352,36 +352,41 @@ async function renderPageNow(i) {
   if (info.w * info.h * rs * rs > maxPx) rs = Math.sqrt(maxPx / (info.w * info.h));
   if (Math.abs(p.rs - rs) < 0.01) return;
   p.task?.cancel?.();
-  let c = null;
+  let c = null, beat = null;
+  const S = `Seite ${i + 1}`;
+  // Herzschlag: läuft die App noch, wird der letzte Schritt jede Sekunde mit Wartezeit neu notiert.
+  // So zeigt „Letzter Absturz“, ob iOS die App beendet hat (kurze Zeit) oder sie hängen blieb (lange Zeit).
+  let step = '', since = Date.now();
+  const mark = t => { step = t; since = Date.now(); crumb(t); };
   try {
-    const S = `Seite ${i + 1}`;
-    crumb(`${S}: wird geladen`);
+    beat = setInterval(() => { const s = Math.round((Date.now() - since) / 1000); if (s >= 1) crumb(`${step} (läuft seit ${s} s)`); }, 1000);
+    mark(`${S}: wird geladen`);
     const page = await E.pdf.getPage(i + 1);
-    crumb(`${S}: Inhalte lesen`);
-    const ops = await page.getOperatorList();                 // Parsen im Worker – getrennt vom Zeichnen
-    crumb(`${S}: ${ops.fnArray.length} Befehle gelesen`);
     const vp = page.getViewport({ scale: rs });
     c = document.createElement('canvas');
     c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
-    crumb(`${S}: Leinwand ${c.width}×${c.height}`);
+    mark(`${S}: Leinwand ${c.width}×${c.height}`);
     const ctx = c.getContext('2d', { willReadFrequently: false });
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     let chunk = 0;
+    // Kein separates getOperatorList() mehr: das las jede Seite (inkl. Bilder) ein zweites Mal ein
     p.task = page.render({ canvasContext: ctx, viewport: vp });
     // iOS: zwischen den Abschnitten kurz an Safari zurückgeben (Aufräumen/GC statt Speicherstau)
-    p.task.onContinue = cont => { crumb(`${S}: zeichnen, Abschnitt ${++chunk}`); IOS ? setTimeout(cont, 0) : cont(); };
-    crumb(`${S}: zeichnen beginnt`);
+    p.task.onContinue = cont => { mark(`${S}: zeichnen, Abschnitt ${++chunk}`); IOS ? setTimeout(cont, 0) : cont(); };
+    mark(`${S}: zeichnen beginnt`);
     await p.task.promise;
-    crumb(`${S}: gezeichnet, wird angezeigt`);
+    mark(`${S}: gezeichnet, wird angezeigt`);
     p.task = null;
     const old = p.canvas; p.el.replaceChild(c, old);
     old.width = old.height = 0;
     p.canvas = c; p.rs = rs; c = null;
     p.el.querySelector('.ph')?.remove();
     page.cleanup();                                         // dekodierte Bilder sofort wieder freigeben
-    crumb(`Seite ${i + 1} fertig`);
-  } catch (err) { if (err?.name !== 'RenderingCancelledException') console.warn(err); }
-  finally { if (c) c.width = c.height = 0; }              // abgebrochene Canvas sofort freigeben (iOS)
+    crumb(`${S} fertig`);
+  } catch (err) {
+    if (err?.name !== 'RenderingCancelledException') { console.warn(err); crumb(`${S}: Fehler – ${String(err?.message || err).slice(0, 80)}`); }
+  }
+  finally { clearInterval(beat); if (c) c.width = c.height = 0; }  // abgebrochene Canvas sofort freigeben (iOS)
 }
 function freePage(i) {
   const p = E.pages[i]; if (!p || !p.rs) return;
