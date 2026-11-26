@@ -16,9 +16,12 @@ export function presentMode({ pdf, start = 0, title = '' }) {
     el.innerHTML = `
       <div class="pres-stage" data-stage></div>
       <canvas class="pres-laser" data-laser></canvas>
+      <canvas class="pres-spot" data-spot></canvas>
+      <div class="pres-shape" data-shape><button data-v="rect" class="on"><i class="sh-r"></i>Rechteck</button><button data-v="ellipse"><i class="sh-e"></i>Kreis</button></div>
       <div class="pres-top">
         <button class="pres-btn" data-x aria-label="Beenden">${icon('x')}</button>
         <div class="pres-title">${title.replace(/[<>&]/g, '')}</div>
+        <button class="pres-btn pres-sp" data-sp aria-label="Spotlight / Fokus">${icon('spotlight')}<span>Fokus</span></button>
         <button class="pres-btn pres-lz" data-lz aria-label="Laserpointer"><span class="pres-dot"></span><span>Laser</span></button>
       </div>
       <div class="pres-bottom">
@@ -92,13 +95,13 @@ export function presentMode({ pdf, start = 0, title = '' }) {
     }
     const go = d => {
       const n = P.i + d; if (n < 0 || n >= N) { bump(d); return; }
-      P.i = n; haptic(); show(d); wakeUi();
+      P.i = n; haptic(); spotClear(); show(d); wakeUi();
     };
     const bump = d => { const c = stage.querySelector('.pres-page:not(.leaving)'); if (!c) return; c.style.transform = `translateX(${-d * 3}%)`; setTimeout(() => c.style.transform = '', 160); };
 
     // ---------- Bedienelemente ein-/ausblenden ----------
     const setUi = on => { P.ui = on; el.classList.toggle('ui-off', !on); };
-    const wakeUi = () => { setUi(true); clearTimeout(P.hideT); P.hideT = setTimeout(() => { if (!P.laser) setUi(false); }, 2800); };
+    const wakeUi = () => { setUi(true); clearTimeout(P.hideT); P.hideT = setTimeout(() => { if (!P.laser && !SP.on) setUi(false); }, 2800); };
     wakeUi();
 
     // ---------- Laserpointer ----------
@@ -144,6 +147,7 @@ export function presentMode({ pdf, start = 0, title = '' }) {
     const up = () => { if (!L.down) return; L.down = false; if (L.last) L.last.up = performance.now(); kick(); };
     lz.addEventListener('pointerup', up); lz.addEventListener('pointercancel', up);
     const setLaser = on => {
+      if (on && SP.on) setSpot(false);
       P.laser = on; haptic();
       el.classList.toggle('laser-on', on);
       $('[data-lz]').classList.toggle('on', on);
@@ -153,10 +157,106 @@ export function presentMode({ pdf, start = 0, title = '' }) {
     };
     $('[data-lz]').onclick = e => { e.stopPropagation(); setLaser(!P.laser); };
 
+    // ---------- Spotlight / Fokus ----------
+    // Rechteck oder Kreis aufziehen → Rest der Folie dunkelt mit Feder ab, der Bereich bleibt hell
+    // (weiche Kante, warmer Lichtschein). Antippen setzt zurück. Canvas-Overlay, Folie bleibt unverändert.
+    const sp = $('[data-spot]');
+    const fitSpot = () => { const d = Math.min(3, devicePixelRatio || 1); sp.width = innerWidth * d; sp.height = innerHeight * d; sp.getContext('2d').setTransform(d, 0, 0, d, 0, 0); };
+    fitSpot();
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const shapePath = (g, s, scale = 1) => {
+      const cx = s.x + s.w / 2, cy = s.y + s.h / 2, w = s.w * scale, h = s.h * scale;
+      g.beginPath();
+      if (s.shape === 'ellipse') g.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
+      else { const r = Math.min(26, w / 5, h / 5); g.roundRect ? g.roundRect(cx - w / 2, cy - h / 2, w, h, r) : g.rect(cx - w / 2, cy - h / 2, w, h); }
+    };
+    function drawSpot() {
+      const g = sp.getContext('2d'), W = innerWidth, H = innerHeight;
+      g.clearRect(0, 0, W, H);
+      const k = SP.k, s = SP.cur;
+      if (s && k > 0.002) {
+        const a = Math.min(1, Math.max(0, k)), scale = 1 + (1 - k) * 0.55;    // Loch zieht sich auf den Bereich zusammen
+        g.save();
+        g.fillStyle = `rgba(6,7,10,${(0.76 * a).toFixed(3)})`; g.fillRect(0, 0, W, H);
+        g.globalCompositeOperation = 'destination-out';
+        g.shadowColor = 'rgba(0,0,0,1)'; g.shadowBlur = 34;
+        shapePath(g, s, scale); g.fill(); g.fill();
+        g.restore();
+        // Lichtschein am Rand
+        g.save();
+        g.strokeStyle = `rgba(255,236,205,${(0.55 * a).toFixed(3)})`; g.lineWidth = 2;
+        g.shadowColor = `rgba(255,190,130,${(0.9 * a).toFixed(3)})`; g.shadowBlur = 26;
+        shapePath(g, s, scale * 1.01); g.stroke(); g.stroke();
+        g.restore();
+      }
+      const d = SP.drag;
+      if (d && d.moved) {
+        const r = norm(d);
+        g.save(); g.setLineDash([7, 6]); g.lineDashOffset = -performance.now() / 30;
+        g.strokeStyle = 'rgba(255,255,255,.95)'; g.lineWidth = 2; g.shadowColor = 'rgba(255,140,100,.9)'; g.shadowBlur = 12;
+        shapePath(g, r); g.stroke(); g.restore();
+      }
+    }
+    const SP = { on: false, shape: 'rect', cur: null, k: 0, v: 0, target: 0, raf: 0, drag: null };
+    const norm = d => {
+      let x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1), w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
+      if (SP.shape === 'ellipse' && d.sq) { const m = Math.max(w, h); x = d.x0 - m * (d.x1 < d.x0); y = d.y0 - m * (d.y1 < d.y0); w = h = m; }
+      if (w < 44) { x -= (44 - w) / 2; w = 44; } if (h < 44) { y -= (44 - h) / 2; h = 44; }
+      return { x, y, w, h, shape: SP.shape };
+    };
+    function spotLoop() {
+      let last = performance.now();
+      const K = 210, C = 2 * Math.sqrt(K) * 0.62;       // unterkritisch → kurzes Nachfedern
+      const step = now => {
+        const dt = Math.min(0.032, (now - last) / 1000); last = now;
+        if (reduce) { SP.k = SP.target; SP.v = 0; }
+        else { SP.v += (K * (SP.target - SP.k) - C * SP.v) * dt; SP.k += SP.v * dt; }
+        drawSpot();
+        const still = Math.abs(SP.target - SP.k) < 0.002 && Math.abs(SP.v) < 0.01;
+        if (still && !SP.drag) { SP.k = SP.target; if (!SP.k) SP.cur = null; drawSpot(); SP.raf = 0; return; }
+        SP.raf = requestAnimationFrame(step);
+      };
+      if (!SP.raf) SP.raf = requestAnimationFrame(step);
+    }
+    function spotClear() { if (!SP.cur) return; SP.target = 0; spotLoop(); }
+    sp.addEventListener('pointerdown', e => {
+      if (!SP.on) return; e.preventDefault(); sp.setPointerCapture(e.pointerId);
+      SP.drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, moved: false, sq: SP.shape === 'ellipse' };
+      $('[data-hint]').classList.remove('show'); spotLoop();
+    });
+    sp.addEventListener('pointermove', e => {
+      const d = SP.drag; if (!d || e.pointerId !== d.id) return;
+      d.x1 = e.clientX; d.y1 = e.clientY;
+      if (Math.hypot(d.x1 - d.x0, d.y1 - d.y0) > 12) d.moved = true;
+    });
+    const spUp = e => {
+      const d = SP.drag; if (!d || e.pointerId !== d.id) return;
+      SP.drag = null;
+      if (!d.moved || e.type === 'pointercancel') { spotClear(); haptic(); return; }      // Antippen → zurücksetzen
+      SP.cur = norm(d); SP.k = 0; SP.v = 0; SP.target = 1; haptic(); spotLoop();
+    };
+    sp.addEventListener('pointerup', spUp); sp.addEventListener('pointercancel', spUp);
+    const shapeBar = $('[data-shape]');
+    shapeBar.querySelectorAll('button').forEach(b => b.onclick = e => {
+      e.stopPropagation(); haptic(); SP.shape = b.dataset.v;
+      shapeBar.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      if (SP.cur) { SP.cur = { ...SP.cur, shape: SP.shape }; drawSpot(); }
+    });
+    function setSpot(on) {
+      if (on && P.laser) setLaser(false);
+      SP.on = on; haptic();
+      el.classList.toggle('spot-on', on);
+      $('[data-sp]').classList.toggle('on', on);
+      const h = $('[data-hint]');
+      if (on) { h.textContent = 'Bereich aufziehen – Antippen setzt zurück'; h.classList.add('show'); setUi(true); clearTimeout(P.hideT); setTimeout(() => h.classList.remove('show'), 2400); }
+      else { spotClear(); h.textContent = 'Laser an – Finger auf den Bildschirm legen'; wakeUi(); }
+    }
+    $('[data-sp]').onclick = e => { e.stopPropagation(); setSpot(!SP.on); };
+
     // ---------- Gesten: Wischen & Rand-Tipp ----------
     let t0 = null;
     stage.addEventListener('pointerdown', e => {
-      if (P.laser) return;
+      if (P.laser || SP.on) return;
       t0 = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, moved: false };
       stage.setPointerCapture(e.pointerId);
     });
@@ -191,16 +291,17 @@ export function presentMode({ pdf, start = 0, title = '' }) {
       else if (e.key === 'Home') { P.i = 0; show(-1); }
       else if (e.key === 'End') { P.i = N - 1; show(1); }
       else if (e.key.toLowerCase() === 'l') setLaser(!P.laser);
+      else if (e.key.toLowerCase() === 'f') setSpot(!SP.on);
       else if (e.key === 'Escape') close();
     };
     document.addEventListener('keydown', key);
     let rzT = 0;
-    const onResize = () => { clearTimeout(rzT); rzT = setTimeout(() => { fitLaser(); P.cache.clear(); stage.innerHTML = ''; show(); }, 150); };
+    const onResize = () => { clearTimeout(rzT); rzT = setTimeout(() => { fitLaser(); fitSpot(); SP.cur = null; SP.k = SP.target = 0; drawSpot(); P.cache.clear(); stage.innerHTML = ''; show(); }, 150); };
     window.addEventListener('resize', onResize);
 
     function close() {
       document.removeEventListener('keydown', key); window.removeEventListener('resize', onResize);
-      cancelAnimationFrame(L.raf); clearTimeout(P.hideT); P.gen++;
+      cancelAnimationFrame(L.raf); cancelAnimationFrame(SP.raf); clearTimeout(P.hideT); P.gen++;
       try { wake?.release(); } catch {}
       try { if (document.fullscreenElement) document.exitFullscreen?.(); } catch {}
       el.classList.remove('show'); document.body.classList.remove('presenting');

@@ -1569,3 +1569,30 @@ svg.layer .handle-ic { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linec
   .ed-tools.tb-anim .tool, .busy-card.scanning { animation: none; }
   .fv, .fv-top, .fv-bottom, .fv-seg-ind { transition: opacity .15s !important; transform: none !important; }
 }
+
+/* ================= v1.42 – Flipbook, GIF, Spotlight ================= */
+/* Präsentieren: Spotlight / Fokus */
+.pres-spot { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+.pres.spot-on .pres-spot { pointer-events: auto; touch-action: none; cursor: crosshair; }
+.pres-sp.on { background: rgba(255,190,120,.2); border-color: rgba(255,200,140,.6); }
+.pres-sp.on .ico { color: #ffd29a; filter: drop-shadow(0 0 6px rgba(255,190,120,.9)); }
+.pres-shape { position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 64px); z-index: 3; display: flex; gap: 2px; padding: 3px; border-radius: 14px; background: rgba(40,42,48,.7); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); opacity: 0; transform: translate(-50%, -8px) scale(.94); pointer-events: none; transition: opacity .25s, transform var(--spring-pop-ms, .3s) var(--spring-pop, var(--spring)); }
+.pres.spot-on .pres-shape { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.pres.spot-on.ui-off .pres-shape { opacity: 0; pointer-events: none; }
+.pres-shape button { display: flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 11px; color: rgba(255,255,255,.7); font-size: 13px; font-weight: 650; transition: background .2s, color .2s; }
+.pres-shape button.on { background: rgba(255,255,255,.16); color: #fff; }
+.pres-shape i { display: block; width: 14px; height: 11px; border: 2px solid currentColor; }
+.pres-shape .sh-r { border-radius: 3px; } .pres-shape .sh-e { width: 13px; height: 13px; border-radius: 50%; }
+
+/* PDF → GIF */
+.gif-prev { position: relative; display: grid; place-items: center; height: min(42vh, 330px); margin-bottom: 12px; border-radius: 16px; background: repeating-conic-gradient(var(--card2) 0 25%, var(--card) 0 50%) 0 0 / 18px 18px; overflow: hidden; }
+.gif-prev canvas { max-width: calc(100% - 24px); max-height: calc(min(42vh, 330px) - 24px); width: auto; height: auto; border-radius: 4px; box-shadow: 0 8px 26px rgba(0,0,0,.35); background: #fff; }
+.gif-badge { position: absolute; left: 10px; bottom: 10px; padding: 4px 10px; border-radius: 10px; background: rgba(20,22,28,.72); color: #fff; font-size: 11.5px; font-weight: 700; }
+.gif-replay { position: absolute; width: 54px; height: 54px; border-radius: 50%; background: var(--grad); color: #fff; display: grid; place-items: center; box-shadow: 0 6px 18px rgba(0,0,0,.35); animation: busyPop var(--spring-pop-ms, .4s) var(--spring-pop, var(--spring)) both; }
+.gif-replay[hidden] { display: none; }
+.gif-opts { display: flex; flex-direction: column; gap: 10px; }
+.gif-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 600; font-size: 14.5px; }
+.gif-row .seg { width: auto; }
+.gif-pages { flex: 1; min-width: 0; padding: 9px 12px; font-size: 15px; }
+.gif-of { flex: none; color: var(--text3); font-size: 13px; }
+.gif-opts .adj-row { grid-template-columns: 82px 1fr 56px; padding: 0 2px; }

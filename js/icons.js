@@ -106,6 +106,8 @@ const P = {
   gauge: '<path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="m12 13 3.5-4"/><circle cx="12" cy="13" r="1.4" fill="currentColor"/>',
   swap: '<path d="M7 4 3 8l4 4M3 8h13"/><path d="m17 12 4 4-4 4M21 16H8"/>',
   toc: '<path d="M8 6h13M8 12h13M11 18h10"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="7" cy="18" r="1"/>',
+  gif: '<rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M9.5 10H7.8a1.3 1.3 0 0 0-1.3 1.3v1.4A1.3 1.3 0 0 0 7.8 14h1.7v-2H8.4M12 10v4M14.5 14v-4h2.5M14.5 12h2"/>',
+  spotlight: '<circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
   form: '<rect x="3" y="3" width="18" height="18" rx="3"/><rect x="6.5" y="7" width="11" height="3.2" rx=".8"/><rect x="6.5" y="13.5" width="3.5" height="3.5" rx=".8"/><path d="m7.3 15.2 1 1 1.6-2M12.5 15.3h5"/>',
 };
 
