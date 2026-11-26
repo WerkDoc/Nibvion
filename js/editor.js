@@ -70,7 +70,12 @@ const lowMem = () => !!settings.get('lowMem') || safeDoc();
 // „Flugschreiber“: jeder Schritt beim Öffnen wird notiert. Beendet iOS die App, zeigt der nächste
 // Start (js/app.js → crashCheck), bei welchem Schritt es passiert ist.
 export const CRUMB = 'nibvion.crumb';
-const crumb = step => { try { localStorage.setItem(CRUMB, JSON.stringify({ step, doc: E.doc?.name || '', pages: E.infos?.length || 0, t: Date.now() })); } catch {} };
+// Zusätzlich als Cookie: das schreibt Safari sofort (synchron), localStorage dagegen verzögert.
+const crumb = step => {
+  const v = JSON.stringify({ step, doc: (E.doc?.name || '').slice(0, 60), pages: E.infos?.length || 0, t: Date.now() });
+  try { document.cookie = 'nibcrumb=' + encodeURIComponent(v) + ';path=/;max-age=86400;SameSite=Lax'; } catch {}
+  try { localStorage.setItem(CRUMB, v); } catch {}
+};
 // Notfallmodus für einzelne PDFs, bei denen die App trotz Sparmodus abgestürzt ist
 const safeDoc = () => !!E.doc && (settings.get('safeDocs') || []).includes(E.doc.id);
 
@@ -349,15 +354,24 @@ async function renderPageNow(i) {
   p.task?.cancel?.();
   let c = null;
   try {
-    crumb(`Seite ${i + 1} wird gezeichnet`);
+    const S = `Seite ${i + 1}`;
+    crumb(`${S}: wird geladen`);
     const page = await E.pdf.getPage(i + 1);
+    crumb(`${S}: Inhalte lesen`);
+    const ops = await page.getOperatorList();                 // Parsen im Worker – getrennt vom Zeichnen
+    crumb(`${S}: ${ops.fnArray.length} Befehle gelesen`);
     const vp = page.getViewport({ scale: rs });
     c = document.createElement('canvas');
     c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+    crumb(`${S}: Leinwand ${c.width}×${c.height}`);
     const ctx = c.getContext('2d', { willReadFrequently: false });
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    let chunk = 0;
     p.task = page.render({ canvasContext: ctx, viewport: vp });
+    p.task.onContinue = cont => { crumb(`${S}: zeichnen, Abschnitt ${++chunk}`); cont(); };
+    crumb(`${S}: zeichnen beginnt`);
     await p.task.promise;
+    crumb(`${S}: gezeichnet, wird angezeigt`);
     p.task = null;
     const old = p.canvas; p.el.replaceChild(c, old);
     old.width = old.height = 0;
