@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.42.5';
+export const VERSION = '1.42.6';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1221,6 +1221,12 @@ function crashCheck() {
   let g = null, c = null;
   try { g = JSON.parse(localStorage.getItem('nibvion.openGuard') || 'null'); localStorage.removeItem('nibvion.openGuard'); } catch {}
   try { c = JSON.parse(localStorage.getItem('nibvion.crumb') || 'null'); localStorage.removeItem('nibvion.crumb'); } catch {}
+  // Cookie-Eintrag ist aktueller (wird sofort geschrieben) → bevorzugen
+  try {
+    const m = document.cookie.match(/(?:^|; )nibcrumb=([^;]*)/);
+    if (m) { const k = JSON.parse(decodeURIComponent(m[1])); if (!c || k.t >= c.t) c = k; }
+    document.cookie = 'nibcrumb=;path=/;max-age=0';
+  } catch {}
   if (!g || Date.now() - g.t > 30 * 60 * 1000) return;
   // Flugschreiber auswerten: letzter Schritt vor dem Absturz → in Einstellungen sichtbar
   if (c && c.step !== 'ok') settings.set('lastCrash', { doc: c.doc, pages: c.pages, step: c.step, t: c.t, ver: VERSION, ua: navigator.userAgent.replace(/^.*?\(|\).*$/g, '').slice(0, 60) });
