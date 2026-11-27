@@ -56,9 +56,9 @@ function patchFamily(v) {
   if (!out.some(f => GENERIC.test(f))) out.push(SERIF.test(fams[0] || '') ? 'serif' : /consolas|courier|mono/i.test(fams[0] || '') ? 'monospace' : 'sans-serif');
   return out.join(', ') + (imp ? ' !important' : '');
 }
-const familyCss = name => patchFamily(`"${String(name || 'Calibri').replace(/"/g, '')}"`);
+export const familyCss = name => patchFamily(`"${String(name || 'Calibri').replace(/"/g, '')}"`);
 
-function ensureFonts() {
+export function ensureFonts() {
   if (document.getElementById('nib-fontfb')) return;
   const st = document.createElement('style'); st.id = 'nib-fontfb'; st.textContent = FONT_CSS;
   document.head.appendChild(st);
@@ -104,7 +104,7 @@ async function snap(el, p) {
   });
 }
 
-function canvasJpeg(c) {
+export function canvasJpeg(c) {
   return new Promise((res, rej) => c.toBlob(b => b
     ? b.arrayBuffer().then(a => res(new Uint8Array(a)), rej)
     : rej(new Error('Seite konnte nicht gerendert werden')), 'image/jpeg', 0.8));
@@ -153,7 +153,7 @@ function safeText(font, s) {
   return o;
 }
 
-function textLayer(page, font, fkey, runs, p, pageH) {
+export function textLayer(page, font, fkey, runs, p, pageH) {
   const L = window.PDFLib;
   const ops = [];
   for (const r of runs) {
@@ -206,8 +206,8 @@ async function assemble(pages, onProgress, title) {
   return doc.save();
 }
 
-const isZip = buf => { if (buf.byteLength < 4) return false; const b = new Uint8Array(buf, 0, 4); return b[0] === 0x50 && b[1] === 0x4B; };
-const isOle = buf => { if (buf.byteLength < 4) return false; const b = new Uint8Array(buf, 0, 4); return b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0; };
+export const isZip = buf => { if (buf.byteLength < 4) return false; const b = new Uint8Array(buf, 0, 4); return b[0] === 0x50 && b[1] === 0x4B; };
+export const isOle = buf => { if (buf.byteLength < 4) return false; const b = new Uint8Array(buf, 0, 4); return b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0; };
 
 // =====================================================================
 //                               WORD

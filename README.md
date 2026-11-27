@@ -4,7 +4,8 @@ PDF Tools, Stamp & Edit
 Eigene PDF-App für RepairMobile – ohne Werbung, ohne Abo, alles lokal auf dem Gerät.
 
 ## Funktionen (v1.5)
-- **Ansehen** – Zoom (Pinch, Doppeltipp, +/-), mehrere Seiten
+- **Ansehen** – Zoom (Pinch, Doppeltipp, +/-), mehrere Seiten, Stoff-Lesezeichen (ziehen oder antippen) mit Fortschrittsring und „Weiter bei Seite …“, bis zu 4 Dokumente als Tabs
+- **Teilen** – Teilen-Dialog mit schwebender 3D-Kippkarte der ersten Seite (Finger oder Neigung), auch in der Dokument-Info
 - **Bearbeiten** – vorhandenen Text antippen und ändern (Hintergrund & Farbe werden übernommen), neuen Text, Bilder einfügen, Bereiche abdecken
 - **Kommentieren** – Markieren, Unterstreichen, Durchstreichen, Notizen
 - **Zeichnen** – Stift, Marker, Radierer
@@ -13,7 +14,7 @@ Eigene PDF-App für RepairMobile – ohne Werbung, ohne Abo, alles lokal auf dem
 - **Seiten verwalten** – drehen, sortieren, löschen, leere Seite
 - **Aufteilen** – jede Seite einzeln, alle X Seiten, eigene Bereiche („1-3, 4-6“) oder ausgewählte Seiten herausziehen
 - **Erstellen** – Scannen mit Kamera, Bilder → PDF, PDFs zusammenfügen, leeres PDF
-- **Konvertieren** – PDF → Bilder, **Word → PDF** (.docx), **Excel → PDF** (.xlsx, .xlsm, .xls, .ods, .csv – Blätter wählbar, Ausrichtung, Gitternetz), **PDF → Word** (bearbeitbare .docx: Absätze, Schriften, Einzüge, Spalten per Tabstopp, Bilder, Kopf-/Fußzeilen mit Seitenzahl; Scans als Bild)
+- **Konvertieren** – PDF → Bilder, **Word → PDF** (.docx), **Excel → PDF** (.xlsx, .xlsm, .xls, .ods, .csv – Blätter wählbar, Ausrichtung, Gitternetz), **PowerPoint → PDF** (.pptx – Folien mit Layout/Master, Theme-Farben, Formen, Bildern, Tabellen, SmartArt und Diagrammen; durchsuchbarer Text), **PDF → Word** (bearbeitbare .docx: Absätze, Schriften, Einzüge, Spalten per Tabstopp, Bilder, Kopf-/Fußzeilen mit Seitenzahl; Scans als Bild)
   - Umwandlung komplett auf dem Gerät; Seiten werden als Bild gesetzt, mit unsichtbarer Textebene (Text bleibt durchsuch- und markierbar)
 - Export: Teilen / In „Dateien“ sichern, Fertigstellen (Änderungen einbrennen)
 - **Texterkennung (OCR)** – gescannte Seiten werden auf dem Gerät gelesen (Tesseract, Deutsch); unsichtbare Textebene macht sie durchsuchbar, markier- und kopierbar; beim Scannen automatisch (abschaltbar)

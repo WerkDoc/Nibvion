@@ -301,7 +301,7 @@ const TOOL_GROUPS = [
     { id: 'pdf2img', label: 'PDF → Bilder', sub: 'Seiten als JPG speichern', icon: 'image', c: 'c-blue' },
     { id: 'word', label: 'Word → PDF', sub: 'DOCX als PDF speichern', icon: 'word', c: 'c-blue' },
     { id: 'excel', label: 'Excel → PDF', sub: 'XLSX, XLS oder CSV als PDF', icon: 'excel', c: 'c-green' },
-    { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
+    { id: 'ppt', label: 'PowerPoint → PDF', sub: 'PPTX mit Folien, Bildern, Tabellen & Diagrammen', icon: 'ppt', c: 'c-orange' },
     { id: 'flipbook', label: 'Als 3D-Flipbook (.html) exportieren', sub: 'Zum Durchblättern im Browser – wie ein Magazin', icon: 'book', c: 'c-orange' },
     { id: 'gif', label: 'PDF → Animiertes GIF', sub: 'Seiten als Slideshow mit Übergängen', icon: 'gif', c: 'c-violet' },
     { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern – auch Scans', icon: 'word', c: 'c-blue' },
@@ -352,6 +352,7 @@ function runTool(id) {
     case 'gif': return docPicker('PDF → Animiertes GIF', 'Ausgewählte Seiten werden zu einer animierten Slideshow mit Übergängen – mit Live-Vorschau.', gifDoc);
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
+    case 'ppt': return officeToPdf('ppt');
     case 'pdf2word': return pdfToWordSheet();
     case 'pdf2excel': return docPicker('PDF / Scan → Excel', 'Tabellen und Text werden erkannt und als Excel-Datei gespeichert. Am besten klappt es bei Tabellen mit sichtbaren Linien.', exportExcel);
     case 'text': return docPicker('Text extrahieren', 'Der Text der PDF wird angezeigt – gescannte Seiten werden dafür automatisch gelesen.', textFromDoc);
@@ -600,12 +601,13 @@ async function pdfToImages() {
   });
 }
 
-// ----- Word / Excel → PDF -----
+// ----- Word / Excel / PowerPoint → PDF -----
 async function officeToPdf(kind, given) {
-  const files = given?.length ? given : await pickFiles(kind === 'word' ? 'file-word' : 'file-excel');
+  const files = given?.length ? given : await pickFiles({ word: 'file-word', excel: 'file-excel', ppt: 'file-ppt' }[kind]);
   if (!files.length) return;
   const f = files[0];
-  const base = f.name.replace(/\.[^.]+$/, '') || (kind === 'word' ? 'Dokument' : 'Tabelle');
+  const base = f.name.replace(/\.[^.]+$/, '') || ({ word: 'Dokument', excel: 'Tabelle', ppt: 'Präsentation' }[kind]);
+  if (kind === 'ppt') return pptToPdf(f, base);
   busy(true, kind === 'word' ? 'Word-Dokument wird gelesen …' : 'Tabelle wird gelesen …');
   let conv, buf;
   try { [conv, buf] = await Promise.all([import('./convert.js'), f.arrayBuffer()]); }
@@ -627,6 +629,22 @@ async function officeToPdf(kind, given) {
     busy(true, 'PDF wird erstellt …');
     try { await finish(await conv.excelToPdf(book, { ...opts, onProgress: progress, title: base })); } catch (e) { fail(e); }
   });
+}
+
+async function pptToPdf(f, base) {
+  busy(true, 'Präsentation wird gelesen …');
+  try {
+    const [{ pptxToPdf }, buf] = await Promise.all([import('./pptx.js'), f.arrayBuffer()]);
+    let warns = [];
+    const bytes = await pptxToPdf(buf, { title: base, onWarn: w => { warns = w; }, onProgress: (i, n) => busy(true, n > 1 ? `Folie ${i} von ${n} wird erstellt …` : 'PDF wird erstellt …') });
+    const id = await saveNewDoc(bytes, base + '.pdf');
+    busy(false); await renderRecents();
+    toast(warns.length ? 'PDF erstellt · ' + warns[0] : 'PDF erstellt');
+    openDoc(id);
+  } catch (e) {
+    console.error(e); busy(false);
+    toast(e?.name === 'ConvertError' ? e.message : 'Umwandeln fehlgeschlagen', true);
+  }
 }
 
 function excelOptions(book, base, go) {
