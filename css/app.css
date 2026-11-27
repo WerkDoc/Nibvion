@@ -2017,3 +2017,9 @@ svg.layer [data-mlabel] { cursor: pointer; }
 .ms-del:active { background: rgba(255,77,94,.12); }
 .ms-del .ico { width: 19px; height: 19px; }
 @media (prefers-reduced-motion: reduce) { .m-bar { transition: opacity .15s; } .ml-loupe { transition: none; } }
+
+/* v1.49.1: Dateien & Einstellungen werden bei jedem Tab-Wechsel / Zurück neu aufgebaut.
+   Die Einblend-Animation (fadeUp, 12 px) lief dabei jedes Mal neu → alles „sprang“ kurz.
+   Das Einblenden übernimmt schon der Ansichtswechsel (.view), daher hier keine eigene Animation. */
+#files-list :is(.doc-row, .fl-card, .fl-ids .row, .recent-list.flow, .fl-fab),
+#settings-list .group { animation: none; }
