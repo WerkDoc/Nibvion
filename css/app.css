@@ -227,9 +227,9 @@ svg.layer .eraser-dot { fill: rgba(255,106,91,.15); stroke: var(--accent); strok
 .selmenu .danger { color: #ff7b85; }
 
 /* ---------- Sheets ---------- */
-.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; opacity: 0; transition: opacity .3s; }
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: calc(100 + var(--sd, 0) * 2); opacity: 0; transition: opacity .3s; }
 .backdrop.show { opacity: 1; }
-.sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); z-index: 101; background: var(--bg2); border-radius: 26px 26px 0 0; padding: 8px 18px calc(var(--safe-bottom) + 18px); max-height: 88vh; overflow-y: auto; transform: translateY(105%); transition: transform var(--spring-sheet-ms, .42s) var(--spring-sheet, var(--ease)), bottom .25s; will-change: transform; box-shadow: 0 -10px 40px rgba(0,0,0,.35); }
+.sheet { position: fixed; left: 0; right: 0; bottom: var(--kb); z-index: calc(101 + var(--sd, 0) * 2); background: var(--bg2); border-radius: 26px 26px 0 0; padding: 8px 18px calc(var(--safe-bottom) + 18px); max-height: 88vh; overflow-y: auto; transform: translateY(105%); transition: transform var(--spring-sheet-ms, .42s) var(--spring-sheet, var(--ease)), bottom .25s; will-change: transform; box-shadow: 0 -10px 40px rgba(0,0,0,.35); }
 .sheet.show { transform: none; }
 .sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line2); margin: 2px auto 10px; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
@@ -664,8 +664,8 @@ svg.layer .titem.rev { animation: titemIn .45s cubic-bezier(.2,.9,.3,1.2) both; 
 .fl-new b { font-size: 17px; }
 .fl-new small { color: var(--text2); font-size: 12.5px; line-height: 1.3; }
 
-body.cam-open .backdrop { z-index: 140; }
-body.cam-open .sheet { z-index: 141; }
+body.cam-open .backdrop { z-index: calc(140 + var(--sd, 0) * 2); }
+body.cam-open .sheet { z-index: calc(141 + var(--sd, 0) * 2); }
 body.cam-open .toast, body.cam-open #toast { z-index: 150; }
 
 /* ---------- Schwärzen / Formular (Seitenansicht mit Fingereingabe) ---------- */
@@ -727,7 +727,7 @@ body.cam-open .toast, body.cam-open #toast { z-index: 150; }
 .idrev-size { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 600; font-size: 15px; }
 
 /* ===== Ausweis-Ansicht (v1.23) ===== */
-body.idv-open .backdrop { z-index: 100; }
+body.idv-open .backdrop { z-index: calc(100 + var(--sd, 0) * 2); }
 .idv, .idf, .ide { position: fixed; inset: 0; z-index: 92; background: var(--bg); display: flex; flex-direction: column; animation: rvIn .3s var(--ease); transition: opacity .22s, transform .25s var(--ease); }
 .idf { z-index: 96; } .ide { z-index: 98; }
 .idv.out, .idf.out, .ide.out, .idsv.out { opacity: 0; transform: translateX(30px); }
