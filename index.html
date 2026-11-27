@@ -108,7 +108,10 @@
       <header class="ed-top">
         <button class="round-btn" data-action="ed-back" aria-label="Zurück"><i data-icon="chevronLeft"></i></button>
         <button class="mode-pill" data-action="ed-mode"><span id="mode-label">Ansehen</span><i data-icon="chevronDown"></i></button>
-        <button class="round-btn" data-action="ed-more" aria-label="Mehr"><i data-icon="more"></i></button>
+        <div class="ed-tr">
+          <button class="round-btn tab-btn" data-action="ed-tabs" aria-label="Offene Dokumente"><span class="tab-count" id="tab-count">1</span></button>
+          <button class="round-btn" data-action="ed-more" aria-label="Mehr"><i data-icon="more"></i></button>
+        </div>
       </header>
       <div class="ed-toolbar" id="ed-toolbar">
         <div class="ed-tools" id="ed-tools"></div>
@@ -125,7 +128,7 @@
       <div class="ed-bottom">
         <div class="ed-bl">
           <button class="toc-chip" id="toc-chip" data-action="ed-toc" aria-label="Inhaltsverzeichnis" hidden><i data-icon="toc"></i><span>Inhalt</span></button>
-          <button class="page-chip" id="page-chip" data-action="ed-scrub" aria-label="Seiten-Übersicht">1 / 1</button>
+          <button class="page-chip" id="page-chip" data-action="ed-scrub" aria-label="Seiten-Übersicht"><span id="page-label">1 / 1</span></button>
         </div>
         <div class="zoom-chip">
           <button data-action="zoom-out" aria-label="Verkleinern"><i data-icon="minus"></i></button>

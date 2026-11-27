@@ -12,7 +12,7 @@ import { scanReview } from './scanreview.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
 import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
-import { initEditor, openEditor, shareBytes, downloadBytes, closeEditorIfOpen } from './editor.js';
+import { initEditor, openEditor, shareBytes, downloadBytes, closeEditorIfOpen, setDocPicker } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 import { initMerge, mergeFlow } from './merge.js';
@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.44.1';
+export const VERSION = '1.45.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -238,10 +238,7 @@ function docMenu(d) {
         if (a === 'form') return formDoc(d);
         if (a === 'split') return splitDoc(d);
         if (a === 'redact') return redactDoc(d);
-        if (a === 'share') {
-          if (d.objects?.length) { openDoc(d.id); return toast('Zum Teilen mit Änderungen: ⋯ → Teilen'); }
-          const f = await db.get('files', d.id); return shareBytes(new Uint8Array(f.data), d.name);
-        }
+        if (a === 'share') return shareDoc(d);
         if (a === 'rename') {
           const n = await renameSheet(d.name.replace(/\.pdf$/i, ''), async () => {
             const pdf = await loadPdf(await docBytes(d)); return { pdf, done: () => closePdf(pdf) };
@@ -710,6 +707,22 @@ async function docBytes(d) {
     bytes = await flatten(bytes, d.objects, infos);
   }
   return bytes;
+}
+
+// Teilen-Dialog mit Kippkarte (Dateiliste / Startseite)
+async function shareDoc(d) {
+  const { shareDialog, coverImage, coverRatio } = await import('./tiltcard.js');
+  const name = /\.pdf$/i.test(d.name) ? d.name : d.name + '.pdf';
+  let bp = null; const bytes = () => (bp ??= docBytes(d).then(b => new Uint8Array(b)));
+  let pdfP = null; const pdf = () => (pdfP ??= bytes().then(b => loadPdf(b.slice())));
+  const close = () => pdfP?.then(p => setTimeout(() => closePdf(p), 300)).catch(() => {});
+  let ratio = 0.707; try { ratio = await coverRatio(await pdf()); } catch {}
+  shareDialog({
+    name, sub: [d.pages ? `${d.pages} ${d.pages === 1 ? 'Seite' : 'Seiten'}` : '', d.size ? fmtSize(d.size) : ''].filter(Boolean).join(' · '),
+    ratio, thumb: d.thumb || '',
+    cover: async () => { try { return await coverImage(await pdf(), 220); } finally { close(); } },
+    getBytes: bytes, share: shareBytes, download: downloadBytes,
+  });
 }
 
 // Ergebnis speichern: als Kopie oder das Dokument ersetzen
@@ -1269,6 +1282,7 @@ async function init() {
   try { await purgeExpired(); } catch {}
   hydrateIcons(document);
   initEditor();
+  setDocPicker(() => chooseDoc('view', 'Weiteres PDF öffnen'));
   crashCheck();
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';

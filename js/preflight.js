@@ -147,7 +147,7 @@ export async function analyze(pdf, bytes, onProgress) {
 }
 
 // ---------- Darstellung ----------
-export function preflightSheet(R, name) {
+export function preflightSheet(R, name, card = null) {
   // Seitenformate gruppieren
   const groups = [];
   for (const s of R.sizes) {
@@ -176,7 +176,7 @@ export function preflightSheet(R, name) {
 
   sheet({
     title: 'Dokument-Info & Qualitäts-Check',
-    html: `
+    html: `${card ? '<div class="share-card pf-card" data-card></div>' : ''}
       <div class="pf-score ${ok ? 'ok' : 'warn'}">
         <span class="pf-badge">${icon(ok ? 'check' : 'info')}</span>
         <div><b>${ok ? 'Druckbereit' : `${issues.filter(i => i[0] === 'warn').length} ${issues.filter(i => i[0] === 'warn').length === 1 ? 'Hinweis' : 'Hinweise'} zum Drucken`}</b>
@@ -214,5 +214,7 @@ export function preflightSheet(R, name) {
           ${!low.length ? `<p class="pf-note good">${icon('check')} Alle Bilder haben mindestens ${LOW_DPI} DPI.</p>` : ''}`
           : `<p class="pf-note">${R.images.length ? 'Nur kleine Bilder (Logos, Symbole) – unkritisch.' : 'Keine Bilder im Dokument.'}</p>`}
       </div>`,
+    onMount(el) { if (card) card.mount(el.querySelector('[data-card]')); },
+    onClose() { card?.unmount?.(); },
   });
 }

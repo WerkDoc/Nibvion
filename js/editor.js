@@ -10,6 +10,8 @@ import { analyzeAll, blankReview, duplexOrder } from './pageorder.js';
 import { initScrubber, toggleScrubber, scrubberReset, scrubberSync } from './scrubber.js';
 import { settings } from './settings.js';
 import { ocrEditItems, releaseEditOcr } from './ocr.js';
+import { initBookmark, ringHtml, setRing } from './bookmark.js';
+import { initTabs } from './doctabs.js';
 import { stampDrop, poof, flipCapture, flipPlay, reducedMotion as noMotion, springKeys } from './fx.js';
 import { recognize, morph, pathLen } from './shapes.js';
 import { createInspector, objLayer } from './inspect.js';
@@ -82,15 +84,13 @@ const crumb = step => {
 const safeDoc = () => !!E.doc && (settings.get('safeDocs') || []).includes(E.doc.id);
 
 export async function openEditor(docId, mode = 'view', onClose, page = 0) {
+  // Editor schon offen (z. B. „+“ in der Tab-Leiste) → als weiteren Tab öffnen
+  if (E.open) return switchDoc(docId, { mode, page });
   guardSet(docId, 'open');
   busy(true, 'PDF wird geladen …');
   try {
-    const meta = await db.get('docs', docId);
-    const file = await db.get('files', docId);
-    if (!meta || !file) throw new Error('Datei nicht gefunden');
-    E.doc = meta; E.bytes = file.data; E.objects = meta.objects || [];
-    crumb('Datei geladen');
-    E.undo = []; E.redo = []; E.sel = null; E.zoom = 1; E.onClose = onClose; E.dirtyThumb = false;
+    await loadDoc(docId);
+    E.zoom = 1; E.onClose = onClose;
     await loadDocument();
     document.body.classList.add('in-editor');
     $('editor').classList.add('open'); $('editor').setAttribute('aria-hidden', 'false');
@@ -98,13 +98,157 @@ export async function openEditor(docId, mode = 'view', onClose, page = 0) {
     setMode(mode === 'pages' ? 'view' : mode, true);
     if (mode === 'pages') pageManager();
     if (page > 0 && E.pages[page]) requestAnimationFrame(() => { const sc = $('ed-scroll'); sc.scrollTop = E.pages[page].el.offsetTop - 12; updPageChip(); });
-    meta.opened = Date.now(); db.put('docs', meta);
+    tabAdd(E.doc);
+    afterOpen(mode, page);
     const vm = settings.get('viewMode');
     if (mode === 'view' && (vm === 'single' || vm === 'flip')) setTimeout(() => { if (E.open && E.doc?.id === docId) pageView(vm, true); }, 380);
     else setTimeout(() => { if (E.doc?.id === docId) { guardClear(); crumb('ok'); } }, 5000);
   } catch (err) {
     console.error(err); guardClear(); toast('PDF konnte nicht geöffnet werden', true);
   } finally { busy(false); }
+}
+
+async function loadDoc(docId) {
+  const meta = await db.get('docs', docId);
+  const file = await db.get('files', docId);
+  if (!meta || !file) throw new Error('Datei nicht gefunden');
+  E.doc = meta; E.bytes = file.data; E.objects = meta.objects || [];
+  crumb('Datei geladen');
+  E.undo = []; E.redo = []; E.sel = null; E.dirtyThumb = false;
+}
+
+// Nach dem Öffnen: „Zuletzt geöffnet“, Lesezeichen anbieten, Ring & Band aktualisieren
+function afterOpen(mode, page) {
+  E.doc.opened = Date.now(); db.put('docs', E.doc);
+  placeOverlays();
+  bm.reset();
+  if (!page && mode !== 'pages') setTimeout(() => { if (E.open) bm.offerResume(); }, 450);
+  updPageChip();
+}
+
+// ======================= Dokument-Tabs =======================
+// Bis zu 4 PDFs bleiben „offen“: Zustand (Seite, Zoom, Modus, Undo) wird je Tab gemerkt,
+// beim Wechsel wird das andere PDF frisch geladen (nur eins im Speicher – iOS).
+const TAB_MAX = 4;
+const T = { list: [] };   // { id, name, thumb, st }
+function tabAdd(doc) {
+  if (!T.list.some(t => t.id === doc.id)) {
+    T.list.push({ id: doc.id, name: doc.name, thumb: doc.thumb || '', st: null });
+    if (T.list.length > TAB_MAX) {
+      const drop = T.list.find(t => t.id !== doc.id);
+      T.list.splice(T.list.indexOf(drop), 1);
+      toast(`„${drop.name.replace(/\.pdf$/i, '')}“ aus den Tabs geschlossen (max. ${TAB_MAX})`);
+    }
+  }
+  tabs.render();
+}
+function tabState() {
+  return { ...here(), zoom: E.zoom, mode: E.mode, undo: E.undo, redo: E.redo };
+}
+function tabSync() {
+  const t = T.list.find(x => x.id === E.doc?.id);
+  if (t) { t.name = E.doc.name; t.thumb = E.doc.thumb || t.thumb; }
+}
+// Aufräumen, bevor ein anderes PDF in den Editor kommt (wie beim Schließen, aber ohne Editor zu)
+async function leaveDoc() {
+  await saveNow();
+  E.ocrGen++; ocrQueue = []; releaseEditOcr();
+  if (E.dirtyThumb) await updateThumb();
+  toggleScrubber(false);
+  hideSelMenu(); E.tsel = null; hideTselBar(); insp?.reset(); try { window.speechSynthesis?.cancel(); speaking = false; } catch {}
+  bm.hidePop(); bm.hideResume();
+}
+let switching = null;
+async function switchDoc(id, { mode = null, page = 0 } = {}) {
+  if (switching) await switching.catch(() => {});
+  if (E.doc?.id === id) { if (mode && mode !== 'pages' && mode !== E.mode) setMode(mode); if (mode === 'pages') pageManager(); return; }
+  switching = (async () => {
+    const prev = T.list.find(t => t.id === E.doc?.id);
+    if (prev) prev.st = tabState();
+    const from = T.list.indexOf(prev);
+    if (!T.list.some(t => t.id === id)) { const meta = await db.get('docs', id); if (meta) tabAdd(meta); }
+    const to = T.list.findIndex(t => t.id === id), tab = T.list[to];
+    const dir = from < 0 || to > from ? 1 : -1;
+    const sc = $('ed-scroll');
+    await leaveDoc();
+    const out = tabs.animOut(sc, dir);
+    guardSet(id, 'open');
+    const slow = setTimeout(() => busy(true, 'PDF wird geladen …'), 260);
+    try {
+      await loadDoc(id);
+      // Gemerkten Zustand nehmen – außer es wurde ausdrücklich ein Werkzeug/eine Seite gewählt
+      const st = tab?.st && !page && (!mode || mode === 'view') ? tab.st : null;
+      E.zoom = st?.zoom || 1;
+      await out;
+      await loadDocument();
+      setMode(st ? st.mode : mode && mode !== 'pages' ? mode : 'view', true);
+      if (st) { E.undo = st.undo || []; E.redo = st.redo || []; updUndoBtns(); }
+      if (st) restorePos(st); else if (page > 0 && E.pages[page]) sc.scrollTop = E.pages[page].el.offsetTop - 12;
+      if (mode === 'pages') pageManager();
+      tabSync(); tabs.render();
+      afterOpen(mode || 'view', st ? 1 : page);
+      setTimeout(() => { if (E.doc?.id === id) { guardClear(); crumb('ok'); } }, 4000);
+    } catch (err) {
+      console.error(err); guardClear();
+      T.list = T.list.filter(t => t.id !== id); tabs.render();
+      toast('PDF konnte nicht geöffnet werden', true);
+      if (prev && prev.id !== id && E.doc?.id !== prev.id) { switching = null; return switchDoc(prev.id); }
+    } finally { clearTimeout(slow); busy(false); tabs.animIn(sc, dir); }
+  })();
+  try { await switching; } finally { switching = null; }
+}
+async function closeTab(id) {
+  const i = T.list.findIndex(t => t.id === id); if (i < 0) return;
+  if (id !== E.doc?.id) { T.list.splice(i, 1); tabs.render(); return; }
+  const next = T.list[i + 1] || T.list[i - 1];
+  if (!next) { T.list.splice(i, 1); tabs.render(); return closeEditor(); }
+  await switchDoc(next.id);
+  T.list = T.list.filter(t => t.id !== id); tabs.render();
+}
+let docPicker = null;
+export const setDocPicker = fn => { docPicker = fn; };
+
+// ======================= Lese-Position & Lesezeichen =======================
+// Position = Seite + Anteil innerhalb der Seite (unabhängig vom Zoom)
+// Bezugspunkt = Mitte des Bildschirms (wie die Seitenanzeige „7 / 12“)
+const midOff = () => $('ed-scroll').clientHeight / 2;
+function here() {
+  const sc = $('ed-scroll'), y = sc.scrollTop + midOff();
+  let lo = 0, hi = E.pages.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (E.pages[m].el.offsetTop <= y) lo = m; else hi = m - 1; }
+  const p = E.pages[lo]; if (!p) return { page: 0, frac: 0 };
+  return { page: lo, frac: +Math.max(0, Math.min(1, (y - p.el.offsetTop) / Math.max(1, p.el.offsetHeight))).toFixed(4) };
+}
+function posTop(m) { const p = E.pages[m.page]; return p ? Math.max(0, p.el.offsetTop + (m.frac || 0) * p.el.offsetHeight - midOff()) : 0; }
+function restorePos(m) { const sc = $('ed-scroll'); sc.scrollTop = posTop(m); updPageChip(); }
+function jumpMark(m) {
+  const sc = $('ed-scroll'), top = posTop(m);
+  sc.scrollTo({ top, behavior: Math.abs(top - sc.scrollTop) < sc.clientHeight * 4 && !reduceMotion() ? 'smooth' : 'auto' });
+  setTimeout(() => { updPageChip(); bm.sync(); }, 480);
+}
+function saveMark(m) {
+  if (!E.doc) return;
+  if (m) E.doc.bookmark = m; else delete E.doc.bookmark;
+  E.doc.objects = E.objects;
+  db.put('docs', E.doc);
+}
+// Band & Tab-Leiste sitzen direkt unter Kopf- bzw. Werkzeugleiste
+function placeOverlays() {
+  const sc = $('ed-scroll');
+  bm?.setTop(sc.offsetTop);
+  tabs?.setTop($('editor').querySelector('.ed-top').offsetHeight);
+}
+// Fortschrittsring: Anteil gescrollt, Punkt = Lesezeichen
+let ringRaf = 0;
+function updRing() {
+  if (ringRaf) return;
+  ringRaf = requestAnimationFrame(() => {
+    ringRaf = 0; if (!E.open && !E.doc) return;
+    const sc = $('ed-scroll'), max = sc.scrollHeight - sc.clientHeight;
+    const m = E.doc?.bookmark;
+    setRing($('page-chip').querySelector('.pc-ring'), max > 4 ? sc.scrollTop / max : 1, m && E.pages[m.page] ? Math.min(1, posTop(m) / Math.max(1, max)) : null);
+    bm?.sync();
+  });
 }
 
 async function loadDocument() {
@@ -252,6 +396,7 @@ async function closeEditor() {
   $('editor').classList.remove('open'); $('editor').setAttribute('aria-hidden', 'true');
   document.body.classList.remove('in-editor');
   hideSelMenu(); E.tsel = null; hideTselBar(); insp?.reset(); try { window.speechSynthesis?.cancel(); speaking = false; } catch {}
+  bm.hidePop(); bm.hideResume(); tabs.hide();
   setTimeout(() => { if (!E.open) { $('ed-pages').innerHTML = ''; closePdf(E.pdf); E.pdf = null; } }, 500);
   E.onClose && E.onClose();
 }
@@ -429,7 +574,7 @@ function currentPage() {
   E.pages.forEach((p, i) => { const r = p.el.getBoundingClientRect(); const d = r.top > mid ? r.top - mid : r.bottom < mid ? mid - r.bottom : 0; if (d < bd) { bd = d; best = i; } });
   return best;
 }
-function updPageChip() { const c = currentPage(); $('page-chip').textContent = `${c + 1} / ${E.pages.length}`; scrubberSync(c); }
+function updPageChip() { const c = currentPage(); $('page-label').textContent = `${c + 1} / ${E.pages.length}`; scrubberSync(c); updRing(); }
 
 // ======================= Modus & Werkzeuge =======================
 function setMode(mode, first) {
@@ -1551,10 +1696,11 @@ function moreSheet() {
         if (a === 'info') return docInfo();
         if (a === 'fix') return fixSheet();
         try {
-          if (a === 'share' || a === 'download') {
+          if (a === 'share') return shareSheet();
+          if (a === 'download') {
             busy(true, 'PDF wird erstellt …');
             const bytes = await exportBytes(); busy(false);
-            a === 'share' ? await shareBytes(bytes, pdfName()) : downloadBytes(bytes, pdfName());
+            downloadBytes(bytes, pdfName());
           }
           if (a === 'bake') {
             if (!E.objects.length) return toast('Keine offenen Änderungen');
@@ -1576,19 +1722,41 @@ function moreSheet() {
           if (a === 'rename') {
             const { renameSheet } = await import('./titles.js');
             const n = await renameSheet(E.doc.name.replace(/\.pdf$/i, ''), async () => ({ pdf: E.pdf }));
-            if (n) { E.doc.name = n + '.pdf'; await saveNow(); toast('Umbenannt'); }
+            if (n) { E.doc.name = n + '.pdf'; await saveNow(); tabSync(); tabs.render(); toast('Umbenannt'); }
           }
           if (a === 'delete') {
             if (await confirmDlg('PDF löschen?', `„${E.doc.name}“ kommt in den Papierkorb und kann 30 Tage lang wiederhergestellt werden.`, 'In den Papierkorb')) {
               await saveNow();
               const { moveToTrash } = await import('./trash.js');
               await moveToTrash(E.doc.id);
-              E.doc = null; E.dirtyThumb = false; closeEditor(); toast('In den Papierkorb verschoben');
+              const gone = E.doc.id, next = T.list.find(t => t.id !== gone);
+              E.doc = null; E.dirtyThumb = false;           // nichts mehr zurückschreiben
+              T.list = T.list.filter(t => t.id !== gone);
+              if (next) await switchDoc(next.id); else closeEditor();
+              toast('In den Papierkorb verschoben');
             }
           }
         } catch (err) { console.error(err); busy(false); toast('Das hat nicht geklappt', true); }
       });
     },
+  });
+}
+
+// ======================= Teilen-Dialog (Kippkarte) =======================
+async function shareSheet() {
+  const { shareDialog, coverImage, coverRatio } = await import('./tiltcard.js');
+  const pdf = E.pdf, n = E.pages.length;
+  let bp = null; const bytes = () => (bp ??= exportBytes());
+  shareDialog({
+    name: pdfName(), sub: `${n} ${n === 1 ? 'Seite' : 'Seiten'}${E.objects.length ? ' · mit deinen Änderungen' : ''}`,
+    ratio: await coverRatio(pdf), thumb: E.doc.thumb || '',
+    // Mit Änderungen: Vorschau aus dem eingebrannten PDF, sonst direkt aus dem offenen
+    cover: async () => {
+      if (!E.objects.length) return coverImage(pdf, 220);
+      const tmp = await loadPdf((await bytes()).slice());
+      try { return await coverImage(tmp, 220); } finally { setTimeout(() => closePdf(tmp), 300); }
+    },
+    getBytes: bytes, share: shareBytes, download: downloadBytes,
   });
 }
 
@@ -1650,8 +1818,14 @@ async function docInfo() {
   try {
     const { analyze, preflightSheet } = await import('./preflight.js');
     const R = await analyze(E.pdf, E.bytes, (i, n) => busy(true, n > 3 ? `Seite ${i} von ${n} wird geprüft …` : 'Dokument wird geprüft …'));
+    const { tiltCard, coverImage, coverRatio } = await import('./tiltcard.js');
+    const pdf = E.pdf, ratio = await coverRatio(pdf);
     busy(false);
-    preflightSheet(R, E.doc.name);
+    let tc = null;
+    preflightSheet(R, E.doc.name, {
+      mount: host => { tc = tiltCard(host, { src: E.doc.thumb || '', ratio }); coverImage(pdf, 150).then(u => tc?.setSrc(u)).catch(() => {}); },
+      unmount: () => { tc?.destroy(); tc = null; },
+    });
   } catch (e) { console.error(e); busy(false); toast('Prüfung fehlgeschlagen', true); }
 }
 
@@ -1846,8 +2020,20 @@ async function pageManager() {
 
 // ======================= Verkabelung =======================
 let insp = null;
+let bm = null, tabs = null;
 export function initEditor() {
+  $('page-chip').insertAdjacentHTML('afterbegin', ringHtml());
   hydrateIcons($('editor'));
+  bm = initBookmark({
+    root: $('editor'), count: () => E.pages.length, here, mark: () => E.doc?.bookmark || null,
+    setMark: saveMark, jump: jumpMark, onChange: updRing,
+  });
+  tabs = initTabs({
+    root: $('editor'), list: () => T.list, current: () => E.doc?.id,
+    open: id => switchDoc(id), close: closeTab, add: () => docPicker ? docPicker() : toast('Nicht verfügbar'),
+    count: $('tab-count'),
+  });
+  new ResizeObserver(() => { if (E.open) placeOverlays(); }).observe($('ed-scroll'));
   insp = createInspector({
     el: $('editor'), pdf: () => E.pdf, page: i => E.pages[i], count: () => E.pages.length, scale,
     loadText: async i => { await loadText(i); return textItems(i); },
@@ -1859,7 +2045,7 @@ export function initEditor() {
   const sc = $('ed-scroll');
   initScrubber($('editor'), {
     pdf: () => E.pdf, count: () => E.pages.length, current: currentPage,
-    jump: i => { const p = E.pages[i]; if (p) sc.scrollTop = Math.max(0, p.el.offsetTop - 12); $('page-chip').textContent = `${i + 1} / ${E.pages.length}`; },
+    jump: i => { const p = E.pages[i]; if (p) sc.scrollTop = Math.max(0, p.el.offsetTop - 12); $('page-label').textContent = `${i + 1} / ${E.pages.length}`; },
     done: () => { rerenderVisible(); updPageChip(); },
   });
   sc.addEventListener('scroll', () => { updPageChip(); if (E.sel) placeSelMenu(); if (E.tsel && tbar?.classList.contains('show')) placeTselBar(); insp?.reposition(); }, { passive: true });
@@ -1896,6 +2082,7 @@ export function initEditor() {
     if (a === 'ed-back') closeEditor();
     if (a === 'ed-mode') modeSheet();
     if (a === 'ed-more') moreSheet();
+    if (a === 'ed-tabs') { haptic(); tabs.toggle(); }
     if (a === 'ed-toc') { haptic(); tocSheet(); }
     if (a === 'ed-scrub') { haptic(); if (!toggleScrubber() && E.pages.length < 2) toast('Das PDF hat nur eine Seite'); }
     if (a === 'ed-options') optionsSheet();
