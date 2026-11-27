@@ -1473,7 +1473,7 @@ svg.layer .handle-ic { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linec
    v1.48.1: Öffnen mit cubic-bezier statt Feder-linear() – iOS rechnet das komplett auf der GPU
    (Core Animation), ohne Hauptthread. Kein scale() am Inhalt (würde jedes Bild neu rastern). */
 :root { --sheet-ease: cubic-bezier(.32,.72,0,1); }
-.sheet { transition: transform .5s var(--sheet-ease), bottom .25s; contain: layout style; }
+.sheet { transition: transform .5s var(--sheet-ease), bottom .25s; contain: layout style; overscroll-behavior-y: contain; }
 .backdrop { will-change: opacity; }
 /* Lange Menüs (z. B. ⋯ einer PDF): Zeilen unterhalb des Bildschirms erst zeichnen, wenn sie ins Bild scrollen */
 .sheet .menu > .row:nth-child(n+11) { content-visibility: auto; contain-intrinsic-size: auto 65px; }

@@ -68,22 +68,31 @@ export function sheet({ title = '', html = '', onMount, onClose, noHead = false 
   sh.querySelectorAll('[data-close]').forEach(b => b.onclick = () => api.close());
   // Wischen nach unten zum Schließen – folgt dem Finger (mit Gummiband nach oben),
   // Loslassen: schneller Wisch oder > 110 px schließt, sonst federt das Sheet zurück
-  let sy = null, dy = 0, vy = 0, lt = 0, ly = 0;
+  let sy = null, dy = 0, vy = 0, lt = 0, ly = 0, dragging = false;
   const base = () => matchMedia('(min-width: 700px)').matches ? 'translateX(-50%) ' : '';
-  sh.addEventListener('touchstart', e => { if (sh.scrollTop <= 0 && !e.target.closest('textarea,input,canvas,.no-swipe')) { sy = ly = e.touches[0].clientY; dy = 0; vy = 0; lt = performance.now(); } }, { passive: true });
+  sh.addEventListener('touchstart', e => { if (sh.scrollTop <= 0 && !e.target.closest('textarea,input,canvas,.no-swipe')) { sy = ly = e.touches[0].clientY; dy = 0; vy = 0; dragging = false; lt = performance.now(); } }, { passive: true });
+  // Nicht passiv: Beim Ziehen des Sheets wird das native Scrollen/Federn des Inhalts verhindert –
+  // sonst federt iOS den Inhalt zusätzlich nach unten und oben entsteht eine leere Fläche.
+  const scrollable = () => sh.scrollHeight > sh.clientHeight + 1;
   sh.addEventListener('touchmove', e => {
     if (sy == null) return;
     const y = e.touches[0].clientY, raw = y - sy, now = performance.now();
+    if (!dragging) {
+      if (!raw) return;                                               // iOS: Entscheidung schon beim 1. touchmove, sonst läuft das native Scrollen
+      if (sh.scrollTop > 0 || (raw < 0 && scrollable())) { sy = null; return; }   // Inhalt scrollt normal
+      dragging = true;
+    }
+    if (e.cancelable) e.preventDefault();
     vy = vy * 0.5 + ((y - ly) / Math.max(1, now - lt)) * 0.5; ly = y; lt = now;
     dy = raw > 0 ? raw : -Math.sqrt(-raw) * 2.2;                     // nach oben nur leicht (Gummiband)
-    if (raw > 0 && sh.scrollTop > 0) return;
     sh.style.transition = 'none'; sh.style.transform = dy ? `${base()}translate3d(0,${dy.toFixed(1)}px,0)` : '';
-  }, { passive: true });
-  sh.addEventListener('touchend', () => {
-    if (sy == null) return; sy = null;
+  }, { passive: false });
+  const end = () => {
+    if (sy == null) return; sy = null; if (!dragging) return; dragging = false;
     if (dy > 110 || (vy > 0.7 && dy > 24)) return api.close();
     sh.style.transition = ''; sh.style.transform = '';
-  });
+  };
+  sh.addEventListener('touchend', end); sh.addEventListener('touchcancel', end);
   stack.push(api);
   onMount && onMount(sh, api);
   // Erst Layout/Inhalt fertig rechnen (noch im Tipp), dann einen Frame zeichnen lassen und
