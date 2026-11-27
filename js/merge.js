@@ -11,7 +11,7 @@ import { moveToTrash, isDeleted } from './trash.js';
 let ctx = {};
 export function initMerge(c) { ctx = c; }
 
-const liveDocs = async () => (await db.all('docs')).filter(d => !isDeleted(d)).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+const liveDocs = async () => { const { isHidden } = await import('./lock.js'); return (await db.all('docs')).filter(d => !isDeleted(d) && !isHidden(d)).sort((a, b) => (b.updated || 0) - (a.updated || 0)); };
 
 /** Startet den Ablauf mit den gewählten Dokument-IDs (Reihenfolge = Auswahl). */
 export async function mergeFlow(ids, { onDone } = {}) {

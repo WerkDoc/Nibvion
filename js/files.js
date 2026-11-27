@@ -5,7 +5,9 @@ import { db, uid } from './db.js';
 import { icon } from './icons.js';
 import { sheet, toast, busy, haptic, esc, fmtDate, fmtSize, promptDlg, confirmDlg } from './ui.js';
 import { isDeleted, moveToTrash, TRASH_DAYS } from './trash.js';
-import { shareBytes } from './editor.js';
+import { shareBytes, downloadBytes } from './editor.js';
+import { visibleDocs, isLockedFolder, isOpenFolder, unlockFolder, leftFolder, lockSheet, onLockChange, refreshLocks } from './lock.js';
+import { springFrames, reducedMotion } from './fx.js';
 
 export const ID_CATS = [
   { id: 'idcard', label: 'ID-Karte', sub: 'Personalausweis', icon: 'user', c: 'c-blue', sides: 2 },
@@ -35,7 +37,8 @@ const $ = id => document.getElementById(id);
 export async function folders() {
   return (await db.all('assets')).filter(a => a.kind === 'folder').sort((a, b) => a.name.localeCompare(b.name, 'de'));
 }
-async function liveDocs() { return (await db.all('docs')).filter(d => !isDeleted(d)); }
+// Dateien aus gesperrten (nicht entsperrten) Ordnern bleiben verborgen
+async function liveDocs() { return visibleDocs((await db.all('docs')).filter(d => !isDeleted(d))); }
 
 // Ziel für neu erstellte Dokumente: nur solange der Tab „Dateien“ in einem Ordner offen ist
 export function fileTarget() {
@@ -58,7 +61,13 @@ export async function ensureIdFolder() {
   return f || createFolder('id', 'Ausweise');
 }
 
-export function initFiles(c) { ctx = c; }
+export function initFiles(c) {
+  ctx = c;
+  refreshLocks().catch(() => {});
+  onLockChange(() => { if (document.body.dataset.tab === 'files') renderFiles(); ctx.renderRecents?.(); ctx.onLock?.(); });
+}
+/** Tab „Dateien“ verlassen → offenen gesperrten Ordner wieder sperren */
+export function leaveFiles() { if (cur) leftFolder(cur); }
 
 export function openFolder(id, cat = null) { cur = id; curCat = cat; renderFiles(); }
 
@@ -66,8 +75,8 @@ export async function renderFiles() {
   const list = $('files-list'), head = $('files-head');
   if (!list) return;
   const [fs, docs] = await Promise.all([folders(), liveDocs()]);
-  const folder = cur && fs.find(f => f.id === cur);
-  if (cur && !folder) { cur = null; curCat = null; }
+  let folder = cur && fs.find(f => f.id === cur);
+  if (cur && (!folder || !isOpenFolder(cur))) { cur = null; curCat = null; folder = null; sel = null; }
   const sortDocs = a => a.sort((x, y) => (y.updated || 0) - (x.updated || 0));
 
   if (!folder) {
@@ -123,7 +132,7 @@ export async function renderFiles() {
     ${canSel ? `<button class="icon-btn" data-sel aria-label="Auswählen">${icon('checkSquare')}</button>` : ''}
     <button class="icon-btn" data-fm aria-label="Mehr">${icon('more')}</button>`;
   if (!sel) {
-    head.querySelector('[data-back]').onclick = () => { haptic(); filt = null; if (curCat) curCat = null; else cur = null; renderFiles(); };
+    head.querySelector('[data-back]').onclick = () => { haptic(); filt = null; if (curCat) curCat = null; else { const was = cur; cur = null; leftFolder(was); } renderFiles(); };
     head.querySelector('[data-fm]').onclick = () => cat ? catAdd(folder, cat) : folderMenu(folder);
   }
   bindHead(head);
@@ -162,16 +171,19 @@ export async function renderFiles() {
 }
 
 function folderRow(f, n, i) {
-  return `<div class="doc-row fl-row${sel ? ' off' : ''}" data-f="${f.id}" style="animation-delay:${Math.min(i, 8) * 40}ms">
-    <span class="fl-ic ${f.type === 'id' ? 'id' : ''}" ${f.color && tagC(f.color) ? `style="--fc:${tagC(f.color)}"` : ''}>${icon(f.type === 'id' ? 'idFolder' : 'folder')}</span>
-    <button class="doc-info" data-open><div class="doc-name">${esc(f.name)}</div><div class="doc-meta">${f.type === 'id' ? 'ID-Ordner · ' : ''}${n} ${n === 1 ? 'Dokument' : 'Dokumente'}</div></button>
+  const lk = isLockedFolder(f.id), shut = lk && !isOpenFolder(f.id);
+  return `<div class="doc-row fl-row${sel ? ' off' : ''}${lk ? ' locked' : ''}${shut ? ' shut' : ''}" data-f="${f.id}" style="animation-delay:${Math.min(i, 8) * 40}ms">
+    <span class="fl-ic ${f.type === 'id' ? 'id' : ''}" ${f.color && tagC(f.color) ? `style="--fc:${tagC(f.color)}"` : ''}>${icon(f.type === 'id' ? 'idFolder' : 'folder')}${lk ? `<i class="fl-lock">${icon(shut ? 'lock' : 'unlock')}</i>` : ''}</span>
+    <button class="doc-info" data-open><div class="doc-name">${esc(f.name)}</div><div class="doc-meta">${f.type === 'id' ? 'ID-Ordner · ' : ''}${shut ? 'Gesperrt' : `${n} ${n === 1 ? 'Dokument' : 'Dokumente'}${lk ? ' · entsperrt' : ''}`}</div></button>
     <button class="doc-more" data-fmore aria-label="Mehr">${icon('more')}</button></div>`;
 }
 function bindFolderRows(list, fs) {
   list.querySelectorAll('[data-f]').forEach(r => {
     const f = fs.find(x => x.id === r.dataset.f); if (!f) return;
-    r.querySelector('[data-open]').onclick = () => { haptic(); filt = null; openFolder(f.id); };
-    r.querySelector('.fl-ic').onclick = () => { haptic(); filt = null; openFolder(f.id); };
+    // Gesperrt: Face ID / PIN direkt aus dem Tipp heraus starten
+    const go = () => { haptic(); filt = null; if (isOpenFolder(f.id)) return openFolder(f.id); unlockFolder(f).then(ok => ok && openFolder(f.id)); };
+    r.querySelector('[data-open]').onclick = go;
+    r.querySelector('.fl-ic').onclick = go;
     r.querySelector('[data-fmore]').onclick = () => folderMenu(f);
   });
 }
@@ -239,68 +251,173 @@ function bindHead(head) {
   paintBar();
 }
 function startSel(ids) { sel = new Set(ids); haptic(); document.body.classList.add('selecting'); renderFiles(); }
-export function endSel() { sel = null; document.body.classList.remove('selecting'); document.getElementById('sel-bar')?.classList.remove('on'); renderFiles(); }
+export function endSel() { sel = null; document.body.classList.remove('selecting'); renderFiles(); }
 export const selecting = () => !!sel;
 function toggle(id, row) {
   sel.has(id) ? sel.delete(id) : sel.add(id); haptic();
   row.classList.toggle('sel-on', sel.has(id));
   const h = $('files-head'); h.innerHTML = selHead(); bindHead(h);
 }
+// Schwebende Aktionsleiste: fährt mit Feder hoch, sobald etwas ausgewählt ist
+const BAR = [
+  ['merge', 'merge', 'Zusammen&shy;führen'], ['move', 'folderMove', 'Verschieben'], ['tag', 'tag', 'Farb-Tag'],
+  ['compress', 'compress', 'Kompri&shy;mieren'], ['zip', 'archive', 'ZIP'], ['del', 'trash', 'Löschen'], ['more', 'more', 'Mehr'],
+];
+let barShown = false;
 function paintBar() {
   let bar = document.getElementById('sel-bar');
   if (!bar) {
     bar = document.createElement('div'); bar.id = 'sel-bar'; bar.className = 'sel-bar';
-    bar.innerHTML = [['share', 'share', 'Teilen'], ['move', 'folderMove', 'Verschieben'], ['merge', 'merge', 'Zusammen&shy;führen'], ['del', 'trash', 'Löschen'], ['more', 'more', 'Mehr']]
-      .map(([a, ic, l]) => `<button data-sa="${a}">${icon(ic)}<span>${l}</span></button>`).join('');
+    bar.innerHTML = `<div class="sb-info" data-info></div><div class="sb-btns">${BAR.map(([a, ic, l]) => `<button data-sa="${a}"${a === 'del' ? ' class="danger"' : ''}>${icon(ic)}<span>${l}</span></button>`).join('')}</div>`;
     document.body.appendChild(bar);
     bar.querySelectorAll('[data-sa]').forEach(b => b.onclick = () => selAction(b.dataset.sa));
   }
-  bar.classList.toggle('on', !!sel);
-  if (!sel) return;
-  const n = sel.size;
-  bar.querySelectorAll('[data-sa]').forEach(b => { b.disabled = b.dataset.sa === 'merge' ? n < 2 : !n; });
+  const n = sel?.size || 0, show = !!sel && n > 0;
+  if (show) {
+    bar.querySelectorAll('[data-sa]').forEach(b => { b.disabled = b.dataset.sa === 'merge' ? n < 2 : false; });
+    const docs = shown.filter(d => sel.has(d.id));
+    const size = docs.reduce((a, d) => a + (d.size || 0), 0);
+    bar.querySelector('[data-info]').textContent = `${n} ${n === 1 ? 'PDF' : 'PDFs'} · ${fmtSize(size)}${n < 2 ? ' · Zusammenführen ab 2' : ''}`;
+  }
+  if (show === barShown) return;
+  barShown = show;
+  bar.classList.toggle('on', show);
+  // Einfahren mit iOS-Feder (WAAPI), Ausfahren schnell
+  if (show && !reducedMotion() && bar.animate) {
+    const sp = springFrames({ stiffness: 380, damping: 24 }, v => ({ transform: `translate3d(0,${((1 - v) * 130).toFixed(2)}%,0) scale(${(0.94 + 0.06 * v).toFixed(4)})`, opacity: Math.min(1, v * 2.2) }), 40);
+    bar.animate(sp.frames, { duration: sp.ms });
+    bar.querySelectorAll('[data-sa]').forEach((b, i) => b.animate([{ transform: 'translate3d(0,14px,0) scale(.8)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, delay: 60 + i * 28, easing: 'cubic-bezier(.3,1.4,.5,1)', fill: 'backwards' }));
+  }
 }
 async function selDocs() {
+  // Reihenfolge = Auswahl-Reihenfolge (wichtig fürs Zusammenführen)
   const all = await liveDocs();
-  return shown.filter(d => sel.has(d.id)).map(d => all.find(x => x.id === d.id)).filter(Boolean);
+  return [...sel].map(id => all.find(x => x.id === id)).filter(Boolean);
 }
+const pdfName = d => /\.pdf$/i.test(d.name) ? d.name : d.name + '.pdf';
 async function selAction(a) {
   if (!sel?.size) return;
   haptic();
   const docs = await selDocs();
-  if (a === 'merge') { if (docs.length < 2) return toast('Bitte mindestens 2 Dateien wählen', true); const ids = docs.map(d => d.id); return ctx.merge(ids); }
-  if (a === 'move') return moveDocSheet(docs, () => { endSel(); ctx.renderRecents?.(); });
+  const done = () => { endSel(); ctx.renderRecents?.(); };
+  if (a === 'merge') { if (docs.length < 2) return toast('Bitte mindestens 2 Dateien wählen', true); return ctx.merge(docs.map(d => d.id)); }
+  if (a === 'move') return moveDocSheet(docs, done);
+  if (a === 'tag') return tagSheet(docs, done);
+  if (a === 'compress') return compressMany(docs, done);
+  if (a === 'zip') return zipMany(docs);
   if (a === 'del') {
     if (!await confirmDlg(`${docs.length} ${docs.length === 1 ? 'Datei' : 'Dateien'} löschen?`, `Sie kommen in den Papierkorb und können ${TRASH_DAYS} Tage lang wiederhergestellt werden.`, 'In den Papierkorb')) return;
-    await moveToTrash(docs.map(d => d.id)); toast('In den Papierkorb verschoben'); endSel(); ctx.renderRecents?.(); return;
-  }
-  if (a === 'share') {
-    busy(true, 'Wird vorbereitet …');
-    try {
-      const files = [];
-      for (const d of docs) files.push(new File([await ctx.docBytes(d)], /\.pdf$/i.test(d.name) ? d.name : d.name + '.pdf', { type: 'application/pdf' }));
-      busy(false);
-      if (files.length > 1 && navigator.canShare?.({ files })) { try { await navigator.share({ files }); } catch {} }
-      else for (const f of files) await shareBytes(new Uint8Array(await f.arrayBuffer()), f.name);
-    } catch (e) { console.error(e); busy(false); toast('Teilen fehlgeschlagen', true); }
-    return;
+    await moveToTrash(docs.map(d => d.id)); toast('In den Papierkorb verschoben'); done(); return;
   }
   if (a === 'more') {
     const allFav = docs.every(d => d.fav);
     sheet({
       title: `${docs.length} ausgewählt`,
-      html: `<div class="menu"><button class="row" data-m="fav"><span class="row-ic c-red">${icon(allFav ? 'heartFill' : 'heart')}</span><span class="row-main"><span class="row-title">${allFav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}</span></span></button>
-        <button class="row" data-m="tags"><span class="row-ic c-orange">${icon('tag')}</span><span class="row-main"><span class="row-title">Farb-Tags</span></span></button></div>`,
+      html: `<div class="menu"><button class="row" data-m="share"><span class="row-ic c-blue">${icon('share')}</span><span class="row-main"><span class="row-title">Als einzelne PDFs teilen</span></span></button>
+        <button class="row" data-m="fav"><span class="row-ic c-red">${icon(allFav ? 'heartFill' : 'heart')}</span><span class="row-main"><span class="row-title">${allFav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen'}</span></span></button></div>`,
       onMount(el, api) {
-        el.querySelector('[data-m="tags"]').onclick = () => { api.close(); tagSheet(docs, () => { endSel(); ctx.renderRecents?.(); }); };
+        el.querySelector('[data-m="share"]').onclick = () => { api.close(); shareMany(docs); };
         el.querySelector('[data-m="fav"]').onclick = async () => {
           api.close();
           for (const d of docs) { d.fav = !allFav; await db.put('docs', d); }
-          toast(allFav ? 'Aus Favoriten entfernt' : 'Zu Favoriten hinzugefügt'); endSel(); ctx.renderRecents?.();
+          toast(allFav ? 'Aus Favoriten entfernt' : 'Zu Favoriten hinzugefügt'); done();
         };
       },
     });
   }
+}
+async function shareMany(docs) {
+  busy(true, 'Wird vorbereitet …');
+  try {
+    const files = [];
+    for (const d of docs) files.push(new File([await ctx.docBytes(d)], pdfName(d), { type: 'application/pdf' }));
+    busy(false);
+    if (files.length > 1 && navigator.canShare?.({ files })) { try { await navigator.share({ files }); } catch {} }
+    else for (const f of files) await shareBytes(new Uint8Array(await f.arrayBuffer()), f.name);
+  } catch (e) { console.error(e); busy(false); toast('Teilen fehlgeschlagen', true); }
+}
+
+// ---------- Stapel: Komprimieren ----------
+function compressMany(docs, onDone) {
+  let level = 'standard', copy = false, running = false;
+  sheet({
+    title: `${docs.length} ${docs.length === 1 ? 'PDF' : 'PDFs'} komprimieren`,
+    html: `<div class="seg bt-seg" data-lv><button data-v="leicht">Leicht</button><button data-v="standard">Standard</button><button data-v="stark">Stark</button></div>
+      <div class="bt-list">${docs.map((d, i) => `<div class="bt-it" data-i="${i}"><span class="doc-thumb" style="width:30px;height:40px;background-image:url('${d.thumb || ''}')"></span><div><b>${esc(d.name)}</b><small data-m>${fmtSize(d.size || 0)}</small></div><span class="wf-state"></span></div>`).join('')}</div>
+      <div class="wf-prog"><div class="wf-bar"><i data-bar></i></div><span data-pct>0 %</span></div>
+      <div class="row" style="padding:6px 2px 2px;border:0"><span class="row-main"><span class="row-title">Als Kopien speichern</span><span class="row-sub" style="display:block">Aus: Originale werden ersetzt</span></span>
+        <div class="seg" data-copy><button data-v="1">An</button><button data-v="0">Aus</button></div></div>
+      <div class="btn-row"><button class="btn primary" data-go>${icon('compress')} Komprimieren</button></div>`,
+    onMount(el, api) {
+      const paint = () => {
+        el.querySelectorAll('[data-lv] button').forEach(b => b.classList.toggle('on', b.dataset.v === level));
+        el.querySelectorAll('[data-copy] button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === copy));
+      };
+      el.querySelectorAll('[data-lv] button').forEach(b => b.onclick = () => { if (!running) { level = b.dataset.v; haptic(); paint(); } });
+      el.querySelectorAll('[data-copy] button').forEach(b => b.onclick = () => { if (!running) { copy = b.dataset.v === '1'; haptic(); paint(); } });
+      const bar = el.querySelector('[data-bar]'), pct = el.querySelector('[data-pct]');
+      const setP = p => { bar.style.transform = `scaleX(${p.toFixed(4)})`; pct.textContent = Math.round(p * 100) + ' %'; };
+      const go = el.querySelector('[data-go]');
+      go.onclick = async () => {
+        if (running) return;
+        if (go.dataset.done) return api.close();
+        running = true; go.disabled = true; go.innerHTML = `<span class="wf-spin"></span> Läuft …`;
+        const { compressPdf } = await import('./tools.js');
+        let before = 0, after = 0, n = 0;
+        for (let i = 0; i < docs.length; i++) {
+          const d = docs[i], row = el.querySelector(`.bt-it[data-i="${i}"]`), m = row.querySelector('[data-m]');
+          row.classList.add('run'); row.scrollIntoView?.({ block: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' });
+          try {
+            const b = new Uint8Array(await ctx.docBytes(d));
+            const r = await compressPdf(b, level, (k, t) => { m.textContent = `Bild ${k} von ${t} …`; setP((i + k / Math.max(1, t)) / docs.length); });
+            const out = r.bytes;
+            before += b.byteLength;
+            if (out.byteLength < b.byteLength * 0.97) { await ctx.storeResult(d, out, 'komprimiert', copy); after += out.byteLength; n++; m.textContent = `${fmtSize(b.byteLength)} → ${fmtSize(out.byteLength)}`; }
+            else { after += b.byteLength; m.textContent = 'Schon gut komprimiert'; }
+            row.classList.add('ok');
+          } catch (e) { console.error(e); row.classList.add('err'); m.textContent = 'Fehlgeschlagen'; }
+          row.classList.remove('run'); setP((i + 1) / docs.length);
+        }
+        running = false; go.disabled = false; go.dataset.done = '1'; go.innerHTML = `${icon('check')} Fertig`; haptic();
+        toast(n ? `${n} ${n === 1 ? 'PDF' : 'PDFs'} verkleinert · −${fmtSize(Math.max(0, before - after))}` : 'Alle PDFs waren schon gut komprimiert');
+      };
+      paint();
+    },
+    onClose: () => { if (!running) onDone?.(); },
+  });
+}
+
+// ---------- Stapel: ZIP ----------
+async function zipMany(docs) {
+  busy(true, 'ZIP wird gepackt …');
+  let bytes, name;
+  try {
+    const { loadLib } = await import('./convert.js');
+    await loadLib('jszip.min.js');
+    const zip = new window.JSZip(), used = new Set();
+    for (let i = 0; i < docs.length; i++) {
+      busy(true, `PDF ${i + 1} von ${docs.length} wird gepackt …`);
+      let n = pdfName(docs[i]).replace(/[\\/:*?"<>|]/g, '_'), k = 2;
+      while (used.has(n.toLowerCase())) n = pdfName(docs[i]).replace(/\.pdf$/i, '') + ` (${k++}).pdf`;
+      used.add(n.toLowerCase());
+      zip.file(n, await ctx.docBytes(docs[i]), { date: new Date(docs[i].updated || Date.now()) });
+    }
+    // PDFs sind schon komprimiert → nur leicht packen (schnell)
+    bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 1 } }, m => busy(true, `ZIP wird erstellt … ${Math.round(m.percent)} %`));
+    const d = new Date();
+    name = `Nibvion ${docs.length} PDFs ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}.zip`;
+  } catch (e) { console.error(e); busy(false); return toast('ZIP konnte nicht erstellt werden', true); }
+  busy(false);
+  // Teilen erst nach einem Tipp (iOS verlangt eine Nutzeraktion)
+  sheet({
+    title: 'ZIP ist fertig',
+    html: `<div class="zip-card"><span class="zip-ic">${icon('archive')}</span><div><b>${esc(name)}</b><span>${docs.length} PDFs · ${fmtSize(bytes.byteLength)}</span></div></div>
+      <div class="btn-row"><button class="btn" data-dl>${icon('download')} Sichern</button><button class="btn primary" data-sh>${icon('share')} Teilen</button></div>`,
+    onMount(el, api) {
+      el.querySelector('[data-sh]').onclick = () => { api.close(); shareBytes(bytes, name, 'application/zip'); };
+      el.querySelector('[data-dl]').onclick = () => { api.close(); downloadBytes(bytes, name, 'application/zip'); };
+    },
+  });
 }
 
 function newFolderSheet() {
@@ -336,13 +453,17 @@ function folderMenu(f) {
       <button class="row" data-a="open"><span class="row-ic c-blue">${icon('folder')}</span><span class="row-main"><span class="row-title">Öffnen</span></span></button>
       <button class="row" data-a="rename"><span class="row-ic c-gray">${icon('rename')}</span><span class="row-main"><span class="row-title">Umbenennen</span></span></button>
       <button class="row" data-a="color"><span class="row-ic c-orange">${icon('tag')}</span><span class="row-main"><span class="row-title">Farbe</span></span>${f.color ? `<i class="ff-dot" style="background:${tagC(f.color)}"></i>` : ''}</button>
+      <button class="row" data-a="lock"><span class="row-ic c-violet">${icon('lock')}</span><span class="row-main"><span class="row-title">${f.lock?.hash ? 'Sperre verwalten' : 'Ordner sperren'}</span><span class="row-sub">${f.lock?.hash ? 'PIN, Face ID, wieder sperren, entfernen' : 'Mit PIN oder Face ID / Touch ID'}</span></span>${f.lock?.hash ? `<span class="row-end lk-on">${icon('lock')}</span>` : ''}</button>
       <button class="row" data-a="del"><span class="row-ic c-red">${icon('trash')}</span><span class="row-main"><span class="row-title" style="color:var(--danger)">Ordner löschen</span><span class="row-sub">Die Dokumente bleiben erhalten</span></span></button>
     </div>`,
     onMount(el, api) {
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         api.close();
         const a = b.dataset.a;
-        if (a === 'open') return openFolder(f.id);
+        if (a === 'open') return isOpenFolder(f.id) ? openFolder(f.id) : unlockFolder(f).then(ok => ok && openFolder(f.id));
+        if (a === 'lock') return lockSheet(f, () => renderFiles());
+        // Löschen gibt die Dateien frei → bei gesperrten Ordnern erst entsperren
+        if (a === 'del' && !isOpenFolder(f.id) && !(await unlockFolder(f))) return;
         if (a === 'color') return folderColorSheet(f);
         if (a === 'rename') {
           const n = await promptDlg('Ordner umbenennen', f.name);

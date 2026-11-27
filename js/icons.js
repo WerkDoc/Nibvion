@@ -31,6 +31,7 @@ const P = {
   collage: '<rect x="3" y="3" width="10" height="11" rx="1.5"/><rect x="15" y="3" width="6" height="5" rx="1.2"/><rect x="15" y="10" width="6" height="11" rx="1.2"/><rect x="3" y="16" width="10" height="5" rx="1.2"/>',
   home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  faceId: '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5a3.5 3.5 0 0 0 5 0"/>',
   play: '<path d="M7.5 4.8v14.4a.8.8 0 0 0 1.2.7l11.4-7.2a.8.8 0 0 0 0-1.4L8.7 4.1a.8.8 0 0 0-1.2.7z"/>',
   chevronUp: '<path d="m6 15 6-6 6 6"/>',
   pin: '<path d="M12 16.5V22M8.5 3h7l-1.2 6.2 3.2 3.3v1.5h-11v-1.5l3.2-3.3z"/>',

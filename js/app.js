@@ -12,7 +12,7 @@ import { scanReview } from './scanreview.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
 import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
-import { initEditor, openEditor, shareBytes, downloadBytes, closeEditorIfOpen, setDocPicker } from './editor.js';
+import { initEditor, openEditor, shareBytes, downloadBytes, closeEditorIfOpen, setDocPicker, hideDocs } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 import { initMerge, mergeFlow } from './merge.js';
@@ -21,12 +21,13 @@ import { initPageTools, headerFooterSheet, cropSheet } from './pagetools.js';
 import { initIncoming } from './incoming.js';
 import { initPageOrder, duplexSheet, blankTool } from './pageorder.js';
 import { initLayout, spreadSheet, posterSheet } from './layout.js';
-import { initFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS, tagSheet } from './files.js';
+import { isHidden, visibleDocs } from './lock.js';
+import { initFiles, leaveFiles, endSel, selecting, renderFiles, fileTarget, moveDocSheet, ensureIdFolder, idCat, ID_CATS, tagSheet } from './files.js';
 import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.46.0';
+export const VERSION = '1.47.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -140,7 +141,7 @@ function renderQuick() {
 }
 
 async function allDocs() {
-  const docs = (await db.all('docs')).filter(d => !isDeleted(d));
+  const docs = visibleDocs((await db.all('docs')).filter(d => !isDeleted(d)));   // gesperrte Ordner verborgen
   return settings.get('sort') === 'name'
     ? docs.sort((a, b) => a.name.localeCompare(b.name, 'de'))
     : docs.sort((a, b) => (b.updated || 0) - (a.updated || 0));
@@ -1256,6 +1257,7 @@ function onlineSheet() {
 const TABS = ['tools', 'home', 'files', 'settings'];
 function switchTab(tab) {
   if (selecting()) endSel();
+  if (document.body.dataset.tab === 'files' && tab !== 'files') leaveFiles();
   resetDocScroll();
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === tab));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
@@ -1348,7 +1350,7 @@ async function init() {
       busy(false); renderRecents(); return ids;
     },
   });
-  initFiles({ openDoc, docMenu, docBytes, renderRecents, merge: ids => mergeFlow(ids, { onDone: () => { endSel(); renderRecents(); } }), importDocs: () => importPdfs(), importImages: () => runTool('imgscan'), scan: () => runTool('scan'), captureId: (f, c) => idCapture(f, c) });
+  initFiles({ openDoc, docMenu, docBytes, storeResult, onLock: () => hideDocs(isHidden), renderRecents, merge: ids => mergeFlow(ids, { onDone: () => { endSel(); renderRecents(); } }), importDocs: () => importPdfs(), importImages: () => runTool('imgscan'), scan: () => runTool('scan'), captureId: (f, c) => idCapture(f, c) });
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
   document.addEventListener('click', e => {
     const a = e.target.closest('[data-action]')?.dataset.action;

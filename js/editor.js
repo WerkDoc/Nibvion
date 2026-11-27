@@ -133,7 +133,7 @@ const TAB_MAX = 4;
 const T = { list: [] };   // { id, name, thumb, st }
 function tabAdd(doc) {
   if (!T.list.some(t => t.id === doc.id)) {
-    T.list.push({ id: doc.id, name: doc.name, thumb: doc.thumb || '', st: null });
+    T.list.push({ id: doc.id, name: doc.name, thumb: doc.thumb || '', folder: doc.folder, st: null });
     if (T.list.length > TAB_MAX) {
       const drop = T.list.find(t => t.id !== doc.id);
       T.list.splice(T.list.indexOf(drop), 1);
@@ -204,6 +204,18 @@ async function closeTab(id) {
   if (!next) { T.list.splice(i, 1); tabs.render(); return closeEditor(); }
   await switchDoc(next.id);
   T.list = T.list.filter(t => t.id !== id); tabs.render();
+}
+/** Gesperrte Ordner: verborgene Dokumente aus den Tabs nehmen und ggf. den Editor schließen */
+export async function hideDocs(pred) {
+  for (const t of T.list) if (t.id === E.doc?.id) t.folder = E.doc.folder;
+  const cur = E.open && E.doc && pred(E.doc);
+  T.list = T.list.filter(t => !pred(t) || (cur && t.id === E.doc.id));
+  if (cur) {
+    const next = T.list.find(t => t.id !== E.doc.id);
+    if (next) { await switchDoc(next.id); T.list = T.list.filter(t => !pred(t)); }
+    else { T.list = []; await closeEditor(); }
+  }
+  tabs?.render();
 }
 let docPicker = null;
 export const setDocPicker = fn => { docPicker = fn; };
