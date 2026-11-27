@@ -51,6 +51,9 @@ export function sheet({ title = '', html = '', onMount, onClose, noHead = false 
   const sh = document.createElement('div'); sh.className = 'sheet';
   sh.innerHTML = `<div class="grab"></div>` + (noHead ? '' :
     `<div class="sheet-head"><div class="sheet-title">${esc(title)}</div><button class="sheet-close" data-close>${icon('x')}</button></div>`) + html;
+  // Gestapelte Sheets: jede Ebene liegt samt Hintergrund ÜBER der vorigen – sonst blieb das untere
+  // Sheet antippbar (z. B. „Text-Stempel“ mehrfach → mehrere gleiche Fenster übereinander)
+  const depth = stack.length; bd.style.setProperty('--sd', depth); sh.style.setProperty('--sd', depth);
   layer.append(bd, sh);
   hydrateIcons(sh);
   const api = {
