@@ -12,7 +12,7 @@ import { scanReview } from './scanreview.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
 import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
-import { initEditor, openEditor, shareBytes, downloadBytes, closeEditorIfOpen } from './editor.js';
+import { initEditor, openEditor, shareBytes, downloadBytes, closeEditorIfOpen, setDocPicker } from './editor.js';
 import { signatureSheet, stampSheet } from './assets.js';
 import { settings, applyTheme } from './settings.js';
 import { initMerge, mergeFlow } from './merge.js';
@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.44.1';
+export const VERSION = '1.45.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -238,10 +238,7 @@ function docMenu(d) {
         if (a === 'form') return formDoc(d);
         if (a === 'split') return splitDoc(d);
         if (a === 'redact') return redactDoc(d);
-        if (a === 'share') {
-          if (d.objects?.length) { openDoc(d.id); return toast('Zum Teilen mit Änderungen: ⋯ → Teilen'); }
-          const f = await db.get('files', d.id); return shareBytes(new Uint8Array(f.data), d.name);
-        }
+        if (a === 'share') return shareDoc(d);
         if (a === 'rename') {
           const n = await renameSheet(d.name.replace(/\.pdf$/i, ''), async () => {
             const pdf = await loadPdf(await docBytes(d)); return { pdf, done: () => closePdf(pdf) };
@@ -304,7 +301,7 @@ const TOOL_GROUPS = [
     { id: 'pdf2img', label: 'PDF → Bilder', sub: 'Seiten als JPG speichern', icon: 'image', c: 'c-blue' },
     { id: 'word', label: 'Word → PDF', sub: 'DOCX als PDF speichern', icon: 'word', c: 'c-blue' },
     { id: 'excel', label: 'Excel → PDF', sub: 'XLSX, XLS oder CSV als PDF', icon: 'excel', c: 'c-green' },
-    { id: 'ppt', label: 'PowerPoint → PDF', icon: 'ppt', c: 'c-orange', soon: true },
+    { id: 'ppt', label: 'PowerPoint → PDF', sub: 'PPTX mit Folien, Bildern, Tabellen & Diagrammen', icon: 'ppt', c: 'c-orange' },
     { id: 'flipbook', label: 'Als 3D-Flipbook (.html) exportieren', sub: 'Zum Durchblättern im Browser – wie ein Magazin', icon: 'book', c: 'c-orange' },
     { id: 'gif', label: 'PDF → Animiertes GIF', sub: 'Seiten als Slideshow mit Übergängen', icon: 'gif', c: 'c-violet' },
     { id: 'pdf2word', label: 'PDF → Word', sub: 'Als bearbeitbare DOCX speichern – auch Scans', icon: 'word', c: 'c-blue' },
@@ -355,6 +352,7 @@ function runTool(id) {
     case 'gif': return docPicker('PDF → Animiertes GIF', 'Ausgewählte Seiten werden zu einer animierten Slideshow mit Übergängen – mit Live-Vorschau.', gifDoc);
     case 'word': return officeToPdf('word');
     case 'excel': return officeToPdf('excel');
+    case 'ppt': return officeToPdf('ppt');
     case 'pdf2word': return pdfToWordSheet();
     case 'pdf2excel': return docPicker('PDF / Scan → Excel', 'Tabellen und Text werden erkannt und als Excel-Datei gespeichert. Am besten klappt es bei Tabellen mit sichtbaren Linien.', exportExcel);
     case 'text': return docPicker('Text extrahieren', 'Der Text der PDF wird angezeigt – gescannte Seiten werden dafür automatisch gelesen.', textFromDoc);
@@ -603,12 +601,13 @@ async function pdfToImages() {
   });
 }
 
-// ----- Word / Excel → PDF -----
+// ----- Word / Excel / PowerPoint → PDF -----
 async function officeToPdf(kind, given) {
-  const files = given?.length ? given : await pickFiles(kind === 'word' ? 'file-word' : 'file-excel');
+  const files = given?.length ? given : await pickFiles({ word: 'file-word', excel: 'file-excel', ppt: 'file-ppt' }[kind]);
   if (!files.length) return;
   const f = files[0];
-  const base = f.name.replace(/\.[^.]+$/, '') || (kind === 'word' ? 'Dokument' : 'Tabelle');
+  const base = f.name.replace(/\.[^.]+$/, '') || ({ word: 'Dokument', excel: 'Tabelle', ppt: 'Präsentation' }[kind]);
+  if (kind === 'ppt') return pptToPdf(f, base);
   busy(true, kind === 'word' ? 'Word-Dokument wird gelesen …' : 'Tabelle wird gelesen …');
   let conv, buf;
   try { [conv, buf] = await Promise.all([import('./convert.js'), f.arrayBuffer()]); }
@@ -630,6 +629,22 @@ async function officeToPdf(kind, given) {
     busy(true, 'PDF wird erstellt …');
     try { await finish(await conv.excelToPdf(book, { ...opts, onProgress: progress, title: base })); } catch (e) { fail(e); }
   });
+}
+
+async function pptToPdf(f, base) {
+  busy(true, 'Präsentation wird gelesen …');
+  try {
+    const [{ pptxToPdf }, buf] = await Promise.all([import('./pptx.js'), f.arrayBuffer()]);
+    let warns = [];
+    const bytes = await pptxToPdf(buf, { title: base, onWarn: w => { warns = w; }, onProgress: (i, n) => busy(true, n > 1 ? `Folie ${i} von ${n} wird erstellt …` : 'PDF wird erstellt …') });
+    const id = await saveNewDoc(bytes, base + '.pdf');
+    busy(false); await renderRecents();
+    toast(warns.length ? 'PDF erstellt · ' + warns[0] : 'PDF erstellt');
+    openDoc(id);
+  } catch (e) {
+    console.error(e); busy(false);
+    toast(e?.name === 'ConvertError' ? e.message : 'Umwandeln fehlgeschlagen', true);
+  }
 }
 
 function excelOptions(book, base, go) {
@@ -710,6 +725,22 @@ async function docBytes(d) {
     bytes = await flatten(bytes, d.objects, infos);
   }
   return bytes;
+}
+
+// Teilen-Dialog mit Kippkarte (Dateiliste / Startseite)
+async function shareDoc(d) {
+  const { shareDialog, coverImage, coverRatio } = await import('./tiltcard.js');
+  const name = /\.pdf$/i.test(d.name) ? d.name : d.name + '.pdf';
+  let bp = null; const bytes = () => (bp ??= docBytes(d).then(b => new Uint8Array(b)));
+  let pdfP = null; const pdf = () => (pdfP ??= bytes().then(b => loadPdf(b.slice())));
+  const close = () => pdfP?.then(p => setTimeout(() => closePdf(p), 300)).catch(() => {});
+  let ratio = 0.707; try { ratio = await coverRatio(await pdf()); } catch {}
+  shareDialog({
+    name, sub: [d.pages ? `${d.pages} ${d.pages === 1 ? 'Seite' : 'Seiten'}` : '', d.size ? fmtSize(d.size) : ''].filter(Boolean).join(' · '),
+    ratio, thumb: d.thumb || '',
+    cover: async () => { try { return await coverImage(await pdf(), 220); } finally { close(); } },
+    getBytes: bytes, share: shareBytes, download: downloadBytes,
+  });
 }
 
 // Ergebnis speichern: als Kopie oder das Dokument ersetzen
@@ -1269,6 +1300,7 @@ async function init() {
   try { await purgeExpired(); } catch {}
   hydrateIcons(document);
   initEditor();
+  setDocPicker(() => chooseDoc('view', 'Weiteres PDF öffnen'));
   crashCheck();
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';

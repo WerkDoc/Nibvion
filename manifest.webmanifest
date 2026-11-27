@@ -57,7 +57,9 @@
             "text/csv",
             ".xlsx",
             ".xls",
-            ".csv"
+            ".csv",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".pptx"
           ]
         }
       ]
@@ -103,6 +105,15 @@
         ],
         "text/csv": [
           ".csv"
+        ]
+      },
+      "launch_type": "single-client"
+    },
+    {
+      "action": "./",
+      "accept": {
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": [
+          ".pptx"
         ]
       },
       "launch_type": "single-client"

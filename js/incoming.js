@@ -2,7 +2,7 @@
 // 1) Web Share Target: „Teilen → Nibvion“ (sw.js legt die Dateien im Cache „nibvion-share“ ab
 //    und leitet auf ?shared=… weiter)
 // 2) File Handling API: „Öffnen mit → Nibvion“ (launchQueue, Desktop-Chrome/Edge)
-// Danach: PDFs importieren & öffnen, Word/Excel umwandeln, Bilder als PDF oder Scan.
+// Danach: PDFs importieren & öffnen, Word/Excel/PowerPoint umwandeln, Bilder als PDF oder Scan.
 import { icon } from './icons.js';
 import { toast, busy, sheet, esc, closeAllSheets } from './ui.js';
 
@@ -87,8 +87,7 @@ export async function handleFiles(files) {
   ctx.closeEditor && await ctx.closeEditor();
   const g = { pdf: [], image: [], word: [], excel: [], ppt: [], other: [] };
   for (const f of files) g[kindOf(f)].push(f);
-  if (g.ppt.length) toast('PowerPoint → PDF kommt in einem der nächsten Updates');
-  else if (g.other.length && files.length === g.other.length) return toast(`„${g.other[0].name}“ wird nicht unterstützt`, true);
+  if (g.other.length && files.length === g.other.length) return toast(`„${g.other[0].name}“ wird nicht unterstützt`, true);
 
   // 1) PDFs importieren
   let first = null, fails = 0, n = 0;
@@ -102,7 +101,7 @@ export async function handleFiles(files) {
     await ctx.renderRecents();
     if (fails) toast(fails === g.pdf.length ? 'PDF konnte nicht gelesen werden' : `${fails} Datei(en) übersprungen`, true);
   }
-  const rest = [g.word.length && 'word', g.excel.length && 'excel', g.image.length && 'image'].filter(Boolean);
+  const rest = [g.word.length && 'word', g.excel.length && 'excel', g.ppt.length && 'ppt', g.image.length && 'image'].filter(Boolean);
   if (first && !rest.length) {
     if (n > 1) toast(`${n} PDFs importiert`);
     return ctx.openDoc(first);
@@ -112,6 +111,7 @@ export async function handleFiles(files) {
   // 2) Word / Excel → PDF (je Datei nacheinander)
   for (const f of g.word) await ctx.officeToPdf('word', [f]);
   for (const f of g.excel) await ctx.officeToPdf('excel', [f]);
+  for (const f of g.ppt) await ctx.officeToPdf('ppt', [f]);
 
   // 3) Bilder: als PDF zusammenfassen oder wie einen Scan behandeln
   if (g.image.length) imageChoice(g.image);

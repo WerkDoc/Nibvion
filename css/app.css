@@ -1708,3 +1708,98 @@ svg.layer .insp-hi { fill: rgba(255,106,91,.08); stroke: var(--accent); stroke-w
 .cl-bg.on { border-color: var(--accent); }
 .cl-bg:active { transform: scale(.95); }
 @media (prefers-reduced-motion: reduce) { .cl-page { animation: none; } .cl-lay, .cl-bg { transition: none; } }
+
+/* ---------- Kippkarte (Apple-Wallet-Stil, js/tiltcard.js) ---------- */
+.share-card { display: flex; flex-direction: column; align-items: center; padding: 10px 0 18px; }
+.tilt-wrap { touch-action: none; }
+.tilt-stage { position: relative; perspective: 900px; animation: tiltIn .6s var(--spring) both; width: min(220px, 56vw); display: flex; justify-content: center; padding: 6px 0 14px; cursor: grab; }
+.pf-card .tilt-stage { width: min(150px, 40vw); }
+.tilt-card { position: relative; width: 100%; border-radius: 14px; overflow: hidden; background: #fff; transform-style: preserve-3d; will-change: transform;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 1px 2px rgba(0,0,0,.25); transition: box-shadow .3s var(--ease); }
+.tilt-card.touch { box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 2px 4px rgba(0,0,0,.25); }
+.tilt-card img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .35s var(--ease); -webkit-user-drag: none; pointer-events: none; }
+.tilt-card.ready img { opacity: 1; }
+/* Glanz: weicher Lichtfleck, doppelt so groß wie die Karte, wird per transform verschoben */
+.tilt-glare { position: absolute; left: -50%; top: -50%; width: 200%; height: 200%; pointer-events: none; will-change: transform, opacity; mix-blend-mode: soft-light;
+  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,.95) 0%, rgba(255,255,255,.45) 18%, rgba(255,255,255,0) 42%); }
+.tilt-edge { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.06), inset 0 1px 0 rgba(255,255,255,.6);
+  background: linear-gradient(135deg, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 38%, rgba(0,0,0,0) 70%, rgba(0,0,0,.06) 100%); }
+/* Tiefenschatten: eigene, vorab weichgezeichnete Fläche → nur transform/opacity pro Frame */
+.tilt-shadow { position: absolute; left: 8%; right: 8%; top: 14%; bottom: 4%; border-radius: 22px; background: rgba(0,0,0,.85); filter: blur(22px); will-change: transform, opacity; pointer-events: none; }
+[data-theme="light"] .tilt-shadow { background: rgba(20,24,32,.55); }
+.tilt-label { margin-top: 4px; color: var(--text3); font-size: 12px; }
+@keyframes tiltIn { from { opacity: 0; transform: translate3d(0,18px,0) scale(.9); } to { opacity: 1; transform: none; } }
+.share-meta { text-align: center; margin: -4px 8px 14px; display: flex; flex-direction: column; gap: 3px; }
+.share-meta b { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-meta span { color: var(--text2); font-size: 13px; }
+.share-btns .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.share-btns .ico { width: 19px; height: 19px; }
+@media (prefers-reduced-motion: reduce) { .tilt-stage { animation: none; cursor: default; } }
+
+/* ---------- Stoff-Lesezeichen (js/bookmark.js) ---------- */
+.ribbon { position: absolute; right: 18px; top: 0; width: 28px; height: 110px; z-index: 8; overflow: hidden; touch-action: none; cursor: grab; padding: 0 6px; box-sizing: content-box; margin-right: -6px; }
+.ed-top { position: relative; z-index: 9; }
+.rb-move { position: absolute; left: 6px; top: 0; width: 28px; height: 104px; transform: translate3d(0,-80px,0); transform-origin: 50% 0; will-change: transform; }
+.rb-cloth { position: absolute; inset: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 11px), 0 100%);
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.07) 0 1px, rgba(0,0,0,0) 1px 3px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 1px, rgba(0,0,0,0) 1px 3px),
+    linear-gradient(90deg, #d9473f 0%, #ff6a5b 22%, #ff8a6a 50%, #ff6a5b 78%, #c93d36 100%);
+  opacity: .55; transition: opacity .3s var(--ease); }
+.rb-cloth::before { content: ""; position: absolute; left: 3px; right: 3px; top: 0; bottom: 12px; border-left: 1px dashed rgba(255,255,255,.28); border-right: 1px dashed rgba(255,255,255,.28); }
+.rb-shadow { position: absolute; left: 3px; right: -3px; top: 6px; bottom: 2px; background: rgba(0,0,0,.45); filter: blur(4px); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 11px), 0 100%); opacity: .6; }
+.ribbon.set .rb-cloth { opacity: 1; }
+.rb-no { position: absolute; left: 0; right: 0; bottom: 15px; text-align: center; font-size: 10px; font-weight: 800; color: #fff; letter-spacing: -.3px; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .25s; text-shadow: 0 1px 1px rgba(0,0,0,.25); }
+.ribbon.set .rb-no { opacity: 1; }
+.ribbon.pulse .rb-cloth { animation: rbShine .7s var(--ease); }
+@keyframes rbShine { 0% { filter: brightness(1); } 30% { filter: brightness(1.35); } 100% { filter: brightness(1); } }
+.rb-pop { position: absolute; right: 12px; z-index: 9; display: flex; flex-direction: column; min-width: 168px; background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); border: 1px solid var(--line2); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+  opacity: 0; transform: translate3d(0,-8px,0) scale(.94); transform-origin: 90% 0; transition: opacity .18s, transform var(--spring-pop-ms, .3s) var(--spring-pop, var(--spring)); pointer-events: none; }
+.rb-pop.show { opacity: 1; transform: none; pointer-events: auto; }
+.rb-pop button { display: flex; align-items: center; gap: 10px; padding: 12px 14px; font-size: 14.5px; font-weight: 600; text-align: left; }
+.rb-pop button + button { border-top: 1px solid var(--line); }
+.rb-pop button:active { background: var(--accent-soft); }
+.rb-pop .ico { width: 18px; height: 18px; color: var(--accent); }
+.rb-resume { position: absolute; left: 50%; bottom: calc(var(--safe-bottom) + 74px); z-index: 8; display: flex; align-items: center; gap: 8px; padding: 11px 14px 11px 16px; border-radius: 22px; background: var(--grad); color: #fff; font-weight: 700; font-size: 14.5px; white-space: nowrap; box-shadow: 0 10px 26px rgba(255,106,91,.4);
+  opacity: 0; transform: translate3d(-50%, 16px, 0) scale(.92); transition: opacity .25s var(--ease), transform var(--spring-pop-ms, .4s) var(--spring-pop, var(--spring)); pointer-events: none; }
+.rb-resume.show { opacity: 1; transform: translate3d(-50%, 0, 0); pointer-events: auto; }
+.rb-resume:active { transform: translate3d(-50%, 0, 0) scale(.95); }
+.rb-resume .ico { width: 18px; height: 18px; }
+/* Fortschrittsring in der Seitenanzeige */
+.page-chip { display: inline-flex; align-items: center; gap: 7px; padding-left: 11px; }
+.pc-ring { width: 18px; height: 18px; flex: none; overflow: visible; }
+.pc-ring circle { fill: none; stroke-width: 2.2; }
+.pc-track { stroke: var(--line2); }
+.pc-bar { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .18s linear; }
+.pc-mark { fill: var(--accent); stroke: var(--bg2) !important; stroke-width: 1.2 !important; transition: opacity .25s; }
+.page-chip.on .pc-track { stroke: rgba(255,255,255,.35); }
+.page-chip.on .pc-bar, .page-chip.on .pc-mark { stroke: #fff; fill: #fff; }
+.page-chip.on .pc-bar { fill: none; }
+
+/* ---------- Dokument-Tabs (js/doctabs.js) ---------- */
+.ed-tr { display: flex; gap: 8px; align-items: center; }
+.tab-btn { position: relative; }
+.tab-count { min-width: 22px; height: 22px; padding: 0 5px; border-radius: 7px; border: 2px solid currentColor; display: grid; place-items: center; font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text2); transition: color .2s, background .2s, border-color .2s; }
+.tab-btn.multi .tab-count { color: var(--accent); }
+.tab-btn.on .tab-count { background: var(--grad); border-color: transparent; color: #fff; }
+.ed-tabbar { position: absolute; left: 0; right: 0; top: 0; z-index: 8; padding: 8px 0 10px; background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.5); backdrop-filter: blur(20px) saturate(1.5); border-bottom: 1px solid var(--line);
+  box-shadow: 0 12px 26px rgba(0,0,0,.22); opacity: 0; transform: translate3d(0,-14px,0); pointer-events: none; transition: opacity .2s var(--ease), transform var(--spring-sheet-ms, .4s) var(--spring-sheet, var(--ease)); will-change: transform, opacity; }
+.ed-tabbar.show { opacity: 1; transform: none; pointer-events: auto; }
+.dt-scroll { display: flex; gap: 8px; overflow-x: auto; padding: 0 14px; scrollbar-width: none; }
+.dt-scroll::-webkit-scrollbar { display: none; }
+.dt-tab { flex: none; display: flex; align-items: center; gap: 8px; height: 46px; max-width: 200px; padding: 0 4px 0 6px; border-radius: 13px; background: var(--card); border: 1.5px solid var(--line); transition: transform .2s var(--spring), border-color .2s, background .2s; cursor: pointer; }
+.dt-tab:active { transform: scale(.95); }
+.dt-tab.on { border-color: var(--accent); background: var(--accent-soft); }
+.dt-thumb { width: 26px; height: 34px; border-radius: 4px; background: #fff center / cover no-repeat; box-shadow: 0 1px 3px rgba(0,0,0,.3); flex: none; }
+.dt-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dt-tab.on .dt-name { color: var(--accent); }
+.dt-x { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--text3); flex: none; }
+.dt-x:active { background: var(--line2); }
+.dt-x .ico { width: 15px; height: 15px; }
+.dt-add { flex: none; width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center; border: 1.5px dashed var(--line2); color: var(--text2); transition: transform .2s var(--spring); }
+.dt-add:active { transform: scale(.9); }
+@media (prefers-reduced-motion: reduce) {
+  .ed-tabbar, .rb-pop, .rb-resume { transition: opacity .15s; }
+  .ed-tabbar { transform: none; } .rb-pop { transform: none; } .rb-resume { transform: translate3d(-50%,0,0); }
+  .ribbon.pulse .rb-cloth { animation: none; } .pc-bar { transition: none; }
+}
