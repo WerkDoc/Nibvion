@@ -1803,3 +1803,96 @@ svg.layer .insp-hi { fill: rgba(255,106,91,.08); stroke: var(--accent); stroke-w
   .ed-tabbar { transform: none; } .rb-pop { transform: none; } .rb-resume { transform: translate3d(-50%,0,0); }
   .ribbon.pulse .rb-cloth { animation: none; } .pc-bar { transition: none; }
 }
+
+/* ---------- Papier-Generator (js/paper.js) ---------- */
+.pp-prev { display: flex; justify-content: center; padding: 6px 0 4px; }
+.pp-prev canvas { border-radius: 6px; box-shadow: 0 10px 28px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.06); transition: box-shadow .3s; }
+.pp-prev.dark canvas { box-shadow: 0 10px 28px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.12); }
+.pp-tpls { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 8px; margin: 0 -2px; scrollbar-width: none; }
+.pp-tpls::-webkit-scrollbar { display: none; }
+.pp-tpl { flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text2); transition: transform .2s var(--spring), color .2s; }
+.pp-tpl canvas { border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,.25); outline: 2px solid transparent; outline-offset: 2px; transition: outline-color .2s; }
+.pp-tpl.on { color: var(--accent); }
+.pp-tpl.on canvas { outline-color: var(--accent); }
+.pp-tpl:active { transform: scale(.93); }
+.pp-sw { display: flex; gap: 8px; }
+.pp-sw button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 4px; border-radius: 12px; background: var(--card); border: 1.5px solid var(--line); font-size: 12.5px; font-weight: 600; transition: border-color .2s, transform .2s var(--spring); white-space: nowrap; }
+.pp-sw button i { width: 16px; height: 16px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(127,127,127,.45); flex: none; }
+.pp-sw button.on { border-color: var(--accent); }
+.pp-sw button:active { transform: scale(.95); }
+.pp-row { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: end; }
+.pp-row .seg button { flex: 1; padding: 8px 10px; }
+.pp-step { display: flex; align-items: center; background: var(--card2); border-radius: 10px; padding: 2px; }
+.pp-step button { width: 36px; height: 34px; display: grid; place-items: center; border-radius: 8px; }
+.pp-step button:active { background: var(--card); }
+.pp-step .ico { width: 17px; height: 17px; }
+.pp-step input { width: 40px; text-align: center; background: none; border: 0; font-weight: 700; font-size: 15px; -moz-appearance: textfield; }
+.pp-step input::-webkit-inner-spin-button, .pp-step input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.pg-new .pg-img { display: grid; place-items: center; background: transparent; box-shadow: none; position: relative; }
+.pg-new canvas { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 3px 12px rgba(0,0,0,.25); }
+.pg-x { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; background: var(--card2); border: 1px solid var(--line2); display: grid; place-items: center; }
+.pg-x .ico { width: 13px; height: 13px; }
+
+/* ---------- 1-Tap-Workflows (js/workflows.js) ---------- */
+.wf-intro { color: var(--text2); font-size: 14px; line-height: 1.4; margin: 0 2px 12px; }
+.wf-list { display: flex; flex-direction: column; gap: 10px; }
+.wf-card { display: grid; grid-template-columns: 1fr auto; gap: 8px 10px; padding: 13px 12px 12px 14px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); animation: fadeUp .4s var(--ease) both; }
+.wf-steps { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 0; }
+.wf-steps i { width: 12px; height: 2px; background: var(--line2); border-radius: 1px; }
+.wf-dot { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; color: #fff; }
+.wf-dot .ico { width: 16px; height: 16px; }
+.wf-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.wf-main b { font-size: 15.5px; }
+.wf-main span { font-size: 12.5px; color: var(--text2); line-height: 1.35; }
+.wf-acts { display: flex; align-items: center; gap: 4px; align-self: end; }
+.wf-acts button { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: var(--text2); transition: transform .2s var(--spring), color .2s, background .2s; }
+.wf-acts button:active { transform: scale(.88); }
+.wf-acts .ico { width: 19px; height: 19px; }
+.wf-pin.on { color: var(--accent); background: var(--accent-soft); }
+.wf-play { background: var(--grad) !important; color: #fff !important; box-shadow: 0 6px 16px rgba(255,106,91,.35); }
+.wf-play:disabled { opacity: .35; }
+.wf-hint { font-weight: 500; color: var(--text3); margin-left: 6px; }
+.wf-edit { display: flex; flex-direction: column; gap: 8px; }
+.wf-row { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: start; padding: 11px 8px 11px 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.wf-no { width: 20px; height: 20px; border-radius: 50%; background: var(--card2); font-size: 11.5px; font-weight: 800; display: grid; place-items: center; color: var(--text2); margin-top: 6px; }
+.wf-rmain { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 6px; }
+.wf-rmain b { font-size: 14.5px; }
+.wf-opt { display: flex; flex-direction: column; gap: 5px; }
+.wf-opt > span { font-size: 11.5px; color: var(--text3); font-weight: 600; }
+.seg.sm { flex-wrap: wrap; }
+.seg.sm button { padding: 5px 8px; font-size: 12px; }
+.wf-rbtn { display: flex; flex-direction: column; gap: 2px; }
+.wf-rbtn button { width: 32px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--text2); }
+.wf-rbtn button:disabled { opacity: .25; }
+.wf-rbtn button:active { background: var(--card2); }
+.wf-rbtn .ico { width: 17px; height: 17px; }
+.wf-empty { color: var(--text3); font-size: 13.5px; text-align: center; padding: 18px 10px; border: 1.5px dashed var(--line2); border-radius: 14px; }
+.wf-add { width: 100%; margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border-radius: 14px; border: 1.5px dashed var(--line2); color: var(--accent); font-weight: 700; font-size: 14.5px; }
+.wf-add .ico { width: 18px; height: 18px; }
+.wf-doc { display: flex; align-items: center; gap: 12px; padding: 4px 2px 12px; }
+.wf-doc > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wf-doc b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-doc span { color: var(--text2); font-size: 12.5px; }
+.wf-prog { display: flex; align-items: center; gap: 10px; margin: 2px 2px 12px; }
+.wf-bar { flex: 1; height: 8px; border-radius: 4px; background: var(--card2); overflow: hidden; }
+.wf-bar i { display: block; height: 100%; background: var(--grad); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; border-radius: 4px; }
+.wf-prog span { font-size: 13px; font-weight: 700; min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text2); }
+.wf-done .wf-prog span { color: var(--ok); }
+.wf-run { display: flex; flex-direction: column; gap: 6px; max-height: 42vh; overflow-y: auto; }
+.wf-st { display: grid; grid-template-columns: 22px auto 1fr; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 13px; background: var(--card); border: 1px solid var(--line); opacity: .6; transition: opacity .25s, border-color .25s; }
+.wf-st > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wf-st b { font-size: 14px; }
+.wf-st small { font-size: 12px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-st.run, .wf-st.ok, .wf-st.err { opacity: 1; }
+.wf-st.run { border-color: var(--accent); }
+.wf-st.err { border-color: var(--danger); }
+.wf-state { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line2); position: relative; }
+.wf-st.run .wf-state { border-color: var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+.wf-st.ok .wf-state { background: var(--ok); border-color: var(--ok); animation: wfPop .4s var(--spring); }
+.wf-st.ok .wf-state::after { content: ""; position: absolute; left: 5px; top: 2px; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.wf-st.err .wf-state { background: var(--danger); border-color: var(--danger); }
+@keyframes wfPop { from { transform: scale(.4); } to { transform: none; } }
+.wf-copy.off { opacity: .4; pointer-events: none; }
+.wf-spin { width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.4); border-top-color: #fff; animation: spin .8s linear infinite; display: inline-block; }
+.qt-wf .qt-ic { background: var(--grad); }
+@media (prefers-reduced-motion: reduce) { .wf-card { animation: none; } .wf-st.run .wf-state { animation-duration: 2s; } .wf-st.ok .wf-state { animation: none; } }

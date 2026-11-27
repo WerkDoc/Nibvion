@@ -26,7 +26,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.45.0';
+export const VERSION = '1.46.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -131,7 +131,11 @@ const QUICK = [
 ];
 
 function renderQuick() {
-  $('quick-grid').innerHTML = QUICK.map((q, i) => `<button class="qt" data-q="${q.id}" style="animation-delay:${80 + i * 45}ms"><span class="qt-ic ${q.c}">${icon(q.icon)}</span><span>${q.label}</span></button>`).join('');
+  // Angepinnte 1-Tap-Workflows stehen vor „Alle Werkzeuge“
+  const pins = settings.get('wfPins') || [], wfs = Array.isArray(settings.get('workflows')) ? settings.get('workflows') : [];
+  const wq = pins.map(id => wfs.find(w => w.id === id)).filter(Boolean).map(w => ({ id: 'wf:' + w.id, label: w.name.replace(/\s*\(.*\)\s*$/, ''), icon: 'flash', c: 'c-orange', wf: true }));
+  const list = [...QUICK.slice(0, -1), ...wq, QUICK[QUICK.length - 1]];
+  $('quick-grid').innerHTML = list.map((q, i) => `<button class="qt${q.wf ? ' qt-wf' : ''}" data-q="${esc(q.id)}" style="animation-delay:${80 + i * 45}ms"><span class="qt-ic ${q.c}">${icon(q.icon)}</span><span>${esc(q.label)}</span></button>`).join('');
   $('quick-grid').querySelectorAll('[data-q]').forEach(b => b.onclick = () => runTool(b.dataset.q));
 }
 
@@ -272,6 +276,9 @@ async function chooseDoc(mode, title = 'Datei wählen') {
 
 // ======================= Werkzeuge =======================
 const TOOL_GROUPS = [
+  { title: 'Automatisieren', items: [
+    { id: 'workflows', label: '1-Tap-Workflows', sub: 'Eigene Abläufe: z. B. Leere Seiten weg → A4 → Seitenzahlen → Komprimieren', icon: 'flash', c: 'c-orange' },
+  ] },
   { title: 'Bearbeiten', items: [
     { id: 'edit', label: 'PDF bearbeiten', sub: 'Text ändern, hinzufügen, abdecken', icon: 'textEdit', c: 'c-red' },
     { id: 'comment', label: 'Kommentieren', sub: 'Markieren, unterstreichen, Notizen', icon: 'comment', c: 'c-amber' },
@@ -295,7 +302,7 @@ const TOOL_GROUPS = [
     { id: 'merge', label: 'PDFs zusammenfügen', sub: 'Mehrere PDFs zu einem', icon: 'merge', c: 'c-orange' },
     { id: 'split', label: 'PDF aufteilen', sub: 'Seiten als eigene PDFs speichern', icon: 'split', c: 'c-teal' },
     { id: 'compare', label: 'PDFs vergleichen', sub: 'Zwei Versionen Seite für Seite – Unterschiede markiert', icon: 'compare', c: 'c-orange' },
-    { id: 'blank', label: 'Leeres PDF', sub: 'A4-Seite zum Ausfüllen', icon: 'filePlus', c: 'c-gray' },
+    { id: 'blank', label: 'Leeres PDF & Notizpapier', sub: 'Blanko, liniert, kariert, Punktraster, Noten, Cornell – A4/A5', icon: 'filePlus', c: 'c-gray' },
   ] },
   { title: 'Konvertieren', items: [
     { id: 'pdf2img', label: 'PDF → Bilder', sub: 'Seiten als JPG speichern', icon: 'image', c: 'c-blue' },
@@ -336,7 +343,9 @@ function renderTools() {
 
 function runTool(id) {
   haptic();
+  if (id.startsWith('wf:')) return import('./workflows.js').then(m => { const w = m.listWorkflows().find(x => x.id === id.slice(3)); w ? m.runWorkflow(w) : (toast('Workflow nicht gefunden'), renderQuick()); });
   switch (id) {
+    case 'workflows': return import('./workflows.js').then(m => m.workflowsSheet()).catch(e => { console.error(e); toast('Funktion konnte nicht geladen werden', true); });
     case 'edit': case 'comment': case 'draw': case 'sign': return chooseDoc(id);
     case 'pages': return chooseDoc('pages', 'Seiten verwalten');
     case 'all': return switchTab('tools');
@@ -567,9 +576,15 @@ async function mergeSheet() {
 }
 
 async function newBlank() {
-  busy(true);
-  try { const id = await saveNewDoc(await blankPdf(), `Neues Dokument ${today()}.pdf`); await renderRecents(); busy(false); openDoc(id, 'sign'); }
-  catch { busy(false); toast('Fehler', true); }
+  const { paperSheet, paperPdf, paperName } = await import('./paper.js');
+  const o = await paperSheet({ title: 'Leeres PDF', okLabel: 'Erstellen' });
+  if (!o) return;
+  busy(true, o.n > 5 ? `${o.n} Seiten werden erstellt …` : 'PDF wird erstellt …');
+  try {
+    const id = await saveNewDoc(await paperPdf(o), `${o.tpl === 'blank' ? 'Neues Dokument' : paperName(o)} ${today()}.pdf`);
+    await renderRecents(); busy(false);
+    openDoc(id, o.tpl === 'blank' ? 'sign' : 'draw');
+  } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); }
 }
 
 // ----- PDF → Bilder -----
@@ -1301,6 +1316,7 @@ async function init() {
   hydrateIcons(document);
   initEditor();
   setDocPicker(() => chooseDoc('view', 'Weiteres PDF öffnen'));
+  import('./workflows.js').then(m => m.initWorkflows({ docPicker, docBytes, storeResult, renderRecents, openDoc, onPins: renderQuick })).catch(e => console.warn(e));
   crashCheck();
   renderQuick(); renderTools();
   document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';
