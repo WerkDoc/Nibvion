@@ -1964,3 +1964,45 @@ body.selecting .bottom-space { height: 150px; }
 .lk-row.col { flex-direction: column; align-items: stretch; gap: 10px; }
 .lk-row.col .seg button { flex: 1; padding: 8px 6px; }
 .lk-ic .ico { width: 26px; height: 26px; color: #fff; stroke-width: 2.2; }
+
+/* ---------- Messen & Maßstab (js/measure.js, js/editor.js) ---------- */
+.ml-loupe { position: fixed; left: 0; top: 0; z-index: 60; width: 124px; height: 124px; border-radius: 50%; overflow: hidden; pointer-events: none; opacity: 0; transform: translate3d(-200px,-200px,0);
+  box-shadow: 0 0 0 3px #fff, 0 0 0 4.5px rgba(255,90,79,.9), 0 14px 34px rgba(0,0,0,.45); transition: opacity .15s, box-shadow .2s; will-change: transform; }
+.ml-loupe.on { opacity: 1; }
+.ml-loupe.snap { box-shadow: 0 0 0 3px #fff, 0 0 0 4.5px #1f9d57, 0 14px 34px rgba(0,0,0,.45); }
+.ml-loupe canvas { width: 100%; height: 100%; display: block; }
+svg.layer .m-pt { fill: #fff; stroke: #ff5a4f; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+svg.layer .m-pt.cur { fill: #ff5a4f; stroke: #fff; }
+svg.layer .m-pt.first { fill: rgba(255,90,79,.18); stroke-dasharray: 3 2; }
+svg.layer .m-vert { fill: #fff; stroke: #ff5a4f; stroke-width: 2.5; vector-effect: non-scaling-stroke; touch-action: none; cursor: grab; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); }
+svg.layer [data-mlabel] { cursor: pointer; }
+.m-bar { position: absolute; left: 50%; bottom: calc(var(--safe-bottom) + 72px); z-index: 9; display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 14px; max-width: calc(100% - 24px);
+  background: var(--glass); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); border: 1px solid var(--line2); border-radius: 22px; box-shadow: var(--shadow);
+  opacity: 0; transform: translate3d(-50%, 18px, 0) scale(.94); pointer-events: none; transition: opacity .2s, transform var(--spring-pop-ms, .4s) var(--spring-pop, var(--spring)); }
+.m-bar.show { opacity: 1; transform: translate3d(-50%, 0, 0); pointer-events: auto; }
+.m-t { font-size: 13.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.m-bar button { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--text2); flex: none; transition: transform .2s var(--spring), opacity .2s; }
+.m-bar button:active { transform: scale(.86); }
+.m-bar button:disabled { opacity: .3; }
+.m-bar button.ok { background: var(--grad); color: #fff; }
+.m-bar .ico { width: 18px; height: 18px; }
+.tool.ms-chip span { font-variant-numeric: tabular-nums; }
+.ms-now { display: flex; align-items: center; gap: 12px; padding: 2px 2px 6px; }
+.ms-now > div { display: flex; flex-direction: column; gap: 2px; }
+.ms-now b { font-size: 15.5px; }
+.ms-now span:not(.row-ic) { color: var(--text2); font-size: 13px; }
+.ms-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.ms-grid button { padding: 11px 4px; border-radius: 12px; background: var(--card); border: 1.5px solid var(--line); font-weight: 700; font-size: 14.5px; font-variant-numeric: tabular-nums; transition: border-color .2s, transform .2s var(--spring), color .2s; }
+.ms-grid button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.ms-grid button.cal { font-size: 12.5px; }
+.ms-grid button:active { transform: scale(.94); }
+.ms-seg button { flex: 1; padding: 8px 6px; }
+.ms-note { color: var(--text2); font-size: 12.5px; line-height: 1.45; margin: 12px 2px 0; }
+.ms-cal { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+.ms-cal .field { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ms-list .row { align-items: center; }
+.ms-list .row-main { text-align: left; }
+.ms-del { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: var(--danger); flex: none; }
+.ms-del:active { background: rgba(255,77,94,.12); }
+.ms-del .ico { width: 19px; height: 19px; }
+@media (prefers-reduced-motion: reduce) { .m-bar { transition: opacity .15s; } .ml-loupe { transition: none; } }

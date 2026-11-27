@@ -12,6 +12,7 @@ import { settings } from './settings.js';
 import { ocrEditItems, releaseEditOcr } from './ocr.js';
 import { initBookmark, ringHtml, setRing } from './bookmark.js';
 import { initTabs } from './doctabs.js';
+import { geom, labelBox, linesPath, fillPath, dotsPath, MEASURE_COLOR, DEFAULT_SCALE, ratioScale, calScale, scaleName, approxRatio, PRESETS, UNITS, snapAngle, createLoupe, labelSize, valueOf, fmtLen, fmtArea, pathLen as mLen, polyArea } from './measure.js';
 import { stampDrop, poof, flipCapture, flipPlay, reducedMotion as noMotion, springKeys } from './fx.js';
 import { recognize, morph, pathLen } from './shapes.js';
 import { createInspector, objLayer } from './inspect.js';
@@ -41,6 +42,14 @@ const MODES = {
     { id: 'eraser', label: 'Radierer', icon: 'eraser', kind: 'eraser' },
     { id: 'select', label: 'Scrollen', icon: 'hand', kind: 'select' },
   ] },
+  measure: { label: 'Messen & Maßstab', icon: 'ruler', tools: [
+    { id: 'mline', label: 'Strecke', icon: 'ruler', kind: 'measure', hint: 'Linie ziehen – oder zwei Punkte antippen' },
+    { id: 'mpath', label: 'Polygonzug', icon: 'polyline', kind: 'measure', hint: 'Punkte nacheinander antippen · ✓ zum Abschließen' },
+    { id: 'marea', label: 'Fläche', icon: 'area', kind: 'measure', hint: 'Eckpunkte antippen · ersten Punkt erneut tippen zum Schließen' },
+    { id: 'mscale', label: 'Maßstab', icon: 'sliders', kind: 'action' },
+    { id: 'mlist', label: 'Messungen', icon: 'list', kind: 'action' },
+    { id: 'select', label: 'Verschieben', icon: 'hand', kind: 'select' },
+  ] },
   sign:    { label: 'Füllen & unterschreiben', icon: 'sign', tools: [
     { id: 'signature', label: 'Unterschrift', icon: 'sign', kind: 'action' },
     { id: 'text', label: 'Text', icon: 'text', kind: 'place', hint: 'Tippe auf die Stelle für den Text' },
@@ -51,7 +60,7 @@ const MODES = {
     { id: 'select', label: 'Auswahl', icon: 'hand', kind: 'select' },
   ] },
 };
-const DEFAULT_TOOL = { view: null, edit: 'textedit', comment: 'highlight', draw: 'pen', sign: 'select' };
+const DEFAULT_TOOL = { view: null, edit: 'textedit', comment: 'highlight', draw: 'pen', sign: 'select', measure: 'mline' };
 const OPT_TOOLS = ['pen', 'marker', 'highlight', 'underline', 'strike', 'text', 'whiteout', 'note'];
 
 const E = {
@@ -442,11 +451,29 @@ function changed(pages) {
 function updUndoBtns() { $('btn-undo').disabled = !E.undo.length; $('btn-redo').disabled = !E.redo.length; }
 function undo() {
   if (!E.undo.length) return;
-  E.redo.push(JSON.stringify(E.objects)); E.objects = JSON.parse(E.undo.pop()); E.sel = null; hideSelMenu(); changed(); haptic();
+  const u = E.undo.pop();
+  if (typeof u === 'object') { E.redo.push({ bytes: E.bytes, objects: JSON.stringify(E.objects) }); return swapBytes(u, 'Einbrennen rückgängig'); }
+  E.redo.push(JSON.stringify(E.objects)); E.objects = JSON.parse(u); E.sel = null; hideSelMenu(); changed(); haptic();
 }
 function redo() {
   if (!E.redo.length) return;
-  E.undo.push(JSON.stringify(E.objects)); E.objects = JSON.parse(E.redo.pop()); E.sel = null; hideSelMenu(); changed(); haptic();
+  const r = E.redo.pop();
+  if (typeof r === 'object') { E.undo.push({ bytes: E.bytes, objects: JSON.stringify(E.objects) }); return swapBytes(r, 'Wieder eingebrannt'); }
+  E.undo.push(JSON.stringify(E.objects)); E.objects = JSON.parse(r); E.sel = null; hideSelMenu(); changed(); haptic();
+}
+// Undo-Schritt mit ganzem PDF (z. B. „Maße einbrennen“): Bytes + Objekte zurücktauschen
+async function swapBytes(st, msg) {
+  busy(true, 'Wird zurückgesetzt …');
+  try {
+    const pos = here();
+    E.bytes = st.bytes; E.objects = JSON.parse(st.objects); E.sel = null; hideSelMenu();
+    await db.put('files', { id: E.doc.id, data: E.bytes });
+    E.doc.size = E.bytes.byteLength; await saveNow();
+    const u = E.undo, r = E.redo;
+    await loadDocument(); setMode(E.mode, true); E.undo = u; E.redo = r; updUndoBtns();
+    restorePos(pos); await updateThumb(); haptic(); toast(msg);
+  } catch (e) { console.error(e); toast('Das hat nicht geklappt', true); }
+  finally { busy(false); }
 }
 
 // ======================= Seiten-Layout =======================
@@ -590,6 +617,7 @@ function updPageChip() { const c = currentPage(); $('page-label').textContent = 
 
 // ======================= Modus & Werkzeuge =======================
 function setMode(mode, first) {
+  if (E.md) mCancel();
   E.mode = mode; E.tool = DEFAULT_TOOL[mode];
   if (E.tool === 'textedit') E.scanFx = {};
   $('mode-label').textContent = MODES[mode].label;
@@ -616,10 +644,11 @@ function renderToolbar() {
   $('ed-toolbar').classList.toggle('hidden', !tools.length);
   const pop = E.tbMode !== E.mode; E.tbMode = E.mode;
   $('ed-tools').classList.toggle('tb-anim', pop);
-  $('ed-tools').innerHTML = tools.map((t, i) => `<button class="tool ${t.id === E.tool ? 'on' : ''}" data-tool="${t.id}" style="animation-delay:${i * 35}ms">${icon(t.icon)}<span>${t.label}</span></button>`).join('');
+  $('ed-tools').innerHTML = tools.map((t, i) => `<button class="tool ${t.id === E.tool ? 'on' : ''}${t.id === 'mscale' ? ' ms-chip' : ''}" data-tool="${t.id}" style="animation-delay:${i * 35}ms">${icon(t.icon)}<span>${t.id === 'mscale' ? scaleName(scaleFor(currentPage())) : t.label}</span></button>`).join('');
   $('ed-tools').querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
   $('btn-options').style.display = OPT_TOOLS.includes(E.tool) ? '' : 'none';
-  $('editor').classList.toggle('drawing', ['ink', 'eraser', 'drag'].includes(kind()));
+  $('editor').classList.toggle('drawing', ['ink', 'eraser', 'drag', 'measure'].includes(kind()));
+  if (kind() !== 'measure' && E.md && E.md.kind !== 'cal') mCancel();
   updUndoBtns();
 }
 let hintT;
@@ -637,7 +666,7 @@ function modeSheet() {
     onMount(el, api) { el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { api.close(); setMode(b.dataset.m); }); },
   });
 }
-const modeColor = k => ({ view: 'c-blue', edit: 'c-red', comment: 'c-amber', draw: 'c-violet', sign: 'c-green' }[k]);
+const modeColor = k => ({ view: 'c-blue', edit: 'c-red', comment: 'c-amber', draw: 'c-violet', sign: 'c-green', measure: 'c-orange' }[k]);
 
 // ======================= Text des PDFs =======================
 async function loadText(i) {
@@ -771,6 +800,11 @@ function measure(o) {
   return o;
 }
 function bbox(o) {
+  if (o.type === 'measure') {
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    o.pts.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); });
+    const r = (o.fs || 9) * 0.8; return { x: x0 - r, y: y0 - r, w: x1 - x0 + 2 * r, h: y1 - y0 + 2 * r };
+  }
   if (o.type === 'ink') {
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
     o.points.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); });
@@ -839,6 +873,7 @@ function drawObj(o, parent) {
       break;
     }
     case 'image': el('image', { href: o.src, x: o.x, y: o.y, width: o.w, height: o.h, preserveAspectRatio: 'none', opacity: o.opacity ?? 1 }, g); break;
+    case 'measure': drawMeasure(o, g); break;
     case 'ink': {
       const d = inkPath(o.points, o.sharp);
       el('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(o.width, 12 / scale()), 'stroke-linecap': 'round' }, g);
@@ -890,10 +925,14 @@ function renderLayer(i) {
     }
   } else p.el.querySelector('.scan-fx')?.remove();
   E.objects.filter(o => o.page === i).forEach(o => drawObj(o, svg));
+  if (E.md?.page === i) { E.md.g = el('g', { class: 'm-draft' }, svg); drawDraft(); }
   drawTsel(svg, i);
   insp?.drawLayer(svg, i);
   const s = E.sel && byId(E.sel);
-  if (s && s.page === i) {
+  if (s && s.page === i && s.type === 'measure') {
+    // Messpunkte zum Nachjustieren (mit Lupe)
+    s.pts.forEach((p, k) => el('circle', { class: 'm-vert', cx: p[0], cy: p[1], r: 9 / scale(), 'data-mv': k }, svg));
+  } else if (s && s.page === i) {
     const b = bbox(s), pad = 4 / scale(), r = 9 / scale();
     const sg = el('g', { transform: rotTf(s) }, svg);
     el('rect', { class: 'selbox', x: b.x - pad, y: b.y - pad, width: b.w + 2 * pad, height: b.h + 2 * pad, rx: 3 / scale() }, sg);
@@ -945,6 +984,14 @@ function onDown(e, i) {
   const svg = E.pages[i].svg;
   const begin = (g) => { G = { ...g, page: i, pid: e.pointerId, sx: x, sy: y, moved: false }; try { svg.setPointerCapture(e.pointerId); } catch {} };
 
+  const mv = target.closest?.('[data-mv]');
+  if (mv && E.sel && byId(E.sel)?.type === 'measure') {
+    const o = byId(E.sel); snapshot(); e.preventDefault();
+    begin({ type: 'mvert', obj: o, k: +mv.dataset.mv, orig: JSON.parse(JSON.stringify(o.pts)), cx: e.clientX, cy: e.clientY });
+    mLoupe(e, i, o.pts[+mv.dataset.mv], neighbor(o, +mv.dataset.mv));
+    return;
+  }
+  if (k === 'measure') return mDown(e, i, x, y, begin);
   if (target.closest?.('[data-handle]') && E.sel) {
     const o = byId(E.sel); snapshot();
     if (canRotate(o)) {
@@ -1019,6 +1066,13 @@ function onMove(e) {
       moveObj(G.obj, G.orig, dx, dy); renderLayer(G.page); break;
     }
     case 'resize': resizeObj(G.obj, G.orig, G.b, x, y); renderLayer(G.page); hideSelMenu(); break;
+    case 'mdraw': mMove(e, x, y); break;
+    case 'mvert': {
+      const o = G.obj, nb = neighbor(o, G.k), sn = snapAngle(nb, [x, y], mSnapOn());
+      if (sn.snapped !== false && sn.snapped !== G.lastSnap) haptic();
+      G.lastSnap = sn.snapped; o.pts[G.k] = sn.p; renderLayer(G.page); hideSelMenu();
+      mLoupe(e, G.page, sn.p, nb, sn.snapped); break;
+    }
     case 'transform': transformObj(G, x, y, e); renderLayer(G.page); hideSelMenu(); break;
   }
 }
@@ -1041,6 +1095,8 @@ function onUp(e) {
       else placeSelMenu();
       break;
     case 'resize': changed([g.page]); placeSelMenu(); break;
+    case 'mdraw': mUp(g); break;
+    case 'mvert': loupe?.hide(); if (!g.moved) E.undo.pop(); else haptic(); E.dirtyThumb = true; changed([g.page]); placeSelMenu(); break;
     case 'transform': hideRotTip(); if (!g.moved) E.undo.pop(); changed([g.page]); placeSelMenu(); break;
     case 'tap': if (!g.moved) g.fn(); break;
     case 'press': clearTimeout(g.timer); if (E.tsel) clearTsel(); break;
@@ -1055,6 +1111,8 @@ function cancelGesture() {
   if (g.type === 'ink') { E.objects = E.objects.filter(o => o !== g.obj); E.undo.pop(); renderLayer(g.page); }
   if (g.type === 'drag') g.draft.remove();
   if (g.type === 'erase') g.dot.remove();
+  if (g.type === 'mdraw') { loupe?.hide(); E.md && (E.md.cur = null); drawDraft(); }
+  if (g.type === 'mvert') { loupe?.hide(); g.obj.pts = g.orig; E.undo.pop(); renderLayer(g.page); }
   if (g.type === 'move' && g.snap) { Object.assign(g.obj, g.orig); E.undo.pop(); renderLayer(g.page); }
   if (g.type === 'transform') { hideRotTip(); Object.assign(g.obj, g.orig); E.undo.pop(); renderLayer(g.page); placeSelMenu(); }
 }
@@ -1101,6 +1159,7 @@ window.addEventListener('pointercancel', e => { activePointers.delete(e.pointerI
 
 function moveObj(o, orig, dx, dy) {
   if (o.type === 'ink') o.points = orig.points.map(([x, y]) => [x + dx, y + dy]);
+  else if (o.type === 'measure') o.pts = orig.pts.map(([x, y]) => [x + dx, y + dy]);
   else { o.x = orig.x + dx; o.y = orig.y + dy; }
 }
 function resizeObj(o, orig, b, x, y) {
@@ -1433,7 +1492,7 @@ function placeSelMenu() {
 function selAction(a) {
   const o = byId(E.sel); if (!o) return;
   if (a === 'del') { snapshot(); E.objects = E.objects.filter(x => x !== o); E.sel = null; hideSelMenu(); E.dirtyThumb = true; changed([o.page]); haptic(); }
-  if (a === 'dup') { snapshot(); const c = JSON.parse(JSON.stringify(o)); c.id = uid(); delete c.srcKey; delete c.cover; c.x += 12; c.y += 12; E.objects.push(c); select(c.id); changed([o.page]); }
+  if (a === 'dup') { snapshot(); const c = JSON.parse(JSON.stringify(o)); c.id = uid(); delete c.srcKey; delete c.cover; if (c.pts) c.pts = c.pts.map(([x, y]) => [x + 12, y + 12]); else { c.x += 12; c.y += 12; } E.objects.push(c); select(c.id); changed([o.page]); }
   if (a === 'edit') openTextEditor(o, false);
   if (a === 'rot') {
     snapshot(); haptic();
@@ -1621,6 +1680,8 @@ function colorSheet(o) {
 
 // ======================= Aktionen (Bild, Unterschrift, Stempel) =======================
 async function runAction(id) {
+  if (id === 'mscale') return scaleSheet();
+  if (id === 'mlist') return measureList();
   if (id === 'image') {
     const [f] = await pickFiles('file-img'); if (!f) return;
     busy(true, 'Bild wird eingefügt …');
@@ -1629,6 +1690,267 @@ async function runAction(id) {
   }
   if (id === 'signature') signatureSheet(a => { const W = 140; addCentered({ src: a.src, w: W, h: W * a.h / a.w, kindTag: 'sig' }); });
   if (id === 'stamp') stampSheet(a => { const st = freshStamp(a); const W = a.qr ? 100 : a.image ? 130 : st.w * 0.55; addCentered({ src: st.src, w: W, h: W * st.h / st.w, opacity: a.image || a.qr ? 1 : 0.95 }, 'stamp'); });
+}
+
+// ======================= Messen & Maßstab =======================
+// Maßstab je Dokument (E.doc.mscale = { all, pages: { i: sc } }); jedes Messobjekt merkt sich seinen
+// Maßstab (o.sc), damit Anzeige und Einbrennen ohne Dokument-Kontext rechnen können.
+let loupe = null;
+const M_KIND = { mline: 'line', mpath: 'path', marea: 'area' };
+const M_LABEL = { line: 'Strecke', path: 'Polygonzug', area: 'Fläche', cal: 'Kalibrieren' };
+function scaleFor(i) { const m = E.doc?.mscale; return m?.pages?.[i] || m?.all || DEFAULT_SCALE; }
+const mSnapOn = () => settings.get('mSnap') ?? true;
+const neighbor = (o, k) => o.kind === 'area' ? o.pts[(k + o.pts.length - 1) % o.pts.length] : o.pts[k ? k - 1 : 1];
+const toScreen = (i, p) => new DOMPoint(p[0], p[1]).matrixTransform(E.pages[i].svg.getScreenCTM());
+
+function drawMeasure(o, g, draft = false) {
+  const gm = geom(o.kind === 'cal' ? { ...o, kind: 'line' } : o); if (!gm.lines.length && !gm.dots.length) return;
+  const C = MEASURE_COLOR;
+  if (gm.fill) el('path', { d: fillPath(gm), fill: C, 'fill-opacity': 0.18, stroke: 'none' }, g);
+  if (!draft) el('path', { d: linesPath(gm), fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(gm.lw, 14 / scale()) }, g);
+  el('path', { d: linesPath(gm), fill: 'none', stroke: C, 'stroke-width': gm.lw, 'stroke-linecap': 'round', 'stroke-dasharray': draft ? `${gm.lw * 4} ${gm.lw * 3}` : null }, g);
+  if (gm.dots.length) el('path', { d: dotsPath(gm, gm.lw * 1.6), fill: '#fff', stroke: C, 'stroke-width': gm.lw * 0.8 }, g);
+  for (const l of gm.labels) {
+    if (o.kind === 'cal' && !l.main) continue;
+    const text = o.kind === 'cal' ? 'Referenz' : l.text, lb = { ...l, text };
+    el('path', { d: labelBox(lb).d, fill: '#fff', 'fill-opacity': 0.94, stroke: C, 'stroke-width': gm.lw * 0.7, 'data-mlabel': 1 }, g);
+    const t = el('text', { x: l.x, y: l.y, 'font-size': l.size, 'font-weight': 700, 'font-family': 'Helvetica, Arial, sans-serif', fill: '#b42a20', 'text-anchor': 'middle', 'dominant-baseline': 'central', transform: l.ang ? `rotate(${l.ang.toFixed(2)} ${l.x.toFixed(2)} ${l.y.toFixed(2)})` : null, 'data-mlabel': 1, style: 'pointer-events:auto' }, g);
+    t.textContent = text;
+  }
+}
+// Entwurf (laufende Messung) – nur die eigene Gruppe neu zeichnen (60 FPS beim Ziehen)
+function drawDraft() {
+  const md = E.md; mBar();
+  if (!md?.g) return;
+  md.g.textContent = '';
+  const pts = md.cur ? [...md.pts, md.cur] : md.pts.slice();
+  const info = E.infos[md.page];
+  const kind = md.kind === 'cal' ? 'line' : md.kind;
+  if (pts.length >= 2) drawMeasure({ kind: kind === 'area' && pts.length < 3 ? 'path' : kind, pts, fs: labelSize(info.w, info.h), sc: scaleFor(md.page), ...(md.kind === 'cal' ? { kind: 'cal' } : {}) }, md.g, true);
+  const r = 5 / scale();
+  md.pts.forEach((p, k) => el('circle', { class: 'm-pt' + (k === 0 && md.kind === 'area' && md.pts.length >= 3 ? ' first' : ''), cx: p[0], cy: p[1], r: k === 0 && md.kind === 'area' && md.pts.length >= 3 ? r * 1.7 : r }, md.g));
+  if (md.cur) el('circle', { class: 'm-pt cur', cx: md.cur[0], cy: md.cur[1], r }, md.g);
+}
+
+function mLoupe(e, i, p, from, snapped = false) {
+  loupe ??= createLoupe();
+  const pg = E.pages[i]; if (!pg) return;
+  const s = toScreen(i, p), f = from ? toScreen(i, from) : null;
+  loupe.show(s.x, s.y, pg.canvas, pg.canvas.getBoundingClientRect(), { from: f ? [f.x, f.y] : null, snapped });
+}
+function mAnchor(g) {
+  if (E.md.pts.length) return E.md.pts[E.md.pts.length - 1];
+  return g?.dragLine ? [g.sx, g.sy] : null;
+}
+function mDown(e, i, x, y, begin) {
+  const lab = e.target.closest?.('[data-mlabel]');
+  if (lab && !E.md?.pts?.length) {                  // Antippen eines Maß-Labels wählt die Messung aus
+    const id = lab.closest('.obj')?.dataset.id;
+    if (id) return begin({ type: 'tap', fn: () => { select(id); placeSelMenu(); } });
+  }
+  if (E.sel) { E.sel = null; hideSelMenu(); renderLayer(i); }
+  const cal = E.md?.kind === 'cal';
+  if (!E.md || E.md.page !== i) {
+    if (E.md && E.md.page != null && E.md.page !== i) { const old = E.md.page; E.md.pts = []; E.md.g = null; renderLayer(old); }
+    E.md = { kind: cal ? 'cal' : M_KIND[E.tool], page: i, pts: [], cur: null };
+    renderLayer(i);
+  }
+  e.preventDefault();
+  begin({ type: 'mdraw', cx: e.clientX, cy: e.clientY });
+  const g0 = G;
+  E.md.cur = snapAngle(mAnchor(g0), [x, y], mSnapOn()).p; drawDraft();
+  g0.timer = setTimeout(() => { if (G === g0) mLoupe(e, i, E.md.cur, mAnchor(g0)); }, 150);
+}
+function mMove(e, x, y) {
+  const g = G;
+  if (!g.dragLine && !E.md.pts.length && (E.md.kind === 'line' || E.md.kind === 'cal') && Math.hypot(e.clientX - g.cx, e.clientY - g.cy) > 10) g.dragLine = true;
+  const a = mAnchor(g), sn = snapAngle(a, [x, y], mSnapOn());
+  if (sn.snapped !== false && sn.snapped !== g.lastSnap) haptic();
+  g.lastSnap = sn.snapped;
+  E.md.cur = sn.p; drawDraft();
+  clearTimeout(g.timer);
+  mLoupe(e, g.page, sn.p, a, sn.snapped);
+}
+const nearPx = (i, a, b) => { const p = toScreen(i, a), q = toScreen(i, b); return Math.hypot(p.x - q.x, p.y - q.y) < 22; };
+function mUp(g) {
+  clearTimeout(g.timer); loupe?.hide();
+  const md = E.md; if (!md) return;
+  const p = md.cur || [g.sx, g.sy]; md.cur = null;
+  if (md.kind === 'line' || md.kind === 'cal') {
+    if (!md.pts.length && g.dragLine) return mFinish([[g.sx, g.sy], p]);
+    if (!md.pts.length) { md.pts.push(p); haptic(); return drawDraft(); }
+    return mFinish([md.pts[0], p]);
+  }
+  if (md.kind === 'area' && md.pts.length >= 3 && nearPx(md.page, p, md.pts[0])) return mFinish(md.pts);
+  if (md.kind === 'path' && md.pts.length >= 2 && nearPx(md.page, p, md.pts[md.pts.length - 1])) return mFinish(md.pts);
+  md.pts.push(p); haptic(); drawDraft();
+}
+function mFinish(pts) {
+  const md = E.md, i = md.page;
+  if (mLen(pts) * scale() < 6) { haptic(); toast('Zu kurz – bitte etwas länger ziehen'); md.pts = []; return drawDraft(); }
+  E.md = null; mBar();
+  if (md.kind === 'cal') { renderLayer(i); return calPrompt(pts, i); }
+  const info = E.infos[i];
+  snapshot();
+  const o = { id: uid(), type: 'measure', kind: md.kind, page: i, pts: pts.map(p => [+p[0].toFixed(2), +p[1].toFixed(2)]), fs: +labelSize(info.w, info.h).toFixed(2), sc: { ...scaleFor(i) } };
+  E.objects.push(o); E.dirtyThumb = true; changed([i]); haptic();
+}
+function mCancel() { const i = E.md?.page; E.md = null; mBar(); loupe?.hide(); if (i != null && E.pages[i]) renderLayer(i); }
+
+// Schwebende Leiste während einer Messung: Wert, letzter Punkt zurück, Abbrechen, Fertig
+function mBar() {
+  const bar = $('m-bar'); if (!bar) return;
+  const md = E.md, on = !!md && (md.pts.length > 0 || md.kind === 'cal');
+  bar.classList.toggle('show', on);
+  if (!on) return;
+  const sc = md.page != null ? scaleFor(md.page) : DEFAULT_SCALE, pts = md.cur ? [...md.pts, md.cur] : md.pts;
+  let txt = md.kind === 'cal' ? (pts.length ? 'Endpunkt der Referenz setzen' : 'Linie entlang einer bekannten Strecke ziehen') : '';
+  if (md.kind === 'line' && pts.length) txt = pts.length > 1 ? fmtLen(mLen(pts), sc) : 'Zweiten Punkt setzen';
+  if (md.kind === 'path') txt = `${md.pts.length} ${md.pts.length === 1 ? 'Punkt' : 'Punkte'} · ${fmtLen(mLen(pts), sc)}`;
+  if (md.kind === 'area') txt = pts.length >= 3 ? `${fmtArea(polyArea(pts), sc)} · ${md.pts.length} Punkte` : `${md.pts.length} ${md.pts.length === 1 ? 'Punkt' : 'Punkte'} · mind. 3`;
+  bar.querySelector('[data-mt]').textContent = `${M_LABEL[md.kind]} · ${txt}`;
+  bar.querySelector('[data-mback]').disabled = !md.pts.length;
+  const ok = bar.querySelector('[data-mok]');
+  ok.hidden = !(md.kind === 'path' || md.kind === 'area');
+  ok.disabled = md.kind === 'path' ? md.pts.length < 2 : md.pts.length < 3;
+}
+
+function setScale(sc, scope, page) {
+  snapshot();
+  const m = E.doc.mscale ??= { pages: {} };
+  m.pages ??= {};
+  if (scope === 'page') m.pages[page] = sc; else { m.all = sc; m.pages = {}; }
+  for (const o of E.objects) if (o.type === 'measure' && (scope !== 'page' || o.page === page)) o.sc = { ...sc };
+  saveNow(); changed(); renderToolbar(); haptic();
+}
+function scaleSheet() {
+  const i = currentPage(), cur = scaleFor(i), info = E.infos[i], n = E.pages.length;
+  const st = { ratio: cur.ratio, unit: cur.unit, scope: E.doc.mscale?.pages?.[i] ? 'page' : 'all', snap: mSnapOn() };
+  const mm = v => (v * 25.4 / 72).toLocaleString('de-DE', { maximumFractionDigits: 0 });
+  sheet({
+    title: 'Maßstab',
+    html: `<div class="ms-now"><span class="row-ic c-orange">${icon('ruler')}</span><div><b>Aktuell ${scaleName(cur)}${cur.cal ? ' (kalibriert)' : ''}</b><span>Seite ${i + 1}: ${mm(info.w)} × ${mm(info.h)} mm</span></div></div>
+      <div class="lbl">Plan-Maßstab</div>
+      <div class="ms-grid">${PRESETS.map(r => `<button data-r="${r}">1:${r}</button>`).join('')}${cur.cal ? `<button data-r="" class="cal">${scaleName(cur)}</button>` : ''}</div>
+      <div class="lbl">Einheit</div>
+      <div class="seg ms-seg" data-unit>${Object.keys(UNITS).map(u => `<button data-v="${u}">${u}</button>`).join('')}</div>
+      ${n > 1 ? `<div class="lbl">Gilt für</div><div class="seg ms-seg" data-scope><button data-v="all">Alle Seiten</button><button data-v="page">Nur Seite ${i + 1}</button></div>` : ''}
+      <div class="lk-row" style="margin-top:12px"><span>Winkel einrasten<small>0° · 45° · 90° beim Ziehen</small></span><div class="seg" data-snap><button data-v="1">An</button><button data-v="0">Aus</button></div></div>
+      <p class="ms-note">1:N wird exakt aus der echten Seitengröße berechnet (72 pt = 25,4 mm). Für Pläne ohne bekannten Maßstab: Kalibrieren und eine bekannte Strecke nachziehen.</p>
+      <div class="btn-row"><button class="btn" data-cal>${icon('ruler')} Kalibrieren</button><button class="btn primary" data-ok>${icon('check')} Übernehmen</button></div>`,
+    onMount(el2, api) {
+      const paint = () => {
+        el2.querySelectorAll('[data-r]').forEach(b => b.classList.toggle('on', b.dataset.r ? +b.dataset.r === st.ratio : !st.ratio));
+        el2.querySelectorAll('[data-unit] button').forEach(b => b.classList.toggle('on', b.dataset.v === st.unit));
+        el2.querySelectorAll('[data-scope] button').forEach(b => b.classList.toggle('on', b.dataset.v === st.scope));
+        el2.querySelectorAll('[data-snap] button').forEach(b => b.classList.toggle('on', (b.dataset.v === '1') === st.snap));
+      };
+      el2.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { st.ratio = b.dataset.r ? +b.dataset.r : null; if (st.ratio >= 100 && st.unit === 'mm') st.unit = 'm'; haptic(); paint(); });
+      el2.querySelectorAll('[data-unit] button').forEach(b => b.onclick = () => { st.unit = b.dataset.v; haptic(); paint(); });
+      el2.querySelectorAll('[data-scope] button').forEach(b => b.onclick = () => { st.scope = b.dataset.v; haptic(); paint(); });
+      el2.querySelectorAll('[data-snap] button').forEach(b => b.onclick = () => { st.snap = b.dataset.v === '1'; settings.set('mSnap', st.snap); haptic(); paint(); });
+      el2.querySelector('[data-ok]').onclick = () => {
+        api.close();
+        const sc = st.ratio ? ratioScale(st.ratio, st.unit) : { ...cur, unit: st.unit };
+        setScale(sc, st.scope, i); toast(`Maßstab ${scaleName(sc)} · ${st.unit}`);
+      };
+      el2.querySelector('[data-cal]').onclick = () => {
+        api.close();
+        if (E.mode !== 'measure') setMode('measure');
+        if (E.md) mCancel();
+        E.calScope = st.scope; E.calUnit = st.unit;
+        if (kind() !== 'measure') { E.tool = 'mline'; renderToolbar(); }
+        E.md = { kind: 'cal', page: null, pts: [], cur: null }; mBar();
+        hint('Ziehe eine Linie entlang einer bekannten Strecke');
+      };
+      paint();
+    },
+  });
+}
+function calPrompt(pts, i) {
+  const len = mLen(pts);
+  let unit = E.calUnit || 'cm', scope = E.calScope || 'all';
+  sheet({
+    title: 'Referenzstrecke',
+    html: `<p class="ms-note" style="margin-top:0">Wie lang ist die gezogene Strecke in Wirklichkeit?</p>
+      <div class="ms-cal"><input class="field" data-v inputmode="decimal" placeholder="z. B. 5,40" autocomplete="off"><div class="seg ms-seg" data-unit>${Object.keys(UNITS).map(u => `<button data-v="${u}">${u}</button>`).join('')}</div></div>
+      ${E.pages.length > 1 ? `<div class="seg ms-seg" data-scope style="margin-top:10px"><button data-v="all">Alle Seiten</button><button data-v="page">Nur Seite ${i + 1}</button></div>` : ''}
+      <div class="btn-row"><button class="btn" data-c>Abbrechen</button><button class="btn primary" data-ok>${icon('check')} Kalibrieren</button></div>`,
+    onMount(el2, api) {
+      const inp = el2.querySelector('[data-v]');
+      const paint = () => {
+        el2.querySelectorAll('[data-unit] button').forEach(b => b.classList.toggle('on', b.dataset.v === unit));
+        el2.querySelectorAll('[data-scope] button').forEach(b => b.classList.toggle('on', b.dataset.v === scope));
+      };
+      el2.querySelectorAll('[data-unit] button').forEach(b => b.onclick = () => { unit = b.dataset.v; haptic(); paint(); });
+      el2.querySelectorAll('[data-scope] button').forEach(b => b.onclick = () => { scope = b.dataset.v; haptic(); paint(); });
+      const ok = () => {
+        const v = parseFloat(String(inp.value).replace(/\s/g, '').replace(',', '.'));
+        if (!(v > 0)) { inp.focus(); return toast('Bitte eine Länge eingeben', true); }
+        api.close();
+        const sc = calScale(len, v, unit);
+        setScale(sc, scope, i);
+        toast(`Kalibriert · ${scaleName(sc)}`);
+      };
+      inp.onkeydown = e => { if (e.key === 'Enter') ok(); };
+      el2.querySelector('[data-ok]').onclick = ok;
+      el2.querySelector('[data-c]').onclick = () => api.close();
+      setTimeout(() => inp.focus(), 350);
+      paint();
+    },
+  });
+}
+function measureList() {
+  const ms = () => E.objects.filter(o => o.type === 'measure');
+  sheet({
+    title: 'Messungen',
+    html: `<div class="menu ms-list" data-list></div>
+      <div class="btn-row"><button class="btn danger" data-clear>${icon('trash')} Alle löschen</button><button class="btn primary" data-bake>${icon('check')} Maße ins PDF einbrennen</button></div>`,
+    onMount(el2, api) {
+      const render = () => {
+        const l = ms();
+        el2.querySelector('[data-list]').innerHTML = l.length ? l.map(o => `<div class="row" data-id="${o.id}"><span class="row-ic c-orange">${icon({ line: 'ruler', path: 'polyline', area: 'area' }[o.kind])}</span>
+          <button class="row-main" data-go><span class="row-title">${valueOf(o)}</span><span class="row-sub">${M_LABEL[o.kind]} · Seite ${o.page + 1} · ${scaleName(o.sc)}${o.kind === 'area' ? ' · U ' + fmtLen(mLen(o.pts, true), o.sc) : ''}</span></button>
+          <button class="ms-del" data-del aria-label="Löschen">${icon('trash')}</button></div>`).join('')
+          : `<div class="empty" style="border:0;padding:24px">${icon('ruler')}<b>Noch keine Messungen</b>Wähle Strecke, Polygonzug oder Fläche und tippe in den Plan.</div>`;
+        el2.querySelector('[data-clear]').disabled = el2.querySelector('[data-bake]').disabled = !l.length;
+        el2.querySelectorAll('[data-id]').forEach(r => {
+          const o = byId(r.dataset.id);
+          r.querySelector('[data-go]').onclick = () => { api.close(); jumpTo(o.page); setTimeout(() => { select(o.id); placeSelMenu(); }, 480); };
+          r.querySelector('[data-del]').onclick = () => { snapshot(); E.objects = E.objects.filter(x => x !== o); if (E.sel === o.id) { E.sel = null; hideSelMenu(); } E.dirtyThumb = true; changed([o.page]); haptic(); render(); };
+        });
+      };
+      el2.querySelector('[data-clear]').onclick = async () => {
+        if (!(await confirmDlg('Alle Messungen löschen?', 'Alle Maßlinien und Flächen werden entfernt. Rückgängig ist möglich.', 'Alle löschen'))) return;
+        snapshot(); const pg = [...new Set(ms().map(o => o.page))];
+        E.objects = E.objects.filter(o => o.type !== 'measure'); E.sel = null; hideSelMenu(); E.dirtyThumb = true; changed(pg); render(); toast('Messungen gelöscht');
+      };
+      el2.querySelector('[data-bake]').onclick = () => { api.close(); bakeMeasures(); };
+      render();
+    },
+  });
+}
+// Nur die Messungen fest ins PDF schreiben (Vektoren) – mit Undo (ganzes PDF wird gemerkt)
+async function bakeMeasures() {
+  const ms = E.objects.filter(o => o.type === 'measure');
+  if (!ms.length) return toast('Keine Messungen');
+  busy(true, 'Maße werden eingebrannt …');
+  try {
+    await saveNow();
+    const pos = here();
+    const out = await flatten(E.bytes, ms, E.infos);
+    const before = { bytes: E.bytes, objects: JSON.stringify(E.objects) };
+    E.bytes = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+    E.objects = E.objects.filter(o => o.type !== 'measure'); E.sel = null; hideSelMenu();
+    await db.put('files', { id: E.doc.id, data: E.bytes });
+    E.doc.size = E.bytes.byteLength; await saveNow();
+    const u = E.undo;
+    await loadDocument(); setMode(E.mode, true);
+    E.undo = u; E.undo.push(before); E.redo = []; updUndoBtns();
+    restorePos(pos); await updateThumb(); E.dirtyThumb = false; haptic();
+    toast(`${ms.length} ${ms.length === 1 ? 'Maß' : 'Maße'} eingebrannt · rückgängig mit ↶`);
+  } catch (e) { console.error(e); toast('Einbrennen fehlgeschlagen', true); }
+  finally { busy(false); }
 }
 
 // ======================= Mehr-Menü / Export =======================
@@ -1680,6 +2002,7 @@ function moreSheet() {
       <div class="menu" style="margin-bottom:12px">
         <div class="row"><span class="row-ic c-teal">${icon('info')}</span><span class="row-main"><span class="row-title">Element-Details & Filter</span><span class="row-sub">Antippen zeigt Schrift, Bild-DPI, Link-Ziel · Ebenen ein-/ausblenden</span></span>
           <div class="seg" data-insp><button data-v="1" class="${insp?.on ? 'on' : ''}">An</button><button data-v="0" class="${insp?.on ? '' : 'on'}">Aus</button></div></div>
+        <button class="row" data-a="measure"><span class="row-ic c-orange">${icon('ruler')}</span><span class="row-main"><span class="row-title">Messen & Maßstab</span><span class="row-sub">Strecken, Umfang & Flächen · Maßstab ${scaleName(scaleFor(currentPage()))}</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="view"><span class="row-ic c-orange">${icon('pages')}</span><span class="row-main"><span class="row-title">Seitenansicht</span><span class="row-sub">${{ single: 'Einzelseite', flip: 'Buch-Umblättern (3D)' }[settings.get('viewMode')] || 'Endlos-Scrollen'} · umschalten</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="reader"><span class="row-ic c-teal">${icon('book')}</span><span class="row-main"><span class="row-title">Lesemodus</span><span class="row-sub">Fließtext fürs Handy · Schriftgröße & Farben</span></span>${icon('chevronRight')}</button>
         <button class="row" data-a="present"><span class="row-ic c-violet">${icon('present')}</span><span class="row-main"><span class="row-title">Präsentieren</span><span class="row-sub">Vollbild mit Laserpointer</span></span>${icon('chevronRight')}</button>
@@ -1702,6 +2025,7 @@ function moreSheet() {
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         const a = b.dataset.a; api.close();
         if (a === 'toc') return tocSheet();
+        if (a === 'measure') { if (E.mode !== 'measure') setMode('measure'); else scaleSheet(); return; }
         if (a === 'view') return viewSheet();
         if (a === 'present') return present();
         if (a === 'reader') return reader();
@@ -2058,6 +2382,12 @@ export function initEditor() {
     count: $('tab-count'),
   });
   new ResizeObserver(() => { if (E.open) placeOverlays(); }).observe($('ed-scroll'));
+  const mb = document.createElement('div'); mb.id = 'm-bar'; mb.className = 'm-bar';
+  mb.innerHTML = `<span class="m-t" data-mt></span><button data-mback aria-label="Letzten Punkt entfernen">${icon('undo')}</button><button data-mx aria-label="Abbrechen">${icon('x')}</button><button class="ok" data-mok aria-label="Fertig">${icon('check')}</button>`;
+  $('editor').appendChild(mb);
+  mb.querySelector('[data-mback]').onclick = () => { if (E.md?.pts.length) { E.md.pts.pop(); haptic(); drawDraft(); } };
+  mb.querySelector('[data-mx]').onclick = () => { haptic(); mCancel(); };
+  mb.querySelector('[data-mok]').onclick = () => { if (E.md && E.md.pts.length >= (E.md.kind === 'area' ? 3 : 2)) mFinish(E.md.pts); };
   insp = createInspector({
     el: $('editor'), pdf: () => E.pdf, page: i => E.pages[i], count: () => E.pages.length, scale,
     loadText: async i => { await loadText(i); return textItems(i); },
