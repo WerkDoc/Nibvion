@@ -27,7 +27,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.48.2';
+export const VERSION = '1.49.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1374,9 +1374,31 @@ async function init() {
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     // Kein automatisches Neuladen bei Updates mehr (das verursachte den doppelten Startbildschirm):
     // App-Dateien kommen ohnehin zuerst aus dem Netz, der neue Service Worker gilt ab dem nächsten Start.
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(watchUpdates).catch(() => {});
   }
 }
 init();
+
+// ---------- Updates (Home-Bildschirm-App) ----------
+// iOS lädt eine Home-Bildschirm-App beim Öffnen oft gar nicht neu, sondern holt sie nur aus dem
+// Hintergrund. Deshalb: bei jeder Rückkehr nach Updates fragen. Ist eine neue Version aktiv geworden,
+// wird beim nächsten Zurückkehren (nach > 20 s im Hintergrund) neu geladen – aber nur, wenn gerade
+// kein Dokument offen ist und kein Fenster/Vorgang läuft. Sonst beim übernächsten Mal.
+function watchUpdates(reg) {
+  const sw = navigator.serviceWorker;
+  let ready = false, hiddenAt = 0, lastCheck = Date.now();
+  const hadController = !!sw.controller;
+  sw.addEventListener('controllerchange', () => { if (hadController) ready = true; });
+  const idle = () => !document.body.classList.contains('in-editor') && !document.querySelector('.sheet, .busy');
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (ready && hiddenAt && Date.now() - hiddenAt > 20000 && idle()) {
+      try { sessionStorage.setItem('nibvion.updated', '1'); } catch {}
+      return location.reload();
+    }
+    if (Date.now() - lastCheck > 60000) { lastCheck = Date.now(); reg.update().catch(() => {}); }
+  });
+  try { if (sessionStorage.getItem('nibvion.updated')) { sessionStorage.removeItem('nibvion.updated'); setTimeout(() => toast('Nibvion aktualisiert auf ' + VERSION), 1400); } } catch {}
+}
 
 export { openDoc, saveNewDoc };
