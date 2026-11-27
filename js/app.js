@@ -27,7 +27,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.49.1';
+export const VERSION = '1.50.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -331,16 +331,68 @@ const TOOL_GROUPS = [
   ] },
 ];
 
+// Kurze Namen für die Kacheln (lange Namen + Beschreibung stehen weiter in TOOL_GROUPS)
+const TOOL_SHORT = {
+  workflows: 'Workflows', edit: 'PDF bearbeiten', comment: 'Kommen­tieren', draw: 'Zeichnen', sign: 'Unter­schreiben', form: 'Formular', measure: 'Messen', crop: 'Zuschneiden',
+  spreads: 'Doppel­seiten teilen', poster: 'Poster-Druck', links: 'Links', blankpages: 'Leere Seiten weg',
+  merge: 'Zusammen­fügen', split: 'Aufteilen', compare: 'Vergleichen', blank: 'Leeres PDF', flipbook: '3D-Flipbook',
+  gif: 'PDF → GIF', pdf2excel: 'PDF → Excel', ocr: 'Text erkennen', protect: 'Passwort', sigs: 'Unter­schriften', stamps: 'Stempel',
+  ppt: 'PowerPoint → PDF', duplex: 'Duplex sortieren', text: 'Text extra­hieren', compress: 'Kompri­mieren', wm: 'Wasser­zeichen', translate: 'Über­setzen', pdf2word: 'PDF → Word', imgscan: 'Bild scannen', pages: 'Seiten verwalten', hf: 'Kopf- & Fußzeile',
+};
+const FAV_MAX = 6;
+const TOOL_COLOR = { 'c-red': '#ff5a63', 'c-amber': '#ffaa33', 'c-violet': '#9b6cff', 'c-green': '#2fbf74', 'c-blue': '#3d8bff', 'c-teal': '#1fbcbc', 'c-orange': '#ff8a3d', 'c-gray': '#8b93a3' };
+const allTools = () => TOOL_GROUPS.flatMap(g => g.items);
+const shortName = t => (TOOL_SHORT[t.id] || t.label).replace(/\u00ad/g, '');
+const toolFavs = () => { const f = settings.get('toolFavs'); return Array.isArray(f) ? f : ['scan', 'edit', 'sign', 'merge']; };
+
 function renderTools() {
-  $('tools-list').innerHTML = TOOL_GROUPS.map((g, gi) => `
+  const tools = allTools(), favs = toolFavs().map(id => tools.find(t => t.id === id)).filter(Boolean);
+  const favHtml = favs.length
+    ? `<div class="tl-favs">${favs.map(t => `
+        <button class="tl-fav" data-t="${t.id}" style="--c:${TOOL_COLOR[t.c] || TOOL_COLOR['c-gray']}">
+          <span class="tl-fav-ic">${icon(t.icon)}</span>
+          <span class="tl-fav-name">${shortName(t)}</span>
+          ${t.sub ? `<span class="tl-fav-sub">${t.sub}</span>` : ''}
+        </button>`).join('')}</div>`
+    : `<div class="tl-fav-empty">${icon('heart')}<span>Halte eine Kachel gedrückt, um sie hier oben anzuheften.</span></div>`;
+  $('tools-list').innerHTML = `<div class="group-title">Favoriten</div>${favHtml}` + TOOL_GROUPS.map(g => `
     <div class="group-title">${g.title}</div>
-    <div class="group" style="animation-delay:${gi * 60}ms">${g.items.map(t => `
-      <button class="row ${t.soon ? 'disabled' : ''}" data-t="${t.id}">
-        <span class="row-ic ${t.c}">${icon(t.icon)}</span>
-        <span class="row-main"><span class="row-title">${t.label}</span>${t.sub ? `<span class="row-sub" style="display:block">${t.sub}</span>` : ''}</span>
-        <span class="row-end">${t.soon ? '<span class="soon">Bald</span>' : icon('chevronRight')}</span>
+    <div class="tl-grid">${g.items.map(t => `
+      <button class="tl-tile ${t.soon ? 'disabled' : ''}" data-t="${t.id}">
+        <span class="tl-ic ${t.c}">${icon(t.icon)}${favs.includes(t) ? `<i class="tl-star">${icon('heartFill')}</i>` : ''}</span>
+        <span class="tl-name">${TOOL_SHORT[t.id] || t.label}</span>
       </button>`).join('')}</div>`).join('') + '<div class="bottom-space"></div>';
-  $('tools-list').querySelectorAll('[data-t]').forEach(b => b.onclick = () => runTool(b.dataset.t));
+  $('tools-list').querySelectorAll('[data-t]').forEach(b => {
+    b.onclick = () => { if (b._lp) { b._lp = false; return; } runTool(b.dataset.t); };
+    longPress(b, () => toggleToolFav(b.dataset.t, b));
+  });
+}
+
+// Langes Drücken (≈ 0,45 s, Finger bleibt ruhig) → Favorit an/aus
+function longPress(el, fn) {
+  let t = null, x0 = 0, y0 = 0;
+  const stop = () => { clearTimeout(t); t = null; el.classList.remove('lp'); };
+  el.addEventListener('pointerdown', e => {
+    el._lp = false; x0 = e.clientX; y0 = e.clientY; el.classList.add('lp');
+    t = setTimeout(() => { t = null; el._lp = true; el.classList.remove('lp'); fn(); }, 450);
+  });
+  el.addEventListener('pointermove', e => { if (t && Math.hypot(e.clientX - x0, e.clientY - y0) > 10) stop(); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => el.addEventListener(ev, () => { if (t) stop(); }));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+function toggleToolFav(id) {
+  const favs = toolFavs().slice(), t = allTools().find(x => x.id === id), i = favs.indexOf(id);
+  if (!t) return;
+  if (i >= 0) favs.splice(i, 1);
+  else if (favs.length >= FAV_MAX) { haptic(); return toast(`Höchstens ${FAV_MAX} Favoriten – halte erst einen Favoriten gedrückt, um ihn zu entfernen`, true); }
+  else favs.push(id);
+  settings.set('toolFavs', favs); haptic();
+  const sc = $('tools-list'), y = sc.scrollTop;
+  renderTools(); sc.scrollTop = y;
+  const name = shortName(t);
+  toast(i >= 0 ? `„${name}“ aus Favoriten entfernt` : `„${name}“ zu Favoriten hinzugefügt`);
+  if (i < 0) sc.querySelector(`.tl-fav[data-t="${id}"]`)?.classList.add('pop');
 }
 
 function runTool(id) {

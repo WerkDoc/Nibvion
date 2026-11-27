@@ -30,7 +30,7 @@ export function applyTheme() {
   document.documentElement.dataset.theme = light ? 'light' : 'dark';
   // Statusleiste (iOS liest theme-color): genau die App-Hintergrundfarbe.
   // Meta-Tag neu einsetzen, damit Safari den Wechsel sicher übernimmt.
-  const color = light ? '#f3f4f7' : '#15171c';
+  const color = light ? '#f3f4f7' : '#121417';
   const old = document.querySelector('meta[name=theme-color]');
   if (old && old.content !== color) {
     const m = document.createElement('meta'); m.name = 'theme-color'; m.content = color;

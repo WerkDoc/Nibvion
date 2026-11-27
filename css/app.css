@@ -1,21 +1,22 @@
 /* ================= Nibvion – Design ================= */
 :root {
-  --bg: #15171c;
-  --bg2: #1c1f26;
-  --card: #22262f;
-  --card2: #2a2f39;
-  --line: rgba(255,255,255,.08);
-  --line2: rgba(255,255,255,.14);
-  --text: #f3f4f7;
-  --text2: #a6acb8;
-  --text3: #6f7684;
+  /* Dunkel: neutrales Graphit (v1.50), warmes Off-White – angenehmer zu lesen als reines Weiß auf Blaugrau */
+  --bg: #121417;
+  --bg2: #1c1f23;
+  --card: #1c1f23;
+  --card2: #282b30;
+  --line: rgba(255,255,255,.07);
+  --line2: rgba(255,255,255,.12);
+  --text: #f0f0ed;
+  --text2: #9d9fa3;
+  --text3: #6c6e73;
   --accent: #ff6a5b;
   --accent2: #ff9b52;
   --grad: linear-gradient(135deg, #ff5a63 0%, #ff7d57 50%, #ffa04f 100%);
   --accent-soft: rgba(255,106,91,.14);
   --danger: #ff4d5e;
   --ok: #34c77b;
-  --glass: rgba(34,38,47,.72);
+  --glass: rgba(28,31,35,.74);
   --shadow: 0 10px 30px rgba(0,0,0,.35);
   --radius: 18px;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -54,7 +55,7 @@ input, textarea, select { font: inherit; color: var(--text); -webkit-user-select
 .ico.inline { display: inline-block; width: 18px; height: 18px; vertical-align: -3px; }
 
 /* ---------- Splash ---------- */
-#splash { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: radial-gradient(circle at 50% 40%, #2a2f39 0%, #15171c 70%); transition: opacity .5s var(--ease), visibility .5s; }
+#splash { position: fixed; inset: 0; z-index: 999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: radial-gradient(circle at 50% 40%, #282b30 0%, #121417 70%); transition: opacity .5s var(--ease), visibility .5s; }
 #splash.hide { opacity: 0; visibility: hidden; }
 .splash-logo { width: 96px; height: 96px; border-radius: 24px; box-shadow: 0 20px 60px rgba(255,106,91,.35); animation: splashPop .9s var(--spring) both; }
 .splash-name { letter-spacing: .5em; color: #c9ccd3; font-weight: 300; font-size: 15px; padding-left: .5em; animation: fadeUp .8s .25s var(--ease) both; }
@@ -358,8 +359,8 @@ html.splashing, html.splashing body { background: var(--bg); }
 
 /* ---------- 3D-Look: Kacheln, Karten und Buttons leicht plastisch ---------- */
 :root {
-  --card-3d: linear-gradient(180deg, #2a2f39 0%, #20242c 100%);
-  --depth: inset 0 1px 0 rgba(255,255,255,.08), inset 0 -1px 0 rgba(0,0,0,.35), 0 1px 2px rgba(0,0,0,.45), 0 10px 20px -8px rgba(0,0,0,.6);
+  --card-3d: linear-gradient(180deg, #222529 0%, #1b1e22 100%);
+  --depth: inset 0 1px 0 rgba(255,255,255,.06), inset 0 -1px 0 rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.4), 0 10px 20px -8px rgba(0,0,0,.55);
   --depth-press: inset 0 2px 8px rgba(0,0,0,.5), 0 1px 1px rgba(0,0,0,.3);
   --ic-shine: linear-gradient(180deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,0) 62%);
   --ic-depth: inset 0 1px 0 rgba(255,255,255,.14), inset 0 -2px 5px rgba(0,0,0,.28), 0 4px 10px -3px rgba(0,0,0,.5);
@@ -2023,3 +2024,31 @@ svg.layer [data-mlabel] { cursor: pointer; }
    Das Einblenden übernimmt schon der Ansichtswechsel (.view), daher hier keine eigene Animation. */
 #files-list :is(.doc-row, .fl-card, .fl-ids .row, .recent-list.flow, .fl-fab),
 #settings-list .group { animation: none; }
+
+/* ================= v1.50 – Werkzeuge als Kacheln ================= */
+.tl-favs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tl-fav { position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 104px; padding: 14px; border-radius: 20px; text-align: left; color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--c) 85%, #fff), var(--c) 55%, color-mix(in srgb, var(--c) 78%, #000));
+  box-shadow: 0 12px 24px -12px color-mix(in srgb, var(--c) 80%, transparent);
+  transition: transform .22s var(--spring); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.tl-fav::after { content: ""; position: absolute; right: -30px; top: -30px; width: 110px; height: 110px; border-radius: 50%; background: rgba(255,255,255,.14); pointer-events: none; }
+.tl-fav-ic { width: 38px; height: 38px; border-radius: 12px; background: rgba(255,255,255,.22); display: grid; place-items: center; margin-bottom: auto; }
+.tl-fav-ic .ico { width: 22px; height: 22px; stroke-width: 2; }
+.tl-fav-name { margin-top: 12px; font-size: 16px; font-weight: 750; line-height: 1.2; }
+.tl-fav-sub { width: 100%; font-size: 12px; opacity: .88; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-fav:active, .tl-fav.lp { transform: scale(.96); }
+.tl-fav.pop { animation: tlPop .45s var(--spring); }
+@keyframes tlPop { from { transform: scale(.85); opacity: .3; } to { transform: none; opacity: 1; } }
+.tl-fav-empty { display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: 18px; border: 1.5px dashed var(--line2); color: var(--text2); font-size: 14px; line-height: 1.35; }
+.tl-fav-empty .ico { flex: none; width: 24px; height: 24px; color: var(--accent); }
+
+.tl-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px 6px; padding: 2px 0 4px; }
+.tl-tile { display: flex; flex-direction: column; align-items: center; gap: 7px; min-width: 0; text-align: center; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.tl-ic { position: relative; width: 64px; height: 64px; border-radius: 19px; display: grid; place-items: center; background: var(--card-3d) !important; box-shadow: var(--depth); transition: transform .22s var(--spring); }
+.tl-ic .ico { width: 29px; height: 29px; }
+.tl-tile:active .tl-ic, .tl-tile.lp .tl-ic { transform: scale(.9); }
+.tl-name { font-size: 12px; font-weight: 600; line-height: 1.2; color: var(--text); max-width: 100%; overflow-wrap: anywhere; hyphens: manual; }
+.tl-star { position: absolute; top: -5px; right: -5px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); border: 2px solid var(--bg); }
+.tl-star .ico { width: 10px; height: 10px; fill: #fff; stroke: none; color: #fff; }
+.tl-tile.disabled { opacity: .45; pointer-events: none; }
+@media (min-width: 560px) { .tl-grid { grid-template-columns: repeat(6, 1fr); } .tl-favs { grid-template-columns: repeat(3, 1fr); } }
