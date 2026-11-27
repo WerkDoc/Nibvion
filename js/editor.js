@@ -1898,7 +1898,7 @@ async function pageManager() {
   let order = E.infos.map((_, i) => ({ i, rot: 0 }));
   const thumbs = [];
   for (let i = 0; i < E.infos.length; i++) thumbs[i] = await renderThumb(E.pdf, i + 1, 180);
-  let blank = false;
+  let blank = null;            // Vorlage für neue Seiten am Ende ({ tpl, n, … }) oder null
   sheet({
     title: 'Seiten verwalten',
     html: `<p class="pm-tip">Tipp: Seite kurz halten und nach oben wegschnippen zum Löschen.</p><div class="pm-tools"><button class="chip" data-findblank>${icon('pageBlank')} Leere Seiten finden</button><button class="chip" data-duplex>${icon('duplex')} Duplex sortieren</button></div>
@@ -1947,7 +1947,7 @@ async function pageManager() {
           <div class="pg" data-flip="${p.key ??= ++pgKey}" data-k="${k}"><div class="pg-img" style="background-image:url(${thumbs[p.i]});transform:rotate(${p.rot}deg)"></div>
           <div class="pg-n">${k + 1}</div>
           <div class="pg-acts"><button data-l="${k}" ${k ? '' : 'disabled style="opacity:.3"'}>${icon('chevronLeft')}</button><button data-r="${k}">${icon('rotate')}</button><button data-d="${k}">${icon('trash')}</button></div></div>`).join('')
-          + (blank ? `<div class="pg"><div class="pg-img"></div><div class="pg-n">Neu</div></div>` : '');
+          + (blank ? `<div class="pg pg-new"><div class="pg-img"><canvas data-newpv></canvas><button class="pg-x" data-unblank aria-label="Entfernen">${icon('x')}</button></div><div class="pg-n">Neu${blank.n > 1 ? ' × ' + blank.n : ''}</div></div>` : '');
         grid.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { const k = +b.dataset.l; if (!k) return; [order[k - 1], order[k]] = [order[k], order[k - 1]]; render(); });
         grid.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
           const p = order[+b.dataset.r], im = b.closest('.pg').querySelector('.pg-img');
@@ -1957,6 +1957,10 @@ async function pageManager() {
         });
         grid.querySelectorAll('[data-d]').forEach(b => b.onclick = () => removeAt(+b.dataset.d, b.closest('.pg')));
         grid.querySelectorAll('.pg[data-k]').forEach(pg => flickToDelete(pg));
+        const pv = grid.querySelector('[data-newpv]');
+        if (pv) import('./paper.js').then(m => m.drawPreview(pv, blank, 90));
+        const ub = grid.querySelector('[data-unblank]');
+        if (ub) ub.onclick = () => { haptic(); blank = null; render(); };
       };
       // Seite entfernen: wegschnippen/verpuffen, übrige Seiten rücken mit Feder nach
       const removeAt = async (k, pg, v) => {
@@ -2001,14 +2005,22 @@ async function pageManager() {
         pg.addEventListener('touchend', end); pg.addEventListener('touchcancel', end);
       };
       render();
-      el.querySelector('[data-blank]').onclick = () => { blank = true; render(); };
+      el.querySelector('[data-blank]').onclick = async () => {
+        const { paperSheet, SIZES } = await import('./paper.js');
+        const last = E.infos[order[order.length - 1]?.i ?? 0] || E.infos[0];
+        const lw = last.rot % 180 ? last.h : last.w, lh = last.rot % 180 ? last.w : last.h;
+        const o = await paperSheet({ title: 'Leere Seiten einfügen', okLabel: 'Einfügen', sizes: ['doc', 'a4', 'a5'], docSize: { w: lw, h: lh } });
+        if (!o) return;
+        blank = o; render();
+      };
       el.querySelector('[data-ok]').onclick = async () => {
         api.close(); busy(true, 'Seiten werden angepasst …');
         try {
-          const out = await pagesOp(E.bytes, { order, blankAfter: blank ? order.length - 1 : null });
+          let out = await pagesOp(E.bytes, { order });
+          if (blank) { const { insertPaper } = await import('./paper.js'); out = await insertPaper(out, blank); }
           E.bytes = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
           await db.put('files', { id: E.doc.id, data: E.bytes });
-          E.doc.size = E.bytes.byteLength; E.doc.pages = order.length + (blank ? 1 : 0); await saveNow();
+          E.doc.size = E.bytes.byteLength; E.doc.pages = order.length + (blank ? blank.n : 0); await saveNow();
           await loadDocument(); setMode(E.mode, true); await updateThumb();
           toast('Seiten aktualisiert');
         } catch (err) { console.error(err); toast('Seiten konnten nicht geändert werden', true); }
