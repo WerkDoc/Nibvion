@@ -7,3 +7,4 @@
 - Daten liegen lokal (IndexedDB `nibvion`: docs, files, assets). Optionale Nibvion-Cloud (`js/cloud.js`, Supabase „Nivion“): nur Ende-zu-Ende verschlüsselt (AES-GCM, Schlüssel aus dem Passwort abgeleitet), Änderungen laufen über `db.put/del` (Hook) – Daten aus der Cloud nur mit `db.rawPut/rawDel` schreiben. Setup: `supabase/cloud.sql`. Keine Werbung, kein Tracking.
 - UI-Sprache Deutsch. Design: Anthrazit + Koralle/Orange-Verlauf (wie App-Icon), iOS-Look, sanfte Animationen.
 - Bei jeder Änderung an App-Dateien die `VERSION` in `sw.js` (Cache-Name) und `js/app.js` erhöhen, damit das Update auf dem iPhone ankommt.
+- Service Worker: App-Dateien (`ASSETS` in `sw.js`) laufen über `VERSION`. Bibliotheken und Icons (`LIBS`) liegen im eigenen Cache `LIB` (`nibvion-lib-N`) und werden bei Updates **nicht** neu geladen → bei Änderung einer Datei in `lib/*.js` oder `icons/` den Namen `LIB` hochzählen. Große Modelle: `BIG`.
