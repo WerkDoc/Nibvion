@@ -27,7 +27,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.47.0';
+export const VERSION = '1.48.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -287,6 +287,7 @@ const TOOL_GROUPS = [
     { id: 'sign', label: 'Füllen & unterschreiben', sub: 'Unterschrift, Datum, Haken, Stempel', icon: 'sign', c: 'c-green' },
     { id: 'form', label: 'Formular ausfüllen', sub: 'Felder in PDF-Formularen ausfüllen', icon: 'form', c: 'c-blue' },
     { id: 'pages', label: 'Seiten verwalten', sub: 'Drehen, sortieren, löschen', icon: 'pages', c: 'c-teal' },
+    { id: 'measure', label: 'Messen & Maßstab', sub: 'Strecken, Umfang & Flächen in Plänen – 1:100, kalibrieren', icon: 'ruler', c: 'c-orange' },
     { id: 'hf', label: 'Kopf- & Fußzeile', sub: 'Seitenzahlen, Datum oder eigener Text', icon: 'text', c: 'c-orange' },
     { id: 'crop', label: 'Seiten zuschneiden', sub: 'Ränder entfernen · auf DIN A4 vereinheitlichen', icon: 'fit', c: 'c-blue' },
     { id: 'duplex', label: 'Duplex sortieren', sub: 'Vorder- & Rückseiten in die richtige Reihenfolge', icon: 'duplex', c: 'c-orange' },
@@ -349,6 +350,7 @@ function runTool(id) {
     case 'workflows': return import('./workflows.js').then(m => m.workflowsSheet()).catch(e => { console.error(e); toast('Funktion konnte nicht geladen werden', true); });
     case 'edit': case 'comment': case 'draw': case 'sign': return chooseDoc(id);
     case 'pages': return chooseDoc('pages', 'Seiten verwalten');
+    case 'measure': return chooseDoc('measure', 'Messen & Maßstab');
     case 'all': return switchTab('tools');
     case 'scan': return imageSheet('scan');
     case 'imgscan': return imageSheet('imgscan');

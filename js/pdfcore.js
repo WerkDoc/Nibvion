@@ -1,6 +1,7 @@
 // pdf.js (Anzeige) + pdf-lib (Schreiben)
 import * as pdfjsLib from '../lib/pdf.min.js';
 import { dataUrlToBytes, loadImage } from './ui.js';
+import { geom, labelBox, linesPath, fillPath, dotsPath, MEASURE_COLOR } from './measure.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.js', import.meta.url).href;
 export { pdfjsLib };
@@ -207,6 +208,22 @@ export async function flatten(bytes, objects, infos) {
       const img = await embedImg(o.src);
       const p = M(o.x, o.y + o.h);
       page.drawImage(img, { x: p.x, y: p.y, width: o.w, height: o.h, rotate: R, opacity: o.opacity ?? 1 });
+    } else if (o.type === 'measure') {
+      // Maßlinien, Fläche und Labels als Vektoren (gleiche Geometrie wie im Editor)
+      const g = geom(o); if (!g.lines.length) continue;
+      const origin = M(0, 0), C = hexToRgb(MEASURE_COLOR), at = { x: origin.x, y: origin.y, rotate: R };
+      if (g.fill) page.drawSvgPath(fillPath(g), { ...at, color: C, opacity: 0.18, borderWidth: 0 });
+      page.drawSvgPath(linesPath(g), { ...at, borderColor: C, borderWidth: g.lw, borderLineCap: LineCapStyle.Round });
+      if (g.dots.length) page.drawSvgPath(dotsPath(g, g.lw * 1.6), { ...at, color: hexToRgb('#ffffff'), borderColor: C, borderWidth: g.lw * 0.8 });
+      const f = await font(true);
+      for (const l of g.labels) {
+        const t = safe(f, l.text), box = labelBox(l);
+        page.drawSvgPath(box.d, { ...at, color: hexToRgb('#ffffff'), opacity: 0.94, borderColor: C, borderWidth: g.lw * 0.7 });
+        // Breite der eingebetteten Schrift statt Canvas-Messung → exakt mittig
+        const fw = f.widthOfTextAtSize(t, l.size), a = l.ang * Math.PI / 180;
+        const bx = -fw / 2, by = l.size * 0.35, p = M(l.x + bx * Math.cos(a) - by * Math.sin(a), l.y + bx * Math.sin(a) + by * Math.cos(a));
+        page.drawText(t, { x: p.x, y: p.y, size: l.size, font: f, color: hexToRgb('#b42a20'), rotate: degrees(info.rot - l.ang) });
+      }
     } else if (o.type === 'ink') {
       const origin = M(0, 0);
       if (o.sharp) page.pushOperators(pushGraphicsState(), setLineJoin(LineJoinStyle.Round));
