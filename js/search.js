@@ -89,7 +89,8 @@ export function searchSheet(openDoc) {
       inp.oninput = () => { q = inp.value; clearTimeout(t); t = setTimeout(run, 120); };
       inp.onkeydown = e => { if (e.key === 'Enter') inp.blur(); };
       el.querySelector('[data-clr]').onclick = () => { inp.value = q = ''; run(); inp.focus(); };
-      docs = (await db.all('docs')).filter(d => !d.deletedAt).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+      const { isHidden } = await import('./lock.js');
+      docs = (await db.all('docs')).filter(d => !d.deletedAt && !isHidden(d)).sort((a, b) => (b.updated || 0) - (a.updated || 0));
       const todo = docs.filter(d => !(d.textIdx && d.textIdx.size === d.size));
       indexing = todo.length; run();
       for (const d of todo) { if (api.closed) break; await ensureIndex(d); indexing--; run(); }
