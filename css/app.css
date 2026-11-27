@@ -1469,10 +1469,21 @@ svg.layer .handle-ic { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linec
 
 
 /* ================= v1.41 – Animationen & Micro-Interactions ================= */
-/* --- Sheets: Feder beim Öffnen, zügig beim Schließen; Inhalt „morpht“ leicht mit --- */
+/* --- Sheets: weich beim Öffnen, zügig beim Schließen; Inhalt gleitet leicht mit ---
+   v1.48.1: Öffnen mit cubic-bezier statt Feder-linear() – iOS rechnet das komplett auf der GPU
+   (Core Animation), ohne Hauptthread. Kein scale() am Inhalt (würde jedes Bild neu rastern). */
+:root { --sheet-ease: cubic-bezier(.32,.72,0,1); }
+.sheet { transition: transform .5s var(--sheet-ease), bottom .25s; contain: layout style; }
+.backdrop { will-change: opacity; }
+/* Lange Menüs (z. B. ⋯ einer PDF): Zeilen unterhalb des Bildschirms erst zeichnen, wenn sie ins Bild scrollen */
+.sheet .menu > .row:nth-child(n+11) { content-visibility: auto; contain-intrinsic-size: auto 65px; }
+/* ⋯ antippen: nur der Knopf reagiert, die ganze Zeile federt nicht mit (Schatten-Animation bremst sonst den Sheet-Start) */
+.doc-row:has(.doc-more:active):active { transform: none; box-shadow: var(--depth); }
+.doc-more { transition: transform .18s var(--ease), background .18s; }
+.doc-more:active { transform: scale(.86); background: rgba(127,127,140,.14); }
 .sheet.closing { transition: transform .32s cubic-bezier(.32,0,.67,0), bottom .25s; }
-.sheet > .menu, .sheet > .menu-grid, .sheet > .asset-grid, .sheet > .page-grid, .sheet > .btn-row { transition: opacity .25s ease .05s, transform var(--spring-sheet-ms, .42s) var(--spring-sheet, var(--ease)); }
-.sheet:not(.show) > :is(.menu, .menu-grid, .asset-grid, .page-grid, .btn-row) { opacity: .4; transform: translate3d(0, 22px, 0) scale(.985); }
+.sheet > .menu, .sheet > .menu-grid, .sheet > .asset-grid, .sheet > .page-grid, .sheet > .btn-row { transition: opacity .3s ease .04s, transform .5s var(--sheet-ease); }
+.sheet:not(.show) > :is(.menu, .menu-grid, .asset-grid, .page-grid, .btn-row) { opacity: .55; transform: translate3d(0, 14px, 0); }
 .sheet.closing > :is(.menu, .menu-grid, .asset-grid, .page-grid, .btn-row) { transition: opacity .2s, transform .3s ease-in; }
 
 /* --- Seitenansicht: Einzelseite / Buch (3D) --- */

@@ -85,8 +85,11 @@ export function sheet({ title = '', html = '', onMount, onClose, noHead = false 
     sh.style.transition = ''; sh.style.transform = '';
   });
   stack.push(api);
-  requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('show'); sh.classList.add('show'); }));
   onMount && onMount(sh, api);
+  // Erst Layout/Inhalt fertig rechnen (noch im Tipp), dann einen Frame zeichnen lassen und
+  // danach die Animation starten – so muss iOS während des Hochgleitens nichts mehr aufbauen.
+  void sh.offsetHeight;
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (!api.closed) { bd.classList.add('show'); sh.classList.add('show'); } }));
   return api;
 }
 export const closeAllSheets = () => [...stack].forEach(s => s.close());
