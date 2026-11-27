@@ -120,7 +120,12 @@ function customStamp(onSave) {
       <div class="btn-row"><button class="btn primary" data-save>${icon('check')} Speichern</button></div>`,
     onMount(el, api) {
       const t = el.querySelector('[data-t]'), s = el.querySelector('[data-s]'), prev = el.querySelector('[data-prev]');
-      const upd = () => { const st = makeStamp({ text: (t.value || ' ').toUpperCase(), color, date, sub: s.value.trim() }); prev.innerHTML = `<img src="${st.src}">`; return st; };
+      const upd = () => {
+        const st = makeStamp({ text: (t.value || ' ').toUpperCase(), color, date, sub: s.value.trim() });
+        // Bild nur austauschen statt neu einsetzen – kein kurzes Leerwerden/Springen beim Tippen
+        const im = prev.querySelector('img'); if (im) im.src = st.src; else prev.innerHTML = `<img src="${st.src}" alt="">`;
+        return st;
+      };
       t.oninput = s.oninput = upd;
       el.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { el.querySelectorAll('[data-c]').forEach(x => x.classList.remove('on')); b.classList.add('on'); color = b.dataset.c; upd(); });
       el.querySelectorAll('[data-date] button').forEach(b => b.onclick = () => { el.querySelectorAll('[data-date] button').forEach(x => x.classList.remove('on')); b.classList.add('on'); date = b.dataset.v === '1'; upd(); });
@@ -196,7 +201,11 @@ export function qrSheet({ onInsert, onSave }) {
         if (!p) { last = null; prev.innerHTML = `<span class="qr-ph">${icon('qr')}<small>${st.type === 'wifi' ? 'WLAN-Name eingeben' : st.type === 'url' ? 'Adresse eingeben' : 'Text eingeben'}</small></span>`; return; }
         try {
           last = { ...makeQrStamp({ payload: p, color: st.color, bg: st.bg, caption: $('[data-cap]').value.trim() }), qr: true, qrData: p };
-          prev.innerHTML = `<img src="${last.src}" alt="QR-Code" class="${st.bg ? '' : 'tr'}"><small>${esc(p.length > 70 ? p.slice(0, 68) + '…' : p)}</small>`;
+          // Vorschau nur aktualisieren (nicht neu aufbauen): die Höhe bleibt gleich, das Fenster springt beim Tippen nicht
+          const txt = p.length > 70 ? p.slice(0, 68) + '…' : p;
+          let im = prev.querySelector('img');
+          if (!im) { prev.innerHTML = `<img alt="QR-Code"><small></small>`; im = prev.querySelector('img'); }
+          im.src = last.src; im.classList.toggle('tr', !st.bg); prev.querySelector('small').textContent = txt;
         } catch (e) { last = null; prev.innerHTML = `<span class="qr-ph err">${esc(e.message)}</span>`; el.querySelectorAll('[data-save],[data-ins]').forEach(b => b.disabled = true); }
       };
       el.querySelectorAll('[data-seg]').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => {
