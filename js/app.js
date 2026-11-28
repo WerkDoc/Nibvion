@@ -9,6 +9,7 @@ import { textSheet } from './textview.js';
 import { initIdView, saveIdCard, openIdView } from './idview.js';
 import { initCloud, cloudOn, cloudEmail, cloudLogin, cloudLogout, cloudSync, onCloudStatus, cloudStatus, pendingCount, cloudProject, savePrefs, NIB_URL, NIB_KEY } from './cloud.js';
 import { scanReview } from './scanreview.js';
+import { initDesk } from './desk.js';
 import { keepScan, loadScan, hasScan, keepScansOn, scanUsage, clearScans, pruneScans } from './scanstore.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
@@ -28,7 +29,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.51.1';
+export const VERSION = '1.52.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1489,6 +1490,7 @@ async function init() {
   await renderRecents();
   try { navigator.storage?.persist?.(); } catch {}
   // Geteilte / mit „Öffnen mit“ übergebene Dateien direkt öffnen
+  initDesk({ importPdfs: () => importPdfs(), search: () => searchSheet(openDoc) });
   setTimeout(() => initIncoming({ importFile, renderRecents, openDoc, closeEditor: closeEditorIfOpen, officeToPdf, imageFiles: (kind, files) => imageSheet(kind, { files }) }), 700);
   setTimeout(() => { $('splash').classList.add('hide'); document.documentElement.classList.remove('splashing'); applyTheme(); }, 650);
   setTimeout(() => $('splash').remove(), 1300);
