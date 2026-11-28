@@ -760,7 +760,7 @@ export function rotateCanvas(c, deg) {
 // ---------- Aufbereiten (Schatten raus, Papier weiß) ----------
 export const FILTERS = [
   ['', 'Original'], ['ai', '✨ KI-Scan'], ['color', 'Verbessern'], ['gray', 'Graustufen'],
-  ['doc', 'Dokument'], ['bw', 'Schwarz-Weiß'], ['invert', 'Umkehren'],
+  ['doc', 'Dokument'], ['nopen', 'Ohne Kuli'], ['bw', 'Schwarz-Weiß'], ['invert', 'Umkehren'],
 ];
 export const NO_ADJ = { brightness: 0, contrast: 0, sharp: 0 };
 
@@ -840,6 +840,35 @@ function thicken(d, w, h, bg) {
   }
 }
 
+// „Ohne Kuli“: farbige Striche (blauer/roter/grüner Kuli, Textmarker, Stempel) erkennen.
+// Farbigkeit nach Weißabgleich aufs Papier → 0..1 je Pixel, um 2 px erweitert (Ränder der Striche).
+// Erweitert wird nur auf nicht tiefschwarze Pixel, damit gekreuzte Linien des Vordrucks stehen bleiben.
+function penMask(d, w, h) {
+  const P = innerPaper(d, w, h), f = P.map(v => 255 / Math.max(60, v));
+  const N = w * h, m = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const r = d[i * 4] * f[0], g = d[i * 4 + 1] * f[1], b = d[i * 4 + 2] * f[2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn;
+    // dunkle Pixel brauchen weniger Abstand (dunkelblau), helle mehr (Papier mit leichtem Stich)
+    const t = 22 + mx * 0.08;
+    m[i] = Math.min(1, Math.max(0, (c - t) / 26));
+  }
+  let cur = m;
+  for (let pass = 0; pass < 2; pass++) {
+    const o = new Float32Array(cur);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x; if (cur[i] >= 1) continue;
+      const n = Math.max(cur[i - 1], cur[i + 1], cur[i - w], cur[i + w], cur[i - w - 1], cur[i - w + 1], cur[i + w - 1], cur[i + w + 1]);
+      if (n <= cur[i]) continue;
+      const L = (d[i * 4] * f[0] * 0.299 + d[i * 4 + 1] * f[1] * 0.587 + d[i * 4 + 2] * f[2] * 0.114);
+      const k = L < 70 ? 0.25 : 1;                              // tiefschwarz = Vordruck → kaum anfassen
+      o[i] = Math.max(cur[i], n * k);
+    }
+    cur = o;
+  }
+  return cur;
+}
+
 // Papierfarbe knapp innerhalb des Randes (Median heller Pixel) – zum Auffüllen der Ränder
 function innerPaper(d, w, h) {
   const m = Math.round(Math.min(w, h) * 0.05), rs = [], gs = [], bs = [];
@@ -909,11 +938,12 @@ export function enhance(c, mode, adj = NO_ADJ) {
   const id = ctx.getImageData(0, 0, w, h), d = id.data;
   const clamp = v => v < 0 ? 0 : v > 255 ? 255 : v;
   if (card) cardTone(d);
-  let paperFill = null;
+  let paperFill = null, pen = null;
   if (mode) {
     const bg = paperLevel(c);
+    pen = mode === 'nopen' ? penMask(d, w, h) : null;   // vor thicken: Originalfarben
     // Dünne, blasse Schrift etwas kräftiger: Schrift-Pixel mit dem dunkelsten Nachbarn mischen
-    if (mode === 'color' || mode === 'doc' || mode === 'invert') thicken(d, w, h, bg);
+    if (mode === 'color' || mode === 'doc' || mode === 'invert' || mode === 'nopen') thicken(d, w, h, bg);
     const curve = (v, lo, hi) => clamp((v - lo) * 255 / (hi - lo));
     // Farbiges Papier (gelb, rosa …)? Dann Papierfarbe kräftig behalten statt zu Weiß auszubleichen
     const tint = mode === 'color' ? paperTint(d, bg) : null;
@@ -942,7 +972,8 @@ export function enhance(c, mode, adj = NO_ADJ) {
         let v;
         if (mode === 'gray') v = curve(g, 25, 248);
         else if (mode === 'bw') v = clamp((g - 150) * 7 + 128);       // weiches Schwellwert-S/W (glatte Kanten)
-        else { const t = clamp((g - 95) / (218 - 95) * 255) / 255; v = 255 * Math.pow(t, 2.2); }   // doc & invert: Schwarz auf Weiß
+        else { const t = clamp((g - 95) / (218 - 95) * 255) / 255; v = 255 * Math.pow(t, 2.2); }   // doc, nopen & invert: Schwarz auf Weiß
+        if (pen) v += (255 - v) * pen[i >> 2];                          // farbige Striche → Papierweiß
         if (mode === 'invert') v = 255 - v;
         d[i] = d[i + 1] = d[i + 2] = v;
       }
@@ -951,7 +982,7 @@ export function enhance(c, mode, adj = NO_ADJ) {
   // Dunkle Ränder (Tisch, Schatten an der Blattkante) entfernen
   if (mode && mode !== 'invert') cleanBorders(d, w, h, mode === 'color' && paperFill ? paperFill : [255, 255, 255]);
   // Schärfe (Unscharf maskieren auf der Helligkeit) – Verbessern/Dokument immer etwas nachgeschärft
-  const autoSharp = mode === 'color' || mode === 'doc' || mode === 'invert' ? 22 : card ? 12 : 0;
+  const autoSharp = mode === 'color' || mode === 'doc' || mode === 'nopen' || mode === 'invert' ? 22 : card ? 12 : 0;
   const sharpAll = sharp + autoSharp;
   if (sharpAll > 0) {
     const N = w * h, L = new Float32Array(N);
@@ -961,6 +992,10 @@ export function enhance(c, mode, adj = NO_ADJ) {
       const dl = (L[i] - B[i]) * amt;
       d[i * 4] = clamp(d[i * 4] + dl); d[i * 4 + 1] = clamp(d[i * 4 + 1] + dl); d[i * 4 + 2] = clamp(d[i * 4 + 2] + dl);
     }
+  }
+  if (pen) for (let i = 0, N = w * h; i < N; i++) {
+    const a = pen[i]; if (!a) continue;
+    const q = i * 4; d[q] += (255 - d[q]) * a; d[q + 1] += (255 - d[q + 1]) * a; d[q + 2] += (255 - d[q + 2]) * a;
   }
   if (brightness || contrast) {
     const cf = (100 + contrast * 1.5) / 100, br = brightness * 1.6;
