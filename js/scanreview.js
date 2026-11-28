@@ -56,9 +56,9 @@ export function scanReview(opts) {
       <div class="rv-tabs">
         <div class="seg" data-tabs><button data-p="filter" class="on">Filter</button><button data-p="adj">Anpassen</button></div>
         <div class="rv-chips">
-          <button class="rv-chip" data-cmp aria-label="Vorher/Nachher">${icon('compare')}<span>Vergleich</span></button>
+          <button class="rv-chip rv-chip-c" data-cmp aria-label="Vorher/Nachher">${icon('compare')}<span>Vergleich</span></button>
           <button class="rv-chip" data-ai aria-label="KI-Glätten">${icon('sparkles')}<span>KI</span></button>
-          ${kind === 'scan' ? `<button class="rv-chip" data-ocr>${icon('textScan')}<span>Text erkennen</span></button>` : ''}
+          ${kind === 'scan' ? `<button class="rv-chip rv-chip-c" data-ocr aria-label="Text erkennen">${icon('textScan')}<span>Text erkennen</span></button>` : ''}
         </div>
       </div>
       <div class="flt-row no-swipe" data-flt></div>
@@ -78,6 +78,10 @@ export function scanReview(opts) {
       <button data-t="del">${icon('trash')}<span>Löschen</span></button>
     </div>`;
   document.body.appendChild(wrap);
+  // Passt die Zeile Filter/Anpassen + Chips nicht in die Breite, zeigen „Vergleich“ und „Text erkennen“ nur ihr Symbol
+  const tabsRow = wrap.querySelector('.rv-tabs');
+  const fitTabs = () => { tabsRow.classList.remove('compact'); if (tabsRow.scrollWidth > tabsRow.clientWidth + 1) tabsRow.classList.add('compact'); };
+  new ResizeObserver(fitTabs).observe(tabsRow); fitTabs();
   const stage = wrap.querySelector('[data-stage]'), flt = wrap.querySelector('[data-flt]');
 
   // ---------- Vorschau ----------
@@ -96,8 +100,138 @@ export function scanReview(opts) {
     cmpUnmount?.();
     stage.innerHTML = items.map((_, i) => `<div class="rv-page" data-i="${i}"><img alt=""><div class="rv-spin"></div></div>`).join('')
       || `<div class="rv-empty">${icon('scan')}<b>Keine Seiten</b>Tippe unten auf „Weitere“ oder „Fotos“.</div>`;
-    stage.querySelectorAll('.rv-page').forEach(p => p.onclick = () => openCrop(+p.dataset.i));
+    zoomReset(true);
+    stage.querySelectorAll('.rv-page').forEach(p => p.onclick = e => pageTap(+p.dataset.i, e));
   };
+
+  // ---------- Zoomen (Zwei-Finger-Zoom, Doppeltipp, Verschieben mit einem Finger) ----------
+  // Nur transform auf dem Bild; solange gezoomt ist, wischt die Bühne nicht zur nächsten Seite.
+  // Ab 1,6× wird die Seite in höherer Auflösung nachgeladen (sonst wird Schrift pixelig).
+  const HI = 3200, ZMAX = 5;
+  let Z = null;     // { pg, img, s, tx, ty }
+  const zApply = (anim) => {
+    if (!Z) return;
+    const w = Z.img.clientWidth, h = Z.img.clientHeight;
+    Z.s = Math.max(1, Math.min(ZMAX, Z.s));
+    Z.tx = Math.min(0, Math.max(w - w * Z.s, Z.tx)); Z.ty = Math.min(0, Math.max(h - h * Z.s, Z.ty));
+    Z.img.style.transition = anim ? 'transform .28s var(--ease), opacity .2s' : 'none';
+    Z.img.style.transform = `translate3d(${Z.tx}px,${Z.ty}px,0) scale(${Z.s})`;
+    const on = Z.s > 1.01;
+    Z.pg.classList.toggle('zoomed', on); stage.classList.toggle('zooming', on);
+  };
+  const zFor = i => {
+    const pg = stage.querySelector(`.rv-page[data-i="${i}"]`), img = pg && pg.querySelector('img[src]');
+    if (!img) return null;
+    if (!Z || Z.img !== img) { zoomReset(true); Z = { pg, img, i, s: 1, tx: 0, ty: 0 }; img.style.transformOrigin = '0 0'; }
+    return Z;
+  };
+  function zoomReset(instant) {
+    if (!Z) return;
+    const z = Z; Z = null;
+    z.img.style.transition = instant ? 'none' : 'transform .28s var(--ease), opacity .2s';
+    z.img.style.transform = '';
+    z.pg.classList.remove('zoomed'); stage.classList.remove('zooming');
+    const it = items[z.i];
+    if (it && z.img.dataset.hi) { delete z.img.dataset.hi; z.img.src = preview(it); }
+  }
+  const zoomed = () => !!(Z && Z.s > 1.01);
+  let hiT;
+  const hiRes = () => {
+    clearTimeout(hiT);
+    hiT = setTimeout(() => {
+      if (!zoomed()) return;
+      const it = items[Z.i], k = key(it);
+      if (Z.img.dataset.hi === k) return;
+      if (it._hiKey !== k) { it._hi = renderScan(it, filter, HI, adj).toDataURL('image/jpeg', 0.9); it._hiKey = k; }
+      if (zoomed()) { Z.img.src = it._hi; Z.img.dataset.hi = k; }
+    }, 250);
+  };
+  // Punkt (Bildschirm) → Bildkoordinaten ohne Zoom
+  const zLocal = (z, x, y) => { const r = z.pg.getBoundingClientRect(); return [x - r.left - z.img.offsetLeft, y - z.img.offsetTop - r.top]; };
+  const zoomAt = (x, y, to) => {
+    const z = Z; const [lx, ly] = zLocal(z, x, y);
+    const px = (lx - z.tx) / z.s, py = (ly - z.ty) / z.s;
+    z.s = to; z.tx = lx - px * to; z.ty = ly - py * to;
+    zApply(true); if (zoomed()) hiRes(); else zoomReset(false);
+  };
+  // Tippen: einmal → Zuschneiden (kurz verzögert), zweimal → Zoom an/aus
+  let tapT = null, tapAt = 0;
+  const pageTap = (i, e) => {
+    const now = Date.now();
+    if (now - tapAt < 320) {
+      clearTimeout(tapT); tapT = null; tapAt = 0;
+      const z = zFor(i); if (!z) return;
+      haptic(); zoomAt(e.clientX, e.clientY, zoomed() ? 1 : 2.5);
+      return;
+    }
+    tapAt = now;
+    if (zoomed()) return;                   // gezoomt: einfaches Tippen macht nichts
+    clearTimeout(tapT); tapT = setTimeout(() => { tapT = null; if (!zoomed()) openCrop(i); }, 300);
+  };
+  let G = null;     // laufende Geste
+  const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  stage.addEventListener('touchstart', e => {
+    if (cmpOn) return;
+    if (e.touches.length === 2) {
+      const z = zFor(cur); if (!z) return;
+      const [a, b] = e.touches, mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+      const [lx, ly] = zLocal(z, mx, my);
+      G = { pinch: true, d0: dist(a, b), s0: z.s, px: (lx - z.tx) / z.s, py: (ly - z.ty) / z.s };
+      e.preventDefault();
+    } else if (e.touches.length === 1 && zoomed()) {
+      const t = e.touches[0];
+      G = { pan: true, x0: t.clientX, y0: t.clientY, tx0: Z.tx, ty0: Z.ty };
+    }
+  }, { passive: false });
+  stage.addEventListener('touchmove', e => {
+    if (!G || !Z) return;
+    e.preventDefault();
+    if (G.pinch && e.touches.length >= 2) {
+      const [a, b] = e.touches, mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+      let s2 = G.s0 * dist(a, b) / G.d0;
+      if (s2 < 1) s2 = 1 - (1 - s2) * 0.35;                    // etwas unter 1 federnd
+      const [lx, ly] = zLocal(Z, mx, my);
+      Z.s = s2; Z.tx = lx - G.px * s2; Z.ty = ly - G.py * s2;
+      Z.img.style.transition = 'none';
+      Z.img.style.transform = `translate3d(${Z.tx}px,${Z.ty}px,0) scale(${s2})`;
+      Z.pg.classList.add('zoomed'); stage.classList.add('zooming');
+    } else if (G.pan && e.touches.length === 1) {
+      const t = e.touches[0];
+      Z.tx = G.tx0 + t.clientX - G.x0; Z.ty = G.ty0 + t.clientY - G.y0; zApply(false);
+    }
+  }, { passive: false });
+  const gEnd = e => {
+    if (!G) return;
+    if (G.pinch && e.touches.length === 1 && zoomed()) {   // ein Finger bleibt liegen → weiter verschieben
+      const t = e.touches[0]; zApply(true);
+      G = { pan: true, x0: t.clientX, y0: t.clientY, tx0: Z.tx, ty0: Z.ty }; return;
+    }
+    if (e.touches.length) return;
+    const was = G; G = null;
+    if (!Z) return;
+    if (Z.s <= 1.05) zoomReset(false);
+    else { zApply(true); if (was.pinch) hiRes(); }
+  };
+  stage.addEventListener('touchend', gEnd); stage.addEventListener('touchcancel', gEnd);
+  wrap.addEventListener('gesturestart', e => e.preventDefault());
+  // PC: Strg + Mausrad bzw. Trackpad-Zoom
+  stage.addEventListener('wheel', e => {
+    if (!e.ctrlKey || cmpOn) return;
+    e.preventDefault();
+    const z = zFor(cur); if (!z) return;
+    const to = Math.max(1, Math.min(ZMAX, z.s * Math.exp(-e.deltaY * 0.01)));
+    const [lx, ly] = zLocal(z, e.clientX, e.clientY), px = (lx - z.tx) / z.s, py = (ly - z.ty) / z.s;
+    z.s = to; z.tx = lx - px * to; z.ty = ly - py * to; zApply(false);
+    if (zoomed()) hiRes(); else zoomReset(true);
+  }, { passive: false });
+  // PC: gezoomt mit der Maus ziehen
+  stage.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' || !zoomed()) return;
+    const x0 = e.clientX, y0 = e.clientY, tx0 = Z.tx, ty0 = Z.ty;
+    const mv = ev => { Z && (Z.tx = tx0 + ev.clientX - x0, Z.ty = ty0 + ev.clientY - y0, zApply(false)); };
+    const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  });
   let drawT;
   const drawVisible = () => {
     clearTimeout(drawT);
@@ -145,6 +279,7 @@ export function scanReview(opts) {
         if (img.dataset.k === key(it)) { el.classList.remove('busy'); continue; }
         el.classList.add('busy'); await tick();
         img.src = preview(it); img.dataset.k = key(it);
+        if (Z && Z.img === img) { delete img.dataset.hi; if (zoomed()) hiRes(); }
         el.classList.remove('busy');
         if (cmpOn && i === cur && !cmp) cmpMount();
         if (closed) return;
@@ -157,7 +292,7 @@ export function scanReview(opts) {
   };
   stage.addEventListener('scroll', () => {
     const i = Math.round(stage.scrollLeft / Math.max(1, stage.clientWidth));
-    if (i !== cur && i >= 0 && i < items.length) { cur = i; updCount(); drawVisible(); renderFilters(); if (cmpOn) cmpMount(); }
+    if (i !== cur && i >= 0 && i < items.length) { zoomReset(true); cur = i; updCount(); drawVisible(); renderFilters(); if (cmpOn) cmpMount(); }
   }, { passive: true });
 
   // ---------- Scan-Laser, solange eine Seite aufbereitet wird ----------
@@ -237,7 +372,7 @@ export function scanReview(opts) {
   }
   const cmpBtn = wrap.querySelector('[data-cmp]');
   cmpBtn.onclick = () => {
-    cmpOn = !cmpOn; haptic(); cmpBtn.classList.toggle('on', cmpOn);
+    cmpOn = !cmpOn; haptic(); cmpBtn.classList.toggle('on', cmpOn); zoomReset(true);
     if (cmpOn) cmpMount(true); else cmpUnmount();
   };
   const goTo = i => { cur = Math.max(0, Math.min(items.length - 1, i)); stage.scrollTo({ left: cur * stage.clientWidth, behavior: 'instant' in document.documentElement.style ? 'instant' : 'auto' }); stage.scrollLeft = cur * stage.clientWidth; updCount(); drawVisible(); renderFilters(); };
@@ -366,6 +501,7 @@ export function scanReview(opts) {
   };
   wrap.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
     const t = b.dataset.t, it = items[cur];
+    zoomReset(true);
     if (t === 'cam') {
       if (cameraSupported() && !liveFailed) {
         const shots = await liveScanner({ startCount: items.length });
@@ -395,7 +531,7 @@ export function scanReview(opts) {
   // ---------- Schließen ----------
   const close = () => {
     if (closed) return; closed = true;
-    lasers.forEach(stop => stop()); lasers.clear(); cmpUnmount();
+    lasers.forEach(stop => stop()); lasers.clear(); cmpUnmount(); clearTimeout(tapT); clearTimeout(hiT);
     wrap.classList.add('out'); setTimeout(() => wrap.remove(), 280);
   };
   const askClose = async () => {
