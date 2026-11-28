@@ -6,8 +6,19 @@ import { toCanvas } from './scanner.js';
 
 export const ONLINE_MODES = [['2', 'Verbessern'], ['5', 'Schatten weg'], ['1', 'Aufhellen'], ['3', 'Schwarz-Weiß'], ['4', 'Graustufen']];
 export const onlineReady = () => !!(settings.get('onlineUrl') && settings.get('onlineKey'));
-export const onlineKey = it => JSON.stringify([it.corners, settings.get('onlineMode') || '2']);
-export const onlineDone = it => !!(it._onl && it._onl.key === onlineKey(it));
+// Modus je Seite (in der Scan-Ansicht wählbar), sonst der Standard aus den Einstellungen
+export const onlineMode = it => it.onlMode || settings.get('onlineMode') || '2';
+export const onlineKey = it => JSON.stringify([it.corners, onlineMode(it)]);
+// Schon berechnete Modi bleiben je Seite im Speicher (it._onlC) – Zurückwechseln kostet kein Guthaben
+export const onlineDone = it => {
+  const k = onlineKey(it);
+  if (it._onl && it._onl.key === k) return true;
+  const c = it._onlC && it._onlC[k];
+  if (c) { it._onl = c; return true; }
+  return false;
+};
+/** Ist dieser Modus für die Seite schon berechnet? (für die Markierung in der Modus-Leiste) */
+export const onlineHas = (it, mode) => { const k = JSON.stringify([it.corners, mode]); return !!((it._onl && it._onl.key === k) || (it._onlC && it._onlC[k])); };
 
 const MAX = 4000;   // Kantenlänge des hochgeladenen Fotos
 
@@ -34,7 +45,7 @@ export async function ensureOnline(it) {
     const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.93));
     const pos = it.corners.flatMap(([x, y]) => [Math.round(x * W), Math.round(y * H)]);
     const res = await call(blob, {
-      enhance_mode: settings.get('onlineMode') || '2', crop_image: 1, dewarp_image: 1, deblur_image: 1,
+      enhance_mode: onlineMode(it), crop_image: 1, dewarp_image: 1, deblur_image: 1,
       correct_direction: 0, jpeg_quality: 95, size_and_positon: [W, H, ...pos].join(','),
     });
     const b64 = res?.image_list?.[0]?.image;
@@ -43,6 +54,7 @@ export async function ensureOnline(it) {
     const out = document.createElement('canvas'); out.width = img.naturalWidth; out.height = img.naturalHeight;
     out.getContext('2d').drawImage(img, 0, 0);
     it._onl = { key, ck: JSON.stringify(it.corners), canvas: out };
+    (it._onlC ||= {})[key] = it._onl;
   })();
   try { await it._onlP; } finally { if (it._onlPKey === key) it._onlP = null; }
 }
