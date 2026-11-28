@@ -80,8 +80,8 @@ export function scanReview(opts) {
   // ---------- Vorschau ----------
   const aiReady = it => !!(it.ai && it._ai && it._ai.key === JSON.stringify(it.corners));
   const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it), filter === 'ai' && enhReady(it), filter === 'online' && onlineDone(it)]);
-  // Filterliste: „☁️ Online“ nur, wenn in den Einstellungen eingerichtet
-  const FL = onlineReady() ? [FILTERS[0], FILTERS[1], ['online', '☁️ Online'], ...FILTERS.slice(2)] : FILTERS;
+  // Filterliste: „Nibvion“ (Online-Scan) nur, wenn in den Einstellungen eingerichtet
+  const FL = onlineReady() ? [FILTERS[0], FILTERS[1], ['online', 'Nibvion'], ...FILTERS.slice(2)] : FILTERS;
   const preview = it => {
     const k = key(it);
     if (it._bigKey !== k) { it._big = renderScan(it, filter, BIG, adj).toDataURL('image/jpeg', 0.85); it._bigKey = k; }
@@ -307,7 +307,7 @@ export function scanReview(opts) {
     if (filter === 'online') {
       const list = items.filter(it => !onlineDone(it));
       for (let n = 0; n < list.length; n++) {
-        busy(true, `☁️ Online-Scan Seite ${n + 1} von ${list.length} …`);
+        busy(true, `Nibvion-Scan Seite ${n + 1} von ${list.length} …`);
         try { await ensureOnline(list[n]); }
         catch (e) { console.warn(e); toast(`Online-Scan: ${e.message || 'fehlgeschlagen'}`, true); break; }
       }

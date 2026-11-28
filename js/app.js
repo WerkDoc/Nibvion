@@ -28,7 +28,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.51.0';
+export const VERSION = '1.51.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1205,7 +1205,7 @@ async function renderSettings() {
 
     <div class="group-title">Online-Scan (TextIn · CamScanner-Technik)</div>
     <div class="group">
-      <button class="row" data-s="online"><span class="row-ic c-blue">${icon('sparkles')}</span><span class="row-main"><span class="row-title">${onlineReady() ? 'Eingerichtet' : 'Einrichten'}</span><span class="row-sub" style="display:block">${onlineReady() ? 'Filter „☁️ Online“ in der Scan-Ansicht' : 'Optional – Fotos werden dafür an TextIn gesendet'}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
+      <button class="row" data-s="online"><span class="row-ic c-blue">${icon('sparkles')}</span><span class="row-main"><span class="row-title">${onlineReady() ? 'Eingerichtet' : 'Einrichten'}</span><span class="row-sub" style="display:block">${onlineReady() ? 'Filter „Nibvion“ in der Scan-Ansicht' : 'Optional – Fotos werden dafür an TextIn gesendet'}</span></span><span class="row-end">${icon('chevronRight')}</span></button>
       ${onlineReady() ? `<div class="row"><span class="row-ic c-violet">${icon('sparkles')}</span><span class="row-main"><span class="row-title">Modus</span></span>
         <select class="field" data-om style="width:auto;max-width:170px;padding:6px 10px">${ONLINE_MODES.map(([v, l]) => `<option value="${v}" ${(settings.get('onlineMode') || '2') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
     </div>
@@ -1232,7 +1232,7 @@ async function renderSettings() {
 
     <div class="group-title">Info</div>
     <div class="group">
-      <div class="row"><span class="row-ic c-green">${icon('shield')}</span><span class="row-main"><span class="row-title">Privat</span><span class="row-sub" style="display:block">Keine Werbung, kein Abo. ${cloudOn() ? 'Die Cloud sieht nur verschlüsselte Daten – lesbar nur mit deinem Passwort' : 'Ohne Cloud bleibt alles auf diesem Gerät'}${onlineReady() ? ' (Filter „☁️ Online“ sendet das Foto an TextIn)' : ''}.</span></span></div>
+      <div class="row"><span class="row-ic c-green">${icon('shield')}</span><span class="row-main"><span class="row-title">Privat</span><span class="row-sub" style="display:block">Keine Werbung, kein Abo. ${cloudOn() ? 'Die Cloud sieht nur verschlüsselte Daten – lesbar nur mit deinem Passwort' : 'Ohne Cloud bleibt alles auf diesem Gerät'}${onlineReady() ? ' (Filter „Nibvion“ sendet das Foto an TextIn)' : ''}.</span></span></div>
       <button class="row" data-s="install"><span class="row-ic c-blue">${icon('info')}</span><span class="row-main"><span class="row-title">Zum Home-Bildschirm</span><span class="row-sub" style="display:block">So installierst du Nibvion als App</span></span><span class="row-end">${icon('chevronRight')}</span></button>
     </div>
     <div class="about"><img src="icons/logo.png" alt="">Nibvion ${VERSION}<br>PDF Tools · Stamp &amp; Edit</div>
@@ -1359,7 +1359,7 @@ function cloudSheet() {
 // Online-Scan einrichten: Adresse der eigenen Supabase-Funktion + eigener Schlüssel
 function onlineSheet() {
   const sh = sheet({ title: 'Online-Scan einrichten', html: `
-    <p style="color:var(--text2);margin:0 0 12px;line-height:1.5">Für den Filter „☁️ Online“ wird das Foto über deine Supabase-Funktion <b style="color:var(--text)">textin-scan</b> an TextIn (CamScanner-Technik) gesendet. Ohne Einrichtung bleibt alles lokal.</p>
+    <p style="color:var(--text2);margin:0 0 12px;line-height:1.5">Für den Filter „Nibvion“ wird das Foto über deine Supabase-Funktion <b style="color:var(--text)">textin-scan</b> an TextIn (CamScanner-Technik) gesendet. Ohne Einrichtung bleibt alles lokal.</p>
     <input class="field" data-u placeholder="https://….supabase.co/functions/v1/textin-scan" value="${esc(settings.get('onlineUrl') || cloudProject().url + '/functions/v1/textin-scan')}" autocapitalize="off" autocorrect="off" spellcheck="false" style="margin-bottom:10px">
     <input class="field" type="password" data-k placeholder="Zugangsschlüssel (NIBVION_KEY)" value="${esc(settings.get('onlineKey') || '')}" autocomplete="off">
     <div class="btn-row" style="margin-top:14px">${onlineReady() ? '<button class="btn" data-del>Entfernen</button>' : ''}<button class="btn" data-test>Testen</button><button class="btn primary" data-ok>${icon('check')} Speichern</button></div>` });
