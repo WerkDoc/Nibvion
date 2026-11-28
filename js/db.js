@@ -1,5 +1,5 @@
-// IndexedDB: docs (Metadaten + Objekte), files (PDF-Bytes), assets (Unterschriften/Stempel)
-const NAME = 'nibvion', VERSION = 1;
+// IndexedDB: docs (Metadaten + Objekte), files (PDF-Bytes), assets (Unterschriften/Stempel), scans (Scan-Originale, nur lokal)
+const NAME = 'nibvion', VERSION = 2;   // 2: Store „scans“ (Scan-Originale, nur lokal)
 let _db;
 
 function open() {
@@ -8,11 +8,11 @@ function open() {
     const r = indexedDB.open(NAME, VERSION);
     r.onupgradeneeded = () => {
       const d = r.result;
-      for (const s of ['docs', 'files', 'assets']) {
+      for (const s of ['docs', 'files', 'assets', 'scans']) {
         if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' });
       }
     };
-    r.onsuccess = () => { _db = r.result; res(_db); };
+    r.onsuccess = () => { _db = r.result; _db.onversionchange = () => { _db.close(); _db = null; }; res(_db); };
     r.onerror = () => rej(r.error);
   });
 }

@@ -30,14 +30,14 @@ function discardDlg() {
 }
 
 /**
- * opts: { kind: 'scan'|'images', items, filter, ocrOn, onSave(items, filter, adj, ocrOn), onText(items, filter, adj), onFilter(f), onOcr(v) }
+ * opts: { kind: 'scan'|'images', items, filter, adj, ocrOn, onSave(items, filter, adj, ocrOn), onText(items, filter, adj), onFilter(f), onOcr(v) }
  */
 export function scanReview(opts) {
   const { kind } = opts;
   const items = opts.items;
   let filter = opts.filter ?? null;
   let ocrOn = !!opts.ocrOn;
-  const adj = { brightness: 0, contrast: 0, sharp: 0 };
+  const adj = { brightness: 0, contrast: 0, sharp: 0, ...(opts.adj || {}) };   // opts.adj: gespeicherte Anpassungen („Scan bearbeiten“)
   let cur = 0, panel = 'filter', liveFailed = !!opts.liveFailed, closed = false;
 
   const wrap = document.createElement('div');
@@ -62,7 +62,7 @@ export function scanReview(opts) {
       <div class="flt-row no-swipe" data-flt></div>
       <div class="rv-adj" data-adj hidden>
         ${[['brightness', 'Helligkeit', -50, 50], ['contrast', 'Kontrast', -50, 50], ['sharp', 'Schärfe', 0, 100]].map(([k, l, mn, mx]) =>
-          `<div class="adj-row"><span>${l}</span><input type="range" class="range" min="${mn}" max="${mx}" step="1" value="0" data-a="${k}"><span data-av="${k}">0</span></div>`).join('')}
+          `<div class="adj-row"><span>${l}</span><input type="range" class="range" min="${mn}" max="${mx}" step="1" value="${adj[k]}" data-a="${k}"><span data-av="${k}">${adj[k]}</span></div>`).join('')}
         <button class="link-btn" data-reset style="padding:2px">Zurücksetzen</button>
       </div>
     </div>
@@ -376,7 +376,8 @@ export function scanReview(opts) {
     wrap.classList.add('out'); setTimeout(() => wrap.remove(), 280);
   };
   const askClose = async () => {
-    if (!items.length || await discardDlg()) {
+    // opts.editing: gespeicherter Scan – Schließen verwirft nichts, das Original bleibt
+    if (!items.length || opts.editing || await discardDlg()) {
       items.forEach(it => it.url && setTimeout(() => URL.revokeObjectURL(it.url), 1000));
       close();
     }

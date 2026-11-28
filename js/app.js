@@ -9,6 +9,7 @@ import { textSheet } from './textview.js';
 import { initIdView, saveIdCard, openIdView } from './idview.js';
 import { initCloud, cloudOn, cloudEmail, cloudLogin, cloudLogout, cloudSync, onCloudStatus, cloudStatus, pendingCount, cloudProject, savePrefs, NIB_URL, NIB_KEY } from './cloud.js';
 import { scanReview } from './scanreview.js';
+import { keepScan, loadScan, hasScan, keepScansOn, scanUsage, clearScans, pruneScans } from './scanstore.js';
 import { moveToTrash, purgeExpired, trashSheet, isDeleted, TRASH_DAYS } from './trash.js';
 import { searchSheet, extractText } from './search.js';
 import { createBackup, shareBackup, readBackup, restoreBackup } from './backup.js';
@@ -27,7 +28,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.50.5';
+export const VERSION = '1.51.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -198,11 +199,12 @@ async function renderRecents() {
   });
 }
 
-function docMenu(d) {
+async function docMenu(d) {
+  const scan = await hasScan(d.id);   // Scan-Originale vorhanden → „Scan bearbeiten“
   sheet({
     title: d.name,
     html: `<div class="menu">
-      ${[['view', 'Öffnen', 'eye', 'c-blue'], ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
+      ${[['view', 'Öffnen', 'eye', 'c-blue'], ...(scan ? [['rescan', 'Scan bearbeiten', 'scan', 'c-violet']] : []), ['edit', 'Bearbeiten', 'textEdit', 'c-red'], ['sign', 'Unterschreiben', 'sign', 'c-green'], ['share', 'Teilen', 'share', 'c-teal'],
         ['fav', d.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten hinzufügen', d.fav ? 'heartFill' : 'heart', 'c-red'],
         ['move', 'In Ordner verschieben', 'folderMove', 'c-green'],
         ['tags', 'Farb-Tags', 'tag', 'c-orange'],
@@ -222,6 +224,7 @@ function docMenu(d) {
       el.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
         const a = b.dataset.a; api.close();
         if (['view', 'edit', 'sign'].includes(a)) return openDoc(d.id, a);
+        if (a === 'rescan') return editScan(d);
         if (a === 'word') return exportWord(d);
         if (a === 'flipbook') return flipbookDoc(d);
         if (a === 'gif') return gifDoc(d);
@@ -503,38 +506,92 @@ async function imageSheet(kind, camOpts = {}) {
     ocrOn: kind === 'scan' && settings.get('scanOcr') !== false,
     onFilter: f => { if (kind === 'scan') settings.set('scanFilter', f); },
     onOcr: v => settings.set('scanOcr', v),
-    onText: async (list, filter, adj) => {
-      if (!list.length) return toast('Bitte zuerst eine Seite scannen', true);
-      const fmt = await new Promise(res => {
-        let v = null;
-        sheet({
-          title: 'Exportieren als',
-          html: `<div class="menu">${[['text', 'Text', 'Anzeigen, kopieren, teilen', 'textScan', 'c-teal'], ['word', 'Word (.docx)', 'Absätze, Überschriften, Tabellen', 'word', 'c-blue'], ['excel', 'Excel (.xlsx)', 'Tabellen mit Linien als Zellen', 'excel', 'c-green']]
-            .map(([k, t, s, ic, c]) => `<button class="row" data-f="${k}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title">${t}</span><span class="row-sub">${s}</span></span>${icon('chevronRight')}</button>`).join('')}</div>`,
-          onMount(el, api) { el.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { v = b.dataset.f; api.close(); }); },
-          onClose: () => res(v),
-        });
-      });
-      if (!fmt) return;
-      const clean = filter === 'invert' || !filter ? 'doc' : filter;
-      if (fmt !== 'text') return scanToOffice(fmt, list.map(it => () => renderScan(it, clean, 2400, adj)), `Scan ${today()}`);
-      return scanText(list, filter === 'invert' ? 'doc' : filter, adj);
-    },
+    onText: scanExport,
     onSave: async (list, filter, adj, ocrOn) => {
       let prev = null; try { prev = list[0] && renderScan(list[0], filter, 420, adj).toDataURL('image/jpeg', 0.8); } catch {}
       busy(true, 'PDF wird erstellt …', { scan: prev });
       try {
-        const urls = [];
-        for (const it of list) { urls.push(renderScan(it, filter, 2200, adj).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
-        const bytes = await imagesToPdf(urls, { margin: 0 });
-        const id = await saveNewDoc(bytes, `${prefix} ${today()} ${nowHM()}.pdf`, saveOpts);
+        const id = await saveNewDoc(await scanPdfBytes(list, filter, adj), `${prefix} ${today()} ${nowHM()}.pdf`, saveOpts);
         if (kind === 'scan' && ocrOn) await ocrDoc(await db.get('docs', id), { quiet: true });
+        // Originale aufheben → später „Scan bearbeiten“
+        if (keepScansOn()) { try { await keepScan(id, list, { kind, filter, adj, ocr: kind === 'scan' && ocrOn, size: (await db.get('docs', id))?.size }); } catch (e) { console.warn('Scan-Originale nicht gespeichert', e); } }
         busy(false); await renderRecents();
         toast(doneMsg || (kind === 'scan' && ocrOn ? 'Scan gespeichert – Text ist durchsuchbar' : 'PDF erstellt'));
         list.forEach(it => it.url && setTimeout(() => URL.revokeObjectURL(it.url), 3000));
         openDoc(id, signAfter ? 'sign' : 'view');
         return true;
       } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht erstellt werden', true); return false; }
+    },
+  });
+}
+
+
+// Gescannte Seiten → PDF-Bytes
+async function scanPdfBytes(list, filter, adj) {
+  const urls = [];
+  for (const it of list) { urls.push(renderScan(it, filter, 2200, adj).toDataURL('image/jpeg', 0.86)); await new Promise(r => setTimeout(r, 0)); }
+  return imagesToPdf(urls, { margin: 0 });
+}
+
+// „Export“ in der Scan-Ansicht: Text, Word oder Excel
+async function scanExport(list, filter, adj) {
+    if (!list.length) return toast('Bitte zuerst eine Seite scannen', true);
+    const fmt = await new Promise(res => {
+      let v = null;
+      sheet({
+        title: 'Exportieren als',
+        html: `<div class="menu">${[['text', 'Text', 'Anzeigen, kopieren, teilen', 'textScan', 'c-teal'], ['word', 'Word (.docx)', 'Absätze, Überschriften, Tabellen', 'word', 'c-blue'], ['excel', 'Excel (.xlsx)', 'Tabellen mit Linien als Zellen', 'excel', 'c-green']]
+          .map(([k, t, s, ic, c]) => `<button class="row" data-f="${k}"><span class="row-ic ${c}">${icon(ic)}</span><span class="row-main"><span class="row-title">${t}</span><span class="row-sub">${s}</span></span>${icon('chevronRight')}</button>`).join('')}</div>`,
+        onMount(el, api) { el.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { v = b.dataset.f; api.close(); }); },
+        onClose: () => res(v),
+      });
+    });
+    if (!fmt) return;
+    const clean = filter === 'invert' || !filter ? 'doc' : filter;
+    if (fmt !== 'text') return scanToOffice(fmt, list.map(it => () => renderScan(it, clean, 2400, adj)), `Scan ${today()}`);
+    return scanText(list, filter === 'invert' ? 'doc' : filter, adj);
+  
+}
+
+// ----- Scan bearbeiten: gespeicherten Scan wieder in der Scan-Ansicht öffnen -----
+async function editScan(d) {
+  busy(true, 'Scan wird geöffnet …', { scan: d.thumb });
+  let s = null;
+  try { s = await loadScan(d.id); } catch (e) { console.error(e); }
+  busy(false);
+  if (!s) return toast('Für dieses PDF sind keine Scan-Originale gespeichert', true);
+  const kind = s.kind || 'scan';
+  scanReview({
+    kind, items: s.items, editing: true,
+    filter: s.filter ?? null, adj: s.adj, ocrOn: kind === 'scan' && !!s.ocr,
+    onFilter: () => {}, onOcr: () => {},
+    onText: scanExport,
+    onSave: async (list, filter, adj, ocrOn) => {
+      const cur = await db.get('docs', d.id);
+      if (!cur || isDeleted(cur)) { toast('Das PDF gibt es nicht mehr', true); return false; }
+      // Wurde das PDF nach dem Scan anders verändert (Seiten, Komprimieren …)? Dann vorher fragen.
+      if (s.size && cur.size !== s.size && !await confirmDlg('PDF ersetzen?', 'Das PDF wurde nach dem Scan noch verändert (z. B. Seiten, Komprimieren, Einbrennen). Diese Änderungen gehen verloren – Notizen und Unterschriften bleiben erhalten.', 'Ersetzen')) return false;
+      let prev = null; try { prev = list[0] && renderScan(list[0], filter, 420, adj).toDataURL('image/jpeg', 0.8); } catch {}
+      busy(true, 'PDF wird aktualisiert …', { scan: prev });
+      try {
+        const data = await scanPdfBytes(list, filter, adj);
+        const pdf = await loadPdf(data instanceof ArrayBuffer ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+        const n = pdf.numPages;
+        let thumb = cur.thumb; try { thumb = await renderThumb(pdf, 1); } catch {}
+        let pages = []; try { pages = await extractText(pdf); } catch {}
+        closePdf(pdf);
+        const buf = data instanceof ArrayBuffer ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+        // Notizen/Unterschriften (Objekte) bleiben, nur die auf weggefallenen Seiten nicht
+        const meta = { ...cur, size: buf.byteLength, pages: n, thumb, objects: (cur.objects || []).filter(o => o.page < n), updated: Date.now(), textIdx: { size: buf.byteLength, pages } };
+        await db.put('files', { id: d.id, data: buf });
+        await db.put('docs', meta);
+        if (kind === 'scan' && ocrOn) await ocrDoc(await db.get('docs', d.id), { quiet: true });
+        try { await keepScan(d.id, list, { kind, filter, adj, ocr: kind === 'scan' && ocrOn, size: (await db.get('docs', d.id))?.size }); } catch (e) { console.warn(e); }
+        busy(false); await renderRecents(); renderFiles();
+        toast('Scan aktualisiert');
+        list.forEach(it => it.url && setTimeout(() => URL.revokeObjectURL(it.url), 3000));
+        return true;
+      } catch (e) { console.error(e); busy(false); toast('PDF konnte nicht aktualisiert werden', true); return false; }
     },
   });
 }
@@ -1121,6 +1178,7 @@ async function renderSettings() {
   const all = await db.all('docs');
   const docs = all.filter(d => !isDeleted(d)), trashed = all.length - docs.length;
   const th = settings.get('theme');
+  const su = await scanUsage(), ks = keepScansOn();
   const cs = cloudStatus(), on = cloudOn(), pend = pendingCount();
   const cloudSub = !on ? 'Geräteübergreifend, Ende-zu-Ende verschlüsselt'
     : cs.state === 'sync' ? 'Wird abgeglichen …'
@@ -1152,6 +1210,13 @@ async function renderSettings() {
         <select class="field" data-om style="width:auto;max-width:170px;padding:6px 10px">${ONLINE_MODES.map(([v, l]) => `<option value="${v}" ${(settings.get('onlineMode') || '2') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
     </div>
 
+    <div class="group-title">Scan-Originale</div>
+    <div class="group">
+      <div class="row"><span class="row-ic c-violet">${icon('scan')}</span><span class="row-main"><span class="row-title">Originale behalten</span><span class="row-sub" style="display:block">Für „Scan bearbeiten“ im ⋯-Menü – Filter später ändern. Nur auf diesem Gerät.</span></span>
+        <div class="seg" data-ks><button data-v="1" class="${ks ? 'on' : ''}">An</button><button data-v="0" class="${ks ? '' : 'on'}">Aus</button></div></div>
+      ${su.n ? `<button class="row" data-s="scans"><span class="row-ic c-red">${icon('trash')}</span><span class="row-main"><span class="row-title">Originale löschen</span><span class="row-sub" style="display:block">${su.n} Scan(s) · ${fmtSize(su.bytes)} – die PDFs bleiben</span></span></button>` : ''}
+    </div>
+
     <div class="group-title">Speicher</div>
     <div class="group">
       <div class="row"><span class="row-ic c-teal">${icon('storage')}</span><span class="row-main"><span class="row-title">Belegt</span><span class="row-sub" style="display:block">${docs.length} Dokument(e)</span></span><span class="row-end">${usage}</span></div>
@@ -1176,6 +1241,7 @@ async function renderSettings() {
   root.querySelectorAll('[data-theme] button').forEach(b => b.onclick = () => { settings.set('theme', b.dataset.v); applyTheme(); renderSettings(); });
   root.querySelectorAll('[data-sd] button').forEach(b => b.onclick = () => { settings.set('stampDate', b.dataset.v === '1'); renderSettings(); });
   root.querySelectorAll('[data-lm] button').forEach(b => b.onclick = () => { settings.set('lowMem', b.dataset.v === '1'); renderSettings(); });
+  root.querySelectorAll('[data-ks] button').forEach(b => b.onclick = () => { settings.set('keepScans', b.dataset.v === '1'); renderSettings(); });
   root.querySelector('[data-om]')?.addEventListener('change', e => { settings.set('onlineMode', e.target.value); savePrefs().catch(() => {}); toast('Modus gespeichert'); });
   root.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
     const s = b.dataset.s;
@@ -1207,6 +1273,9 @@ async function renderSettings() {
         toast(`${r.docs} PDF(s) wiederhergestellt`);
         setTimeout(() => location.reload(), 900);
       } catch (e) { console.error(e); busy(false); toast('Wiederherstellen fehlgeschlagen', true); }
+    }
+    if (s === 'scans' && await confirmDlg('Scan-Originale löschen?', 'Die PDFs bleiben erhalten, aber „Scan bearbeiten“ ist für die bisherigen Scans dann nicht mehr möglich.', 'Löschen')) {
+      await clearScans(); renderSettings(); toast('Scan-Originale gelöscht');
     }
     if (s === 'trash') trashSheet(() => { renderSettings(); renderRecents(); });
     if (s === 'wipe' && await confirmDlg('Alle Dokumente löschen?', `Alle PDFs kommen in den Papierkorb und können ${TRASH_DAYS} Tage lang wiederhergestellt werden. Unterschriften und Stempel bleiben erhalten.`, 'In den Papierkorb')) {
@@ -1369,6 +1438,7 @@ function crashCheck() {
 async function init() {
   measureGap();
   try { await purgeExpired(); } catch {}
+  pruneScans();
   hydrateIcons(document);
   initEditor();
   setDocPicker(() => chooseDoc('view', 'Weiteres PDF öffnen'));
