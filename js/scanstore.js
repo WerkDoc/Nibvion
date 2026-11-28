@@ -35,6 +35,7 @@ export async function keepScan(docId, items, { kind = 'scan', filter, adj, ocr, 
     const p = { img: await srcBlob(it), corners: it.corners, rot: it.rot || 0, ai: !!it.ai };
     if (it.straighten !== undefined) p.straighten = it.straighten;
     if (it.card) p.card = it.card;
+    if (it.onlMode) p.onlMode = it.onlMode;
     // Teure Ergebnisse mitnehmen: Online-Scan kostet Guthaben, KI-Scan dauert
     try { if (it._onl?.canvas) p.onl = { key: it._onl.key, ck: it._onl.ck, img: await toBlob(it._onl.canvas) }; } catch {}
     try { if (it._enh?.canvas) p.enh = { key: it._enh.key, img: await toBlob(it._enh.canvas) }; } catch {}
@@ -56,6 +57,10 @@ export async function loadScan(docId) {
     if (p.straighten !== undefined) it.straighten = p.straighten;
     if (p.card) it.card = p.card;
     try { if (p.onl) it._onl = { key: p.onl.key, ck: p.onl.ck, canvas: await blobCanvas(p.onl.img) }; } catch {}
+    // Nibvion-Modus: gespeichert, sonst aus dem Schlüssel des Ergebnisses (ältere Scans)
+    try { it.onlMode = p.onlMode || (p.onl && JSON.parse(p.onl.key)[1]) || undefined; } catch {}
+    if (!it.onlMode) delete it.onlMode;
+    if (it._onl) it._onlC = { [it._onl.key]: it._onl };
     try { if (p.enh) it._enh = { key: p.enh.key, canvas: await blobCanvas(p.enh.img) }; } catch {}
     items.push(it);
   }

@@ -8,7 +8,9 @@ import { scanLaser, springFrames, reducedMotion } from './fx.js';
 import { liveScanner, cameraSupported } from './camera.js';
 import { ensureAI, edgeCut, aiPref, setAiPref, aiLoaded } from './ai.js';
 import { ensureEnhance, enhReady, enhLoaded } from './aienhance.js';
-import { ensureOnline, onlineDone, onlineReady } from './online.js';
+import { ensureOnline, onlineDone, onlineReady, onlineMode, onlineHas, ONLINE_MODES } from './online.js';
+import { settings } from './settings.js';
+import { savePrefs } from './cloud.js';
 
 const BIG = 1400;                       // Kantenlänge der großen Vorschau
 const tick = () => new Promise(r => setTimeout(r, 16));
@@ -60,6 +62,7 @@ export function scanReview(opts) {
         </div>
       </div>
       <div class="flt-row no-swipe" data-flt></div>
+      <div class="onl-modes" data-om><div class="onl-modes-in no-swipe" data-omr></div></div>
       <div class="rv-adj" data-adj hidden>
         ${[['brightness', 'Helligkeit', -50, 50], ['contrast', 'Kontrast', -50, 50], ['sharp', 'Schärfe', 0, 100]].map(([k, l, mn, mx]) =>
           `<div class="adj-row"><span>${l}</span><input type="range" class="range" min="${mn}" max="${mx}" step="1" value="${adj[k]}" data-a="${k}"><span data-av="${k}">${adj[k]}</span></div>`).join('')}
@@ -79,7 +82,7 @@ export function scanReview(opts) {
 
   // ---------- Vorschau ----------
   const aiReady = it => !!(it.ai && it._ai && it._ai.key === JSON.stringify(it.corners));
-  const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it), filter === 'ai' && enhReady(it), filter === 'online' && onlineDone(it)]);
+  const key = it => JSON.stringify([filter, adj, it.rot, it.corners, aiReady(it), filter === 'ai' && enhReady(it), filter === 'online' && onlineMode(it), filter === 'online' && onlineDone(it)]);
   // Filterliste: „Nibvion“ (Online-Scan) nur, wenn in den Einstellungen eingerichtet
   const FL = onlineReady() ? [FILTERS[0], FILTERS[1], ['online', 'Nibvion'], ...FILTERS.slice(2)] : FILTERS;
   const preview = it => {
@@ -243,7 +246,7 @@ export function scanReview(opts) {
   let fltFor = null, fltPrev = {};
   const renderFilters = () => {
     const it = items[cur];
-    const fk = it && JSON.stringify([it._id, it.rot, it.corners, aiReady(it), enhReady(it), onlineDone(it)]);
+    const fk = it && JSON.stringify([it._id, it.rot, it.corners, aiReady(it), enhReady(it), onlineMode(it), onlineDone(it)]);
     if (it && fltFor !== fk) {
       fltFor = fk; fltPrev = {};
       const base = renderScan(it, '', 240);
@@ -260,6 +263,26 @@ export function scanReview(opts) {
       filter = b.dataset.fk || null; opts.onFilter && opts.onFilter(filter || ''); haptic();
       renderFilters(); drawVisible();
     });
+    renderModes();
+  };
+  // ---------- Nibvion-Modi (nur bei Filter „Nibvion“) ----------
+  // Gilt für alle Seiten dieses Scans und wird neuer Standard (wie in den Einstellungen).
+  // Schon berechnete Modi sind mit Punkt markiert – Zurückwechseln geht sofort und kostet nichts.
+  const om = wrap.querySelector('[data-om]'), omr = wrap.querySelector('[data-omr]');
+  const renderModes = () => {
+    const show = filter === 'online' && panel === 'filter' && !!items.length;
+    om.classList.toggle('open', show);
+    if (!show) return;
+    const it = items[cur], m = onlineMode(it);
+    omr.innerHTML = ONLINE_MODES.map(([v, l]) => `<button class="onl-m ${v === m ? 'on' : ''} ${onlineHas(it, v) ? 'done' : ''}" data-m="${v}">${l}</button>`).join('');
+    omr.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+      const v = b.dataset.m; if (v === m) return;
+      haptic();
+      items.forEach(x => { x.onlMode = v; });
+      settings.set('onlineMode', v); savePrefs().catch(() => {});
+      renderFilters(); drawVisible();
+      omr.querySelector('.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    });
   };
   let idc = 0;
   let aiOn = aiPref();
@@ -271,7 +294,7 @@ export function scanReview(opts) {
   wrap.querySelectorAll('[data-tabs] button').forEach(b => b.onclick = () => {
     panel = b.dataset.p;
     wrap.querySelectorAll('[data-tabs] button').forEach(x => x.classList.toggle('on', x === b));
-    flt.hidden = panel !== 'filter'; wrap.querySelector('[data-adj]').hidden = panel !== 'adj';
+    flt.hidden = panel !== 'filter'; wrap.querySelector('[data-adj]').hidden = panel !== 'adj'; renderModes();
   });
   wrap.querySelectorAll('[data-a]').forEach(r => r.oninput = () => {
     adj[r.dataset.a] = +r.value; wrap.querySelector(`[data-av="${r.dataset.a}"]`).textContent = r.value; drawVisible();
