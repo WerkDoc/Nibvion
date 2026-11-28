@@ -2073,6 +2073,30 @@ svg.layer [data-mlabel] { cursor: pointer; }
 .tl-star { position: absolute; top: -5px; right: -5px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); border: 2px solid var(--bg); }
 .tl-star .ico { width: 10px; height: 10px; fill: #fff; stroke: none; color: #fff; }
 .tl-tile.disabled { opacity: .45; pointer-events: none; }
+/* Werkzeuge: Suche, Kategorien, Ergebnis-Karten (wie Acrobat) */
+.tl-search { margin: 6px 0 4px; }
+.tl-search .search-box { background: var(--card); box-shadow: var(--depth); border-color: transparent; }
+.tl-search .search-box:focus-within { border-color: var(--accent); }
+.tl-mic { width: 34px; height: 34px; margin-right: -6px; border-radius: 50%; display: grid; place-items: center; color: var(--text2); flex: none; transition: background .2s, color .2s, transform .2s var(--spring); }
+.tl-mic .ico { width: 21px; height: 21px; }
+.tl-mic:active { transform: scale(.9); }
+.tl-mic.on { background: var(--grad); color: #fff; animation: micPulse 1.2s ease-in-out infinite; }
+@keyframes micPulse { 50% { box-shadow: 0 0 0 7px rgba(255,107,74,.18); } }
+.tl-cats { display: flex; gap: 22px; overflow-x: auto; scrollbar-width: none; margin: 12px -2px 0; padding: 0 6px; border-bottom: 1px solid var(--line); }
+.tl-cats::-webkit-scrollbar { display: none; }
+.tl-cats button { position: relative; flex: none; padding: 10px 0 11px; font-size: 15.5px; font-weight: 600; color: var(--text3); white-space: nowrap; transition: color .2s; }
+.tl-cats button::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; border-radius: 3px; background: var(--grad); transform: scaleX(0); transition: transform .28s var(--spring); }
+.tl-cats button.on { color: var(--text); }
+.tl-cats button.on::after { transform: scaleX(1); }
+.tl-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.tl-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 16px 14px 18px; border-radius: 18px; background: var(--card); box-shadow: var(--depth); text-align: left; min-width: 0; transition: transform .2s var(--spring); }
+.tl-card:active { transform: scale(.96); }
+.tl-card-ic { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; margin-bottom: 10px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+.tl-card-ic .ico { width: 27px; height: 27px; }
+.tl-card b { font-size: 15px; font-weight: 700; line-height: 1.25; color: var(--text); overflow-wrap: anywhere; }
+.tl-card span:not(.tl-card-ic) { font-size: 13px; line-height: 1.35; color: var(--text2); }
+@media (min-width: 560px) { .tl-cards { grid-template-columns: repeat(3, 1fr); } }
+.desk .tl-card:hover { transform: translateY(-2px); }
 @media (min-width: 560px) { .tl-grid { grid-template-columns: repeat(6, 1fr); } .tl-favs { grid-template-columns: repeat(3, 1fr); } }
 
 /* ================= PC (Maus & Tastatur) – nur mit .desk (js/desk.js), am iPhone nie aktiv ================= */

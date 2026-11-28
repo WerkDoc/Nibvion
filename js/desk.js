@@ -41,6 +41,6 @@ export function initDesk({ importPdfs, search }) {
     const k = e.key.toLowerCase();
     const typing = e.target.closest?.('input, textarea, select, [contenteditable="true"]');
     if (k === 'o') { e.preventDefault(); importPdfs(); }
-    if (k === 'f' && !typing) { e.preventDefault(); search(); }
+    if (k === 'f' && !typing) { e.preventDefault(); const tq = document.body.dataset.tab === 'tools' && document.getElementById('tl-q'); if (tq) tq.focus(); else search(); }
   });
 }

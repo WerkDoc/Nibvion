@@ -29,7 +29,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.54.1';
+export const VERSION = '1.55.0';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -349,7 +349,104 @@ const allTools = () => TOOL_GROUPS.flatMap(g => g.items);
 const shortName = t => (TOOL_SHORT[t.id] || t.label).replace(/\u00ad/g, '');
 const toolFavs = () => { const f = settings.get('toolFavs'); return Array.isArray(f) ? f : ['scan', 'edit', 'sign', 'merge']; };
 
+// ----- Suche & Kategorien (wie Acrobat) -----
+// Zusätzliche Suchwörter je Werkzeug (Umgangssprache, englische Begriffe, Dateiendungen)
+const TOOL_KEYS = {
+  workflows: 'automatisch ablauf schnell 1-tap aktion', edit: 'ändern korrigieren text tippen schreiben abdecken',
+  comment: 'markieren textmarker notiz anmerkung kommentar highlight', draw: 'stift malen skizze freihand',
+  sign: 'unterschrift signatur unterzeichnen stempel datum haken ausfüllen', form: 'formular felder ausfüllen antrag',
+  pages: 'seiten drehen sortieren löschen reihenfolge verschieben', measure: 'messen maßstab plan fläche länge umfang meter',
+  hf: 'seitenzahl nummerieren kopfzeile fußzeile datum', crop: 'zuschneiden ränder a4 beschneiden', duplex: 'duplex vorderseite rückseite sortieren',
+  spreads: 'doppelseite buch heft teilen', poster: 'poster kacheln groß drucken a4', links: 'link url webadresse',
+  blankpages: 'leer leere seiten entfernen rückseiten', scan: 'kamera scannen foto dokument fotografieren', imgscan: 'foto bild mediathek scannen gerade',
+  img2pdf: 'bilder fotos jpg png heic screenshot pdf', collage: 'collage fotos magazin raster polaroid', merge: 'zusammenfügen verbinden kombinieren mehrere',
+  split: 'aufteilen trennen extrahieren einzelne seiten', compare: 'vergleichen unterschied version änderungen', blank: 'leer neu notizpapier liniert kariert noten',
+  pdf2img: 'bilder jpg png exportieren foto', word: 'word docx doc office', excel: 'excel xlsx xls csv tabelle office', ppt: 'powerpoint pptx präsentation folien office',
+  flipbook: 'flipbook html blättern magazin 3d', gif: 'gif animation slideshow', pdf2word: 'word docx bearbeitbar umwandeln', translate: 'übersetzen sprache englisch deepl',
+  pdf2excel: 'excel xlsx tabelle umwandeln', ocr: 'ocr texterkennung durchsuchbar scan kopieren', text: 'text kopieren txt extrahieren auslesen',
+  compress: 'komprimieren verkleinern kleiner größe mb email', wm: 'wasserzeichen vertraulich kopie entwurf', redact: 'schwärzen zensieren datenschutz entfernen',
+  protect: 'passwort schützen verschlüsseln sperren sicher', sigs: 'unterschriften vorlagen', stamps: 'stempel vorlagen',
+};
+const TOOL_CATS = [['', 'Alle'], ['Bearbeiten', 'Bearbeiten'], ['Erstellen', 'Erstellen'], ['Konvertieren', 'Konvertieren'], ['Schützen & Optimieren', 'Schützen'], ['Automatisieren', 'Automatisieren'], ['Vorlagen', 'Vorlagen']];
+const norm = s => String(s || '').toLowerCase().replace(/\u00ad/g, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss');
+let toolQ = '', toolCat = '';
+const toolHay = t => norm([t.label, TOOL_SHORT[t.id], t.sub, TOOL_KEYS[t.id]].join(' '));
+function findTools(q) {
+  const words = norm(q).split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  return allTools().map(t => {
+    const hay = toolHay(t), name = norm(t.label + ' ' + (TOOL_SHORT[t.id] || ''));
+    if (!words.every(w => hay.includes(w))) return null;
+    // Treffer im Namen (am Wortanfang) zuerst
+    const score = words.reduce((a, w) => a + (new RegExp('(^|[^a-z])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(name) ? 3 : name.includes(w) ? 2 : 0), 0);
+    return { t, score };
+  }).filter(Boolean).sort((a, b) => b.score - a.score).map(x => x.t);
+}
+const escHtml = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const toolCard = t => `
+  <button class="tl-card" data-t="${t.id}" style="--c:${TOOL_COLOR[t.c] || TOOL_COLOR['c-gray']}">
+    <span class="tl-card-ic">${icon(t.icon)}</span>
+    <b>${escHtml(t.label)}</b>${t.sub ? `<span>${escHtml(t.sub)}</span>` : ''}
+  </button>`;
+
+function toolsHead(root) {
+  if (root.querySelector('#tl-q')) return;
+  const rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  root.innerHTML = `<div class="tl-search">
+      <div class="search-box">${icon('search')}<input class="search-in" id="tl-q" type="search" placeholder="Werkzeuge suchen" autocomplete="off" autocorrect="off" enterkeyhint="search">
+        <button class="search-clr" data-clr aria-label="Löschen">${icon('x')}</button>
+        ${rec ? `<button class="tl-mic" data-mic aria-label="Spracheingabe">${icon('mic')}</button>` : ''}</div>
+    </div>
+    <div class="tl-cats no-swipe" data-cats>${TOOL_CATS.map(([k, l]) => `<button data-c="${k}" class="${k === toolCat ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div id="tl-body"></div>`;
+  const q = root.querySelector('#tl-q'), clr = root.querySelector('[data-clr]');
+  const upd = () => { toolQ = q.value; clr.style.visibility = toolQ ? 'visible' : 'hidden'; renderToolsBody(); };
+  q.addEventListener('input', upd);
+  q.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const hit = findTools(q.value)[0]; if (hit) { q.blur(); runTool(hit.id); } }
+    if (e.key === 'Escape' && q.value) { e.preventDefault(); q.value = ''; upd(); }
+  });
+  clr.onclick = () => { q.value = ''; upd(); q.focus(); };
+  root.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
+    toolCat = b.dataset.c; haptic();
+    root.querySelectorAll('[data-c]').forEach(x => x.classList.toggle('on', x === b));
+    b.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    renderToolsBody();
+  });
+  // Spracheingabe (nur wo der Browser sie anbietet)
+  const mic = root.querySelector('[data-mic]');
+  if (mic) mic.onclick = () => {
+    if (mic._r) { mic._r.stop(); return; }
+    let r; try { r = new rec(); } catch { return toast('Spracheingabe nicht verfügbar', true); }
+    r.lang = 'de-DE'; r.interimResults = true; r.maxAlternatives = 1;
+    mic._r = r; mic.classList.add('on'); haptic();
+    r.onresult = e => { q.value = [...e.results].map(x => x[0].transcript).join(' ').trim(); upd(); };
+    r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Mikrofon nicht erlaubt', true); };
+    r.onend = () => { mic._r = null; mic.classList.remove('on'); };
+    try { r.start(); } catch { mic._r = null; mic.classList.remove('on'); }
+  };
+}
+
 function renderTools() {
+  const root = $('tools-list');
+  toolsHead(root);
+  renderToolsBody();
+}
+
+function renderToolsBody() {
+  const body = $('tl-body');
+  if (toolQ.trim()) {
+    const hits = findTools(toolQ);
+    body.innerHTML = hits.length
+      ? `<div class="group-title">${hits.length} ${hits.length === 1 ? 'Werkzeug' : 'Werkzeuge'}</div><div class="tl-cards">${hits.map(toolCard).join('')}</div><div class="bottom-space"></div>`
+      : `<div class="empty">${icon('search')}<b>Kein Werkzeug gefunden</b>Versuche z. B. „Word“, „verkleinern“ oder „Unterschrift“.</div>`;
+    bindTools(body); return;
+  }
+  if (toolCat) {
+    const g = TOOL_GROUPS.find(x => x.title === toolCat);
+    body.innerHTML = `<div class="tl-cards" style="margin-top:14px">${(g?.items || []).map(toolCard).join('')}</div><div class="bottom-space"></div>`;
+    bindTools(body); return;
+  }
   const tools = allTools(), favs = toolFavs().map(id => tools.find(t => t.id === id)).filter(Boolean);
   const favHtml = favs.length
     ? `<div class="tl-favs">${favs.map(t => `
@@ -359,14 +456,17 @@ function renderTools() {
           ${t.sub ? `<span class="tl-fav-sub">${t.sub}</span>` : ''}
         </button>`).join('')}</div>`
     : `<div class="tl-fav-empty">${icon('heart')}<span>Halte eine Kachel gedrückt, um sie hier oben anzuheften.</span></div>`;
-  $('tools-list').innerHTML = `<div class="group-title">Favoriten</div>${favHtml}` + TOOL_GROUPS.map(g => `
+  body.innerHTML = `<div class="group-title">Favoriten</div>${favHtml}` + TOOL_GROUPS.map(g => `
     <div class="group-title">${g.title}</div>
     <div class="tl-grid">${g.items.map(t => `
       <button class="tl-tile ${t.soon ? 'disabled' : ''}" data-t="${t.id}">
         <span class="tl-ic ${t.c}">${icon(t.icon)}${favs.includes(t) ? `<i class="tl-star">${icon('heartFill')}</i>` : ''}</span>
         <span class="tl-name">${TOOL_SHORT[t.id] || t.label}</span>
       </button>`).join('')}</div>`).join('') + '<div class="bottom-space"></div>';
-  $('tools-list').querySelectorAll('[data-t]').forEach(b => {
+  bindTools(body);
+}
+function bindTools(body) {
+  body.querySelectorAll('[data-t]').forEach(b => {
     b.onclick = () => { if (b._lp) { b._lp = false; return; } runTool(b.dataset.t); };
     longPress(b, () => toggleToolFav(b.dataset.t, b));
   });
