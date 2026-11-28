@@ -29,7 +29,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.55.0';
+export const VERSION = '1.55.1';
 const $ = id => document.getElementById(id);
 
 applyTheme();
