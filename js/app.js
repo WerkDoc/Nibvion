@@ -27,7 +27,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.50.3';
+export const VERSION = '1.50.4';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1315,7 +1315,7 @@ function switchTab(tab) {
   resetDocScroll();
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === tab));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  document.querySelector('.tab-indicator').style.transform = `translateX(${TABS.indexOf(tab) * 100}%)`;
+  document.querySelector('.tab-indicator').style.transform = `translateX(${(TABS.indexOf(tab) + (TABS.indexOf(tab) >= 2)) * 100}%)`; // Platz 3 = Plus
   document.body.classList.toggle('tab-home', tab === 'home');   // „+“ nur auf der Startseite
   document.body.dataset.tab = tab;
   if (tab === 'files') renderFiles();
