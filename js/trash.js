@@ -2,6 +2,7 @@
 // Gelöschte PDFs bekommen deletedAt und bleiben 30 Tage wiederherstellbar.
 // Danach werden sie beim App-Start endgültig entfernt.
 import { db } from './db.js';
+import { dropScan } from './scanstore.js';
 import { icon } from './icons.js';
 import { sheet, toast, confirmDlg, esc, fmtSize, haptic } from './ui.js';
 
@@ -26,7 +27,7 @@ export async function purge(ids) {
   for (const id of [].concat(ids)) {
     const d = await db.get('docs', id);
     for (let i = 0; i < (d?.idSides?.length || 0); i++) { await db.del('files', `${id}#s${i}`); await db.del('files', `${id}#o${i}`); }   // Ausweis-Fotos
-    await db.del('docs', id); await db.del('files', id);
+    await db.del('docs', id); await db.del('files', id); await dropScan(id);
   }
 }
 export async function trashDocs() {
