@@ -1,5 +1,5 @@
 // Nibvion Service Worker – offline-fähig
-const VERSION = 'nibvion-v1.51.1';
+const VERSION = 'nibvion-v1.52.0';
 // Bei Änderungen an Dateien in BIG_PATHS den Namen hochzählen
 const BIG = 'nibvion-big-1';
 // Bibliotheken (lib/*.js) und Icons: eigener Cache, überlebt App-Updates.
@@ -8,7 +8,7 @@ const LIB = 'nibvion-lib-1';
 const BIG_PATHS = ['/lib/models/', '/lib/ort/', '/lib/tesseract/'];
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/editor.js', 'js/pdfcore.js', 'js/ui.js', 'js/db.js', 'js/icons.js', 'js/sign.js', 'js/assets.js', 'js/settings.js', 'js/convert.js', 'js/pdf2word.js', 'js/tools.js', 'js/scanner.js', 'js/search.js', 'js/backup.js', 'js/ocr.js', 'js/camera.js', 'js/textview.js', 'js/scanreview.js', 'js/scan2office.js', 'js/trash.js', 'js/ai.js', 'js/aienhance.js', 'js/online.js', 'js/files.js', 'js/idview.js', 'js/idpages.js', 'js/merge.js', 'js/translate.js', 'js/aifx.js', 'js/inpaint.js', 'js/pagetools.js', 'js/cloud.js', 'js/redact.js', 'js/forms.js', 'js/split.js', 'js/compare.js', 'js/incoming.js', 'js/qr.js', 'js/pageorder.js', 'js/present.js', 'js/scrubber.js', 'js/fixate.js', 'js/reader.js', 'js/layout.js', 'js/links.js', 'js/preflight.js', 'js/titles.js', 'js/fx.js', 'js/pageflip.js', 'js/pagecurl.js', 'js/flipview.js', 'js/gif.js', 'js/gifexport.js', 'js/flipbook.js', 'js/shapes.js', 'js/coverflow.js', 'js/inspect.js', 'js/collage.js', 'js/tiltcard.js', 'js/bookmark.js', 'js/doctabs.js', 'js/pptx.js', 'js/paper.js', 'js/workflows.js', 'js/lock.js', 'js/measure.js', 'js/scanstore.js',
+  'js/app.js', 'js/editor.js', 'js/pdfcore.js', 'js/ui.js', 'js/db.js', 'js/icons.js', 'js/sign.js', 'js/assets.js', 'js/settings.js', 'js/convert.js', 'js/pdf2word.js', 'js/tools.js', 'js/scanner.js', 'js/search.js', 'js/backup.js', 'js/ocr.js', 'js/camera.js', 'js/textview.js', 'js/scanreview.js', 'js/scan2office.js', 'js/trash.js', 'js/ai.js', 'js/aienhance.js', 'js/online.js', 'js/files.js', 'js/idview.js', 'js/idpages.js', 'js/merge.js', 'js/translate.js', 'js/aifx.js', 'js/inpaint.js', 'js/pagetools.js', 'js/cloud.js', 'js/redact.js', 'js/forms.js', 'js/split.js', 'js/compare.js', 'js/incoming.js', 'js/qr.js', 'js/pageorder.js', 'js/present.js', 'js/scrubber.js', 'js/fixate.js', 'js/reader.js', 'js/layout.js', 'js/links.js', 'js/preflight.js', 'js/titles.js', 'js/fx.js', 'js/pageflip.js', 'js/pagecurl.js', 'js/flipview.js', 'js/gif.js', 'js/gifexport.js', 'js/flipbook.js', 'js/shapes.js', 'js/coverflow.js', 'js/inspect.js', 'js/collage.js', 'js/tiltcard.js', 'js/bookmark.js', 'js/doctabs.js', 'js/pptx.js', 'js/paper.js', 'js/workflows.js', 'js/lock.js', 'js/measure.js', 'js/scanstore.js', 'js/desk.js',
 ];
 const LIBS = [
   'lib/pdf.min.js', 'lib/pdf.worker.min.js', 'lib/pdf-lib.min.js',

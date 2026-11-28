@@ -2066,3 +2066,34 @@ svg.layer [data-mlabel] { cursor: pointer; }
 .tl-star .ico { width: 10px; height: 10px; fill: #fff; stroke: none; color: #fff; }
 .tl-tile.disabled { opacity: .45; pointer-events: none; }
 @media (min-width: 560px) { .tl-grid { grid-template-columns: repeat(6, 1fr); } .tl-favs { grid-template-columns: repeat(3, 1fr); } }
+
+/* ================= PC (Maus & Tastatur) – nur mit .desk (js/desk.js), am iPhone nie aktiv ================= */
+.drop-ov { display: none; }
+.desk .drop-ov { display: grid; position: fixed; inset: 0; z-index: 300; place-items: center; background: rgba(18,20,23,.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); opacity: 0; pointer-events: none; transition: opacity .18s var(--ease); }
+.desk .drop-ov.show { opacity: 1; }
+.drop-ov > div { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 56px; border-radius: 28px; border: 2px dashed rgba(255,255,255,.65); color: #fff; text-align: center; transform: scale(.96); transition: transform .25s var(--spring); }
+.drop-ov.show > div { transform: none; }
+.drop-ov .ico { width: 46px; height: 46px; }
+.drop-ov b { font-size: 21px; font-weight: 750; }
+.drop-ov span { font-size: 14px; opacity: .8; }
+/* Versteckter Hinweis oben: ohne Notch sah man sonst seinen Schatten */
+.desk #toast:not(.show) { transform: translate(-50%, calc(-100% - 70px)); }
+/* Maus */
+.desk button, .desk .doc-row, .desk [data-action] { cursor: pointer; }
+.desk * { scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+.desk :is(.qt, .doc-row, .tl-tile, .fl-card):hover { transform: translateY(-2px); }
+.desk .hero { transition: transform .25s var(--spring), filter .2s; }
+.desk .hero:hover { transform: translateY(-2px); filter: brightness(1.04); }
+.desk :is(.menu, .group) .row:hover { background: var(--card2); }
+.desk .icon-btn:hover, .desk .fav-btn:hover { filter: brightness(1.08); }
+/* Kopfzeile auf die Inhaltsspalte ausrichten */
+@media (min-width: 700px) {
+  .desk .topbar { padding-left: max(18px, calc(50% - 360px)); padding-right: max(18px, calc(50% - 360px)); }
+}
+/* Breite Fenster: breitere Spalte, „Zuletzt“ zweispaltig */
+@media (min-width: 1100px) {
+  .desk .scroll, .desk .topbar { padding-left: max(24px, calc(50% - 490px)); padding-right: max(24px, calc(50% - 490px)); }
+  .desk #recent-list:not(.flow) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+}
+.desk :is(.qt, .doc-row, .tl-tile, .fl-card):hover:active { transform: translateY(2px) scale(.97); }
+.desk .hero:hover:active { transform: scale(.98); }

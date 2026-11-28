@@ -105,6 +105,8 @@ export function sheet({ title = '', html = '', onMount, onClose, noHead = false 
   return api;
 }
 export const closeAllSheets = () => [...stack].forEach(s => s.close());
+/** Oberstes Menü schließen (Esc am PC). true, wenn eins offen war. */
+export const closeTopSheet = () => { const s = stack[stack.length - 1]; if (!s) return false; s.close(); return true; };
 
 // ---------- Dialoge ----------
 export function confirmDlg(title, text, okLabel = 'Löschen', danger = true) {
