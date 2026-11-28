@@ -2097,3 +2097,7 @@ svg.layer [data-mlabel] { cursor: pointer; }
 }
 .desk :is(.qt, .doc-row, .tl-tile, .fl-card):hover:active { transform: translateY(2px) scale(.97); }
 .desk .hero:hover:active { transform: scale(.98); }
+
+/* Filter „Nibvion“ (Online-Scan): kleines N-Logo + Name im Markenverlauf */
+.flt-nb { display: inline-flex; align-items: center; gap: 4px; font-weight: 800; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.flt-nb img { width: 16px; height: 16px; border-radius: 4.5px; flex: none; box-shadow: 0 1px 3px rgba(0,0,0,.25); }

@@ -255,7 +255,7 @@ export function scanReview(opts) {
       if (enhReady(it)) fltPrev.ai = renderScan(it, 'ai', 240).toDataURL('image/jpeg', 0.75);
       if (onlineDone(it)) fltPrev.online = renderScan(it, 'online', 240).toDataURL('image/jpeg', 0.75);
     }
-    flt.innerHTML = FL.map(([k, l]) => `<button class="flt ${k === (filter || '') ? 'on' : ''}" data-fk="${k}"><span class="flt-img" style="background-image:url(${fltPrev[k] || ''})"></span>${l}</button>`).join('');
+    flt.innerHTML = FL.map(([k, l]) => `<button class="flt ${k === (filter || '') ? 'on' : ''}" data-fk="${k}"><span class="flt-img" style="background-image:url(${fltPrev[k] || ''})"></span>${k === 'online' ? `<span class="flt-nb"><img src="icons/icon-192.png" alt="">${l}</span>` : l}</button>`).join('');   // Nibvion-Scan: mit Logo
     flt.querySelectorAll('[data-fk]').forEach(b => b.onclick = () => {
       filter = b.dataset.fk || null; opts.onFilter && opts.onFilter(filter || ''); haptic();
       renderFilters(); drawVisible();
