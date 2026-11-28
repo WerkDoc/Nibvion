@@ -1,5 +1,5 @@
 // Nibvion Service Worker – offline-fähig
-const VERSION = 'nibvion-v1.55.0';
+const VERSION = 'nibvion-v1.55.1';
 // Bei Änderungen an Dateien in BIG_PATHS den Namen hochzählen
 const BIG = 'nibvion-big-1';
 // Bibliotheken (lib/*.js) und Icons: eigener Cache, überlebt App-Updates.
