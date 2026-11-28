@@ -27,7 +27,7 @@ import { initLinks, linksSheet } from './links.js';
 import { renameSheet } from './titles.js';
 import { ONLINE_MODES, onlineReady, testOnline } from './online.js';
 
-export const VERSION = '1.50.4';
+export const VERSION = '1.50.5';
 const $ = id => document.getElementById(id);
 
 applyTheme();
@@ -1308,7 +1308,7 @@ function onlineSheet() {
 }
 
 // ======================= Tabs =======================
-const TABS = ['tools', 'home', 'files', 'settings'];
+const TABS = ['home', 'files', 'tools', 'settings'];
 function switchTab(tab) {
   if (selecting()) endSel();
   if (document.body.dataset.tab === 'files' && tab !== 'files') leaveFiles();
@@ -1375,7 +1375,7 @@ async function init() {
   import('./workflows.js').then(m => m.initWorkflows({ docPicker, docBytes, storeResult, renderRecents, openDoc, onPins: renderQuick })).catch(e => console.warn(e));
   crashCheck();
   renderQuick(); renderTools();
-  document.querySelector('.tab-indicator').style.transform = 'translateX(100%)';
+  document.querySelector('.tab-indicator').style.transform = 'translateX(0)';
   document.body.classList.add('tab-home'); document.body.dataset.tab = 'home';
   initCloud();
   addEventListener('nib-cloud-pulled', () => { renderRecents(); const t = document.body.dataset.tab; if (t === 'files') renderFiles(); if (t === 'settings') renderSettings(); });
